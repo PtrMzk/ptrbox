@@ -8,20 +8,40 @@ set -euo pipefail
 
 stub_record squid "$@"
 
-if [ "${1:-}" = "-k" ]; then
-  case "${2:-}" in
-    parse)
-      if [ "${PTRBOX_STUB_SQUID_PARSE:-ok}" = "fail" ]; then
-        echo "squid: FATAL: Bungled config" >&2
-        exit 1
-      fi
-      exit 0
+# Handles both `squid -k parse` (live config) and `squid -f FILE -k parse`
+# (candidate config, which is what install validates before installing).
+file=""
+action=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -f)
+      file="${2:-}"
+      shift 2
       ;;
-    reconfigure | shutdown)
-      exit 0
+    -k)
+      action="${2:-}"
+      shift 2
       ;;
+    *) shift ;;
   esac
-fi
+done
+
+case "$action" in
+  parse)
+    if [ -n "$file" ] && [ ! -f "$file" ]; then
+      echo "squid: FATAL: Cannot open '$file'" >&2
+      exit 1
+    fi
+    if [ "${PTRBOX_STUB_SQUID_PARSE:-ok}" = "fail" ]; then
+      echo "squid: FATAL: Bungled config" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  reconfigure | shutdown)
+    exit 0
+    ;;
+esac
 
 echo "squid stub: unhandled invocation: $*" >&2
 exit 64

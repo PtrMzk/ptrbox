@@ -89,9 +89,10 @@ ptrbox_load_config() {
 
   # 5. Derived defaults, resolved after the file has had its say.
   if [ -z "${PTRBOX_BREW_PREFIX:-}" ]; then
-    if command -v brew >/dev/null 2>&1; then
-      PTRBOX_BREW_PREFIX="$(brew --prefix)"
-    else
+    # `|| true` plus the emptiness check: a brew that exists but errors would
+    # otherwise abort the whole run here, before anything has been printed.
+    PTRBOX_BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
+    if [ -z "$PTRBOX_BREW_PREFIX" ]; then
       PTRBOX_BREW_PREFIX="/opt/homebrew"
     fi
   fi

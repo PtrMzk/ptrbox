@@ -2,8 +2,9 @@
 # =============================================================================
 # squid.conf - Egress allowlist proxy for ptrbox sandbox VMs.
 #
-# TEMPLATE. `ptrbox install` substitutes the __PLACEHOLDERS__ and writes the
-# result to <brew-prefix>/etc/squid.conf. Do not edit the installed copy: the
+# TEMPLATE. `ptrbox install` substitutes the double-underscore placeholders
+# and writes the result to <brew-prefix>/etc/squid.conf. Do not edit the
+# installed copy: the
 # marker line above is how install recognises a config it owns, and a hand-
 # edited copy will be overwritten on the next version bump.
 #
