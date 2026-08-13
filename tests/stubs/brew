@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Stub for Homebrew. PTRBOX_STUB_PREFIX stands in for `brew --prefix`, which
+# is how ptrbox avoids hardcoding /opt/homebrew.
+set -euo pipefail
+# shellcheck source=tests/stubs/_lib.sh
+. "$(dirname "$0")/_lib.sh"
+
+stub_record brew "$@"
+
+case "${1:-}" in
+  --prefix)
+    printf '%s\n' "${PTRBOX_STUB_PREFIX:-/opt/homebrew}"
+    ;;
+  services)
+    # `brew services restart squid`, `brew services list`
+    if [ "${2:-}" = "list" ]; then
+      printf 'squid %s\n' "${PTRBOX_STUB_SQUID_STATE:-none}"
+    fi
+    ;;
+  *)
+    echo "brew stub: unhandled command: ${1:-}" >&2
+    exit 64
+    ;;
+esac

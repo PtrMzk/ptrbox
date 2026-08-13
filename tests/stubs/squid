@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Stub for squid. PTRBOX_STUB_SQUID_PARSE=fail makes `squid -k parse` reject
+# the config, which is how the "never activate a config that does not parse"
+# path gets tested.
+set -euo pipefail
+# shellcheck source=tests/stubs/_lib.sh
+. "$(dirname "$0")/_lib.sh"
+
+stub_record squid "$@"
+
+if [ "${1:-}" = "-k" ]; then
+  case "${2:-}" in
+    parse)
+      if [ "${PTRBOX_STUB_SQUID_PARSE:-ok}" = "fail" ]; then
+        echo "squid: FATAL: Bungled config" >&2
+        exit 1
+      fi
+      exit 0
+      ;;
+    reconfigure | shutdown)
+      exit 0
+      ;;
+  esac
+fi
+
+echo "squid stub: unhandled invocation: $*" >&2
+exit 64
