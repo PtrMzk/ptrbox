@@ -11,3 +11,6 @@
 
 # Test scratch space
 tests/tmp/
+
+# Half-rendered artifacts (render_file cleans up after itself; belt and braces)
+*.tmp.*
