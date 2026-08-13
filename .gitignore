@@ -1,4 +1,13 @@
+# Documentation stays untracked until it has been reviewed.
+# Remove this line to publish the docs.
 *.md
-*.conf
-*.yaml
-*.sh
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Test scratch space
+tests/tmp/
