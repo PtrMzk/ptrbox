@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ptrbox - sandboxed Claude Code VMs, one per repo.
+#
+# Dispatch only: every subcommand lives in lib/cmd_<name>.sh.
+#
+# This script runs on the HOST with your privileges. It is deliberately never
+# provisioned into a sandbox VM - an agent that can edit its own sandbox's
+# provisioning code is not sandboxed.
+# =============================================================================
+set -euo pipefail
+
+# Resolve this script through any symlinks (people symlink it into ~/bin) so
+# PTRBOX_ROOT points at the checkout, not at the symlink's directory. Done the
+# long way because `readlink -f` is GNU-only on older macOS.
+_src="$0"
+while [ -L "$_src" ]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  case "$_src" in
+    /*) ;;
+    *) _src="$_dir/$_src" ;;
+  esac
+done
+PTRBOX_ROOT="$(cd -P "$(dirname "$_src")/.." && pwd)"
+export PTRBOX_ROOT
+
+# shellcheck source=lib/common.sh
+. "$PTRBOX_ROOT/lib/common.sh"
+
+ptrbox_usage() {
+  # Delimiter is HELP, not USAGE: the text below has a "USAGE" section header
+  # at column 0, which would end the heredoc there.
+  cat <<'HELP'
+ptrbox - sandboxed Claude Code VMs, one per repo
+
+USAGE
+  ptrbox <command> [args]
+
+COMMANDS
+  install            set up the host: dependency checks, squid allowlist proxy,
+                     ssh config. Idempotent; safe to re-run.
+  new <repo>         create the repo (if needed) and provision its VM
+  rm <repo|vm>       destroy a VM. Never touches the repo on the host.
+  logs [--denied]    tail the proxy log; --denied shows blocked requests only
+
+  help               this text
+  version            print the ptrbox version
+
+EXAMPLES
+  ptrbox new my-api               # -> ~/code/my-api, git init, VM "my-api"
+  ptrbox new ~/src/existing       # explicit path, existing repo used as-is
+  ssh lima-my-api                 # then: cd /workspace && claude
+  ptrbox logs --denied            # find the domain your build needs
+
+CONFIGURATION
+  ~/.config/ptrbox/config (see config/ptrbox.conf.example). Every key can also
+  be set as a PTRBOX_* environment variable, which wins over the file.
+HELP
+}
+
+cmd="${1:-help}"
+[ "$#" -gt 0 ] && shift
+
+case "$cmd" in
+  install | new | rm | logs)
+    # shellcheck source=/dev/null
+    . "$PTRBOX_ROOT/lib/cmd_$cmd.sh"
+    ptrbox_load_config
+    "ptrbox_cmd_$cmd" "$@"
+    ;;
+  help | -h | --help)
+    ptrbox_usage
+    ;;
+  version | --version)
+    printf 'ptrbox %s\n' "$PTRBOX_VERSION"
+    ;;
+  *)
+    printf 'ptrbox: unknown command: %s\n\n' "$cmd" >&2
+    ptrbox_usage >&2
+    exit 2
+    ;;
+esac

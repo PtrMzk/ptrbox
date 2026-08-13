@@ -1,0 +1,63 @@
+# =============================================================================
+# ptrbox configuration - copy to ~/.config/ptrbox/config and edit.
+#
+# Plain shell: KEY=value, no exports needed. Every key below can also be set as
+# an environment variable of the same name, which overrides the file.
+#
+# Precedence: built-in defaults < this file < environment.
+# =============================================================================
+
+# --- Where repos live --------------------------------------------------------
+# A bare `ptrbox new my-api` creates $PTRBOX_REPO_ROOT/my-api. Paths containing
+# a slash are used literally and ignore this.
+#PTRBOX_REPO_ROOT="$HOME/code"
+
+# --- VM sizing ---------------------------------------------------------------
+# CPUs are only consumed while the VM computes; memory is the one to watch if
+# you run several VMs on a 16GB Mac. Disk is sparse - a generous ceiling is
+# free, and running out mid-build is not.
+#PTRBOX_CPUS=4
+#PTRBOX_MEMORY=8GiB
+#PTRBOX_DISK=50GiB
+
+# --- Port forwarding ---------------------------------------------------------
+# Guest ports in this range are reachable on the Mac's localhost. Covers vite
+# (5173), Next/CRA (3000), Flask (5000), Django (8000).
+#PTRBOX_PORT_MIN=3000
+#PTRBOX_PORT_MAX=9000
+
+# --- Network -----------------------------------------------------------------
+# Lima vzNAT's conventional gateway and subnet. If `ip route | grep default`
+# inside a VM disagrees, change both - PROXY_HOST is the only address a VM may
+# talk to, and VM_SUBNET is the squid ACL that matches it.
+#PTRBOX_PROXY_HOST=192.168.5.2
+#PTRBOX_PROXY_PORT=8888
+#PTRBOX_VM_SUBNET=192.168.5.0/24
+
+# DNS resolvers, space separated. Pinned at both the firewall and the guest's
+# /etc/resolv.conf: unpinned port-53 egress is a covert exfiltration channel.
+# Defaults are Quad9 (which also blocks known-malicious domains) + Cloudflare.
+#PTRBOX_DNS_SERVERS="9.9.9.9 1.1.1.1"
+
+# --- Claude Code -------------------------------------------------------------
+# Pre-seeded into each VM's ~/.claude/settings.json. "opus" is an alias that
+# tracks the latest Opus-class model, so it needs no updating on releases.
+#PTRBOX_CLAUDE_MODEL=opus
+
+# macOS Keychain entry holding the OAuth token, created once with:
+#   claude setup-token
+#   security add-generic-password -a "$USER" -s claude-sandbox-token -w
+#PTRBOX_KEYCHAIN_SERVICE=claude-sandbox-token
+
+# --- Git identity for in-VM commits ------------------------------------------
+# Defaults to the host's global git config. Set these to commit under a
+# different name inside sandboxes.
+#PTRBOX_GIT_USER_NAME="Your Name"
+#PTRBOX_GIT_USER_EMAIL="you@example.com"
+
+# --- Host paths --------------------------------------------------------------
+# Homebrew prefix; auto-detected via `brew --prefix` (/opt/homebrew on Apple
+# Silicon, /usr/local on Intel). The proxy log defaults to
+# $PTRBOX_BREW_PREFIX/var/logs/access.log.
+#PTRBOX_BREW_PREFIX=/opt/homebrew
+#PTRBOX_SQUID_LOG=/opt/homebrew/var/logs/access.log
