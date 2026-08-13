@@ -1,0 +1,54 @@
+# =============================================================================
+# Egress allowlist. One domain per line. Leading dot = domain AND subdomains.
+#
+# Keep minimal: every entry is a capability grant, not just a destination.
+# To find missing domains:   ptrbox logs --denied
+# After editing:             squid -k reconfigure
+#   (reloads without dropping tunnels; a full restart severs every live VM
+#   connection, including Claude's in-flight request)
+#
+# `ptrbox install` copies this file in only if none exists yet - once
+# installed, the live allowlist is yours to curate and install will report a
+# diff rather than overwrite it.
+#
+# Scope: the proxy is shared by every VM and cannot tell them apart (Lima's
+# usernet relay makes all guests look like 127.0.0.1), so a domain added here
+# is granted to ALL sandboxes. There is no per-project allowlist.
+# =============================================================================
+
+# --- Claude Code: required ---
+api.anthropic.com          # the API itself: model calls, WebFetch check, flags
+claude.ai                  # OAuth sign-in / token refresh
+platform.claude.com        # OAuth
+claude.com                 # OAuth
+downloads.claude.ai        # installer + self-updates
+code.claude.com            # docs fetched by the built-in guide agent
+registry.npmjs.org         # Claude plugins/MCP installs AND your TS deps
+
+# --- Python toolchain ---
+pypi.org                   # package index
+files.pythonhosted.org     # actual package downloads
+astral.sh                  # uv installer script
+
+# --- GitHub / git over HTTPS ---
+github.com
+api.github.com             # gh CLI and tooling
+codeload.github.com        # tarball/zip downloads (pip-from-github uses it)
+.githubusercontent.com     # raw content, release assets (uv's managed Pythons
+                           #   redirect to objects.githubusercontent.com)
+
+# --- Agent-driven browser testing (Playwright) ---
+# Browser binary downloads. The matching OS libraries are baked into the VM
+# template's apt list (no root post-provision, so they can't be added later).
+cdn.playwright.dev
+playwright.download.prss.microsoft.com
+
+# --- Deliberately absent ---
+# Telemetry (statsig.anthropic.com, sentry.io, datadog intake): instead the
+#   VMs set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 so calls aren't
+#   attempted.
+# nodejs.org: only needed during provisioning, which runs pre-firewall.
+# mcp-proxy.anthropic.com: Claude Code retries this (claude.ai-connector
+#   bridging), but setup-token auth can't use claude.ai connectors anyway and
+#   local MCP servers don't need it. Expect recurring TCP_DENIED noise from
+#   it; that's fine.

@@ -1,0 +1,63 @@
+# ptrbox-managed v1
+# =============================================================================
+# squid.conf - Egress allowlist proxy for ptrbox sandbox VMs.
+#
+# TEMPLATE. `ptrbox install` substitutes the __PLACEHOLDERS__ and writes the
+# result to <brew-prefix>/etc/squid.conf. Do not edit the installed copy: the
+# marker line above is how install recognises a config it owns, and a hand-
+# edited copy will be overwritten on the next version bump.
+#
+# This proxy is the ONLY path to the internet for the VMs. Each VM's firewall
+# blocks all outbound traffic except to this proxy; Squid then permits only
+# domains in allowed_domains.txt.
+#
+# Squid never decrypts traffic: for HTTPS it sees "CONNECT host:443", checks
+# the HOSTNAME against the allowlist, and tunnels the encrypted bytes.
+# Domain-based filtering survives the CDN IP churn (PyPI=Fastly,
+# npm=Cloudflare) that breaks IP-based allowlists.
+#
+# Rules evaluate TOP TO BOTTOM, first match wins. Nothing may go below
+# "http_access deny all".
+#
+# Apply changes:  squid -k parse && brew services restart squid
+# =============================================================================
+
+# Port the VMs' proxy env vars and firewall rules point at.
+http_port __PROXY_PORT__
+
+# --- ACL definitions (inert until referenced by http_access) ---
+acl SSL_ports port 443                  # standard HTTPS
+acl CONNECT method CONNECT              # proxy tunnel requests (how HTTPS transits a proxy)
+acl vmnet src __VM_SUBNET__             # Lima vzNAT guest subnet
+# Lima's default user-mode ("usernet") networking relays guest connections
+# through a host process, so Squid sees VM traffic as coming from 127.0.0.1,
+# not the guest subnet. Both ACLs are needed.
+#
+# Scope note: http_port binds every interface, so these two ACLs are what keep
+# the proxy from being an open relay. Any process on the Mac can use it (it is
+# localhost), and so can any LAN host IF your LAN happens to overlap the guest
+# subnet above. Narrow `vmnet` if your home network really is 192.168.5.0/24.
+acl usernet_local src 127.0.0.1
+acl allowed_domains dstdomain "__PREFIX__/etc/squid/allowed_domains.txt"
+
+# --- Access rules ---
+# 1) No tunnels to ports other than 443 - otherwise an allowed domain could be
+#    reached on ANY port (ssh/smtp/...), making this a generic TCP relay.
+http_access deny CONNECT !SSL_ports
+# 2) The allow rules: (from VM subnet OR from the usernet relay) AND a CONNECT
+#    tunnel (HTTPS) AND an allowlisted destination hostname.
+#    (Plain http:// matches nothing here -> falls through to deny. HTTPS-only
+#    egress, which every registry/API in the list supports.)
+http_access allow vmnet CONNECT allowed_domains
+http_access allow usernet_local CONNECT allowed_domains
+# 3) Default-deny. Everything else -> 403, logged as TCP_DENIED. KEEP LAST.
+http_access deny all
+
+# Restarts: don't linger 30s (the default) draining old connections - the VMs'
+# tunnels are all retry-safe clients; drop them and come back fast. (Prefer
+# `squid -k reconfigure` over restarting for allowlist changes - it reloads
+# config without dropping the listener at all.)
+shutdown_lifetime 1 seconds
+
+# Squid warns without this; harmless carry-over from the stock config.
+coredump_dir __PREFIX__/var/cache/squid
