@@ -175,6 +175,22 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "invariant: every declared dependency is actually used" {
+  # A dependency nobody calls is a gratuitous install failure: preflight is a
+  # hard blocker, so listing a tool ptrbox never runs stops people setting up
+  # for no reason.
+  local entry tool
+  # shellcheck source=lib/preflight.sh
+  . lib/preflight.sh
+  for entry in $PTRBOX_DEPS; do
+    tool="${entry%%:*}"
+    grep -rw --exclude=preflight.sh -q "$tool" bin lib || {
+      echo "$tool is declared in PTRBOX_DEPS but never called" >&2
+      return 1
+    }
+  done
+}
+
 @test "invariant: the verification script checks what matters" {
   # A verify.sh that quietly stopped testing the wall would be worse than none.
   grep -q 'sudo -n true' vm/verify.sh

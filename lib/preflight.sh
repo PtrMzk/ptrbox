@@ -12,7 +12,12 @@
 
 # Required commands, paired with the Homebrew formula that provides them.
 # limactl comes from the `lima` formula, which is the one that trips people up.
-PTRBOX_DEPS="limactl:lima squid:squid git:git jq:jq"
+#
+# Only list what ptrbox actually runs on the host - every entry here is a hard
+# blocker on install. (jq used to be listed and never called; the guest still
+# apt-installs it in vm/provision/10-base.sh, which is a separate thing.)
+# tests/invariants.bats enforces that each entry is really used.
+PTRBOX_DEPS="limactl:lima squid:squid git:git"
 
 ptrbox_preflight_deps() {
   local entry tool formula missing_tools="" missing_formulae=""
