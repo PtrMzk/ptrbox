@@ -43,6 +43,8 @@ COMMANDS
   new <repo>         create the repo (if needed) and provision its VM
   rm <repo|vm>       destroy a VM. Never touches the repo on the host.
   logs [--denied]    tail the proxy log; --denied shows blocked requests only
+  allow [domain...]  add domains to the egress allowlist, or open it in
+                     $EDITOR with no arguments; reloads squid afterwards
 
   help               this text
   version            print the ptrbox version
@@ -52,6 +54,7 @@ EXAMPLES
   ptrbox new ~/src/existing       # explicit path, existing repo used as-is
   ssh lima-my-api                 # then: cd /workspace && claude
   ptrbox logs --denied            # find the domain your build needs
+  ptrbox allow files.example.com  # ...then grant it
 
 CONFIGURATION
   ~/.config/ptrbox/config (see config/ptrbox.conf.example). Every key can also
@@ -63,7 +66,7 @@ cmd="${1:-help}"
 [ "$#" -gt 0 ] && shift
 
 case "$cmd" in
-  install | new | rm | logs)
+  install | new | rm | logs | allow)
     # shellcheck source=/dev/null
     . "$PTRBOX_ROOT/lib/cmd_$cmd.sh"
     ptrbox_load_config

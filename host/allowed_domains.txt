@@ -3,9 +3,11 @@
 #
 # Keep minimal: every entry is a capability grant, not just a destination.
 # To find missing domains:   ptrbox logs --denied
-# After editing:             squid -k reconfigure
-#   (reloads without dropping tunnels; a full restart severs every live VM
-#   connection, including Claude's in-flight request)
+# To grant one:              ptrbox allow files.example.com
+# To edit by hand:           ptrbox allow      (opens $EDITOR, then validates
+#                            and runs squid -k reconfigure, which reloads
+#                            without dropping tunnels; a full restart severs
+#                            every live VM connection, Claude's included)
 #
 # `ptrbox install` copies this file in only if none exists yet - once
 # installed, the live allowlist is yours to curate and install will report a
