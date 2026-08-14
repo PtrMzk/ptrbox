@@ -64,6 +64,9 @@ HELP
   # --- activate ----------------------------------------------------------
   ptrbox_activate_squid "$changed_conf" "$changed_allowlist"
 
+  # --- put ptrbox on PATH ------------------------------------------------
+  ptrbox_install_symlink
+
   # --- report ------------------------------------------------------------
   ptrbox_preflight_report
 
@@ -116,6 +119,45 @@ ptrbox_install_ssh_include() {
   mv "$cfg.ptrbox.tmp" "$cfg"
   chmod 600 "$cfg"
   ptrbox_say "added 'Include config.d/*' to ~/.ssh/config"
+}
+
+# --- PATH --------------------------------------------------------------------
+
+# Offer to symlink bin/ptrbox somewhere on PATH. Asked rather than assumed:
+# writing into a directory outside the checkout is the user's call, and the
+# default when there is no tty is to decline.
+ptrbox_install_symlink() {
+  local target="$PTRBOX_BIN_DIR/ptrbox" source="$PTRBOX_ROOT/bin/ptrbox" existing
+
+  if [ -L "$target" ]; then
+    existing="$(readlink "$target")"
+    if [ "$existing" = "$source" ]; then
+      return 0 # already ours; nothing to say
+    fi
+  fi
+
+  if [ -e "$target" ]; then
+    ptrbox_say "$target already exists and is not this checkout's ptrbox"
+    if ! ptrbox_confirm "replace it with a symlink to $source?"; then
+      return 0
+    fi
+  else
+    if ! ptrbox_confirm "symlink ptrbox into $PTRBOX_BIN_DIR so it is on your PATH?"; then
+      ptrbox_say "skipped; run it as $source, or symlink it yourself"
+      return 0
+    fi
+  fi
+
+  mkdir -p "$PTRBOX_BIN_DIR"
+  ln -sfn "$source" "$target"
+  ptrbox_record_manifest "linked $target"
+  ptrbox_say "linked $target -> $source"
+
+  # A symlink in a directory nobody searches is a silent no-op, so check.
+  case ":$PATH:" in
+    *":$PTRBOX_BIN_DIR:"*) ;;
+    *) ptrbox_warn "$PTRBOX_BIN_DIR is not on your PATH - add it to ~/.zshrc" ;;
+  esac
 }
 
 # --- squid config ------------------------------------------------------------

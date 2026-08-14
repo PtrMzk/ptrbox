@@ -165,6 +165,57 @@ setup() {
   grep -qF 'Include config.d/*' "$HOME/.ssh/config"
 }
 
+# --- PATH symlink ------------------------------------------------------------
+
+@test "--yes symlinks ptrbox onto PATH" {
+  "$PTRBOX" install --yes
+  [ -L "$HOME/bin/ptrbox" ]
+  [ "$(readlink "$HOME/bin/ptrbox")" = "$REPO_ROOT/bin/ptrbox" ]
+}
+
+@test "the symlink is not created without consent" {
+  # No tty in tests, so the prompt declines by default.
+  run "$PTRBOX" install
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/bin/ptrbox" ]
+  [[ "$output" == *"symlink ptrbox into"* ]]
+}
+
+@test "an existing correct symlink is left alone silently" {
+  "$PTRBOX" install --yes
+  run "$PTRBOX" install --yes
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"linked"* ]]
+}
+
+@test "a foreign file at the target is not clobbered without consent" {
+  mkdir -p "$HOME/bin"
+  printf '#!/bin/sh\necho someone elses ptrbox\n' >"$HOME/bin/ptrbox"
+  run "$PTRBOX" install --no-input
+  [ ! -L "$HOME/bin/ptrbox" ]
+  grep -q "someone elses" "$HOME/bin/ptrbox"
+  [[ "$output" == *"already exists and is not this checkout"* ]]
+}
+
+@test "--yes replaces a foreign file at the target" {
+  mkdir -p "$HOME/bin"
+  printf '#!/bin/sh\n' >"$HOME/bin/ptrbox"
+  "$PTRBOX" install --yes
+  [ -L "$HOME/bin/ptrbox" ]
+}
+
+@test "the symlink target honours PTRBOX_BIN_DIR" {
+  export PTRBOX_BIN_DIR="$TMP/somewhere/bin"
+  "$PTRBOX" install --yes
+  [ -L "$TMP/somewhere/bin/ptrbox" ]
+}
+
+@test "a bin dir that is not on PATH is called out" {
+  export PTRBOX_BIN_DIR="$TMP/not-on-path"
+  run "$PTRBOX" install --yes
+  [[ "$output" == *"not on your PATH"* ]]
+}
+
 # --- dependencies ------------------------------------------------------------
 
 @test "a missing dependency stops the install and names the formula" {

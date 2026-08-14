@@ -31,7 +31,7 @@ ptrbox_die() {
 
 PTRBOX_KEYS="REPO_ROOT CPUS MEMORY DISK PORT_MIN PORT_MAX PROXY_HOST \
 PROXY_PORT VM_SUBNET DNS_SERVERS CLAUDE_MODEL KEYCHAIN_SERVICE BREW_PREFIX \
-SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO IMAGE_URL"
+SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO IMAGE_URL BIN_DIR"
 
 # Guest images, one per supported distro. Both are apt-based on purpose: the
 # provisioning scripts install Debian package names, and since the time_t
@@ -82,6 +82,8 @@ ptrbox_load_config() {
   : "${PTRBOX_CLAUDE_MODEL:=opus}"
   : "${PTRBOX_KEYCHAIN_SERVICE:=claude-sandbox-token}"
   : "${PTRBOX_DISTRO:=debian13}"
+  # Where `ptrbox install` offers to symlink the CLI.
+  : "${PTRBOX_BIN_DIR:=$HOME/bin}"
 
   # 3. Config file.
   file="$(ptrbox_config_path)"
