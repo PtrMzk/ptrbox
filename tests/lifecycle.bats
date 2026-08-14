@@ -43,6 +43,20 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "new builds a Debian VM by default" {
+  "$PTRBOX" new demo
+  grep -q 'location: "https://cloud.debian.org/.*debian-13' "$HOME/.lima/_generated/demo.yaml"
+}
+
+@test "PTRBOX_DISTRO=ubuntu2404 builds an Ubuntu VM" {
+  export PTRBOX_DISTRO=ubuntu2404
+  "$PTRBOX" new demo
+  grep -q 'location: "https://cloud-images.ubuntu.com/.*24.04' "$HOME/.lima/_generated/demo.yaml"
+  # Same provisioning either way: both distros are apt-based with identical
+  # package names.
+  grep -q 'apt-get install -y curl git build-essential' "$HOME/.lima/_generated/demo.yaml"
+}
+
 @test "new reboots the VM so the firewall clamps" {
   "$PTRBOX" new demo
   # Boot 1 provisions over an open network; the wall only goes up on reboot.

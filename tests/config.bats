@@ -115,6 +115,40 @@ setup() {
   [ "$(ptrbox_dns_nft_set)" = "9.9.9.9" ]
 }
 
+@test "defaults to the Debian image" {
+  ptrbox_load_config
+  [ "$PTRBOX_DISTRO" = "debian13" ]
+  [[ "$PTRBOX_IMAGE_URL" == *"debian-13-genericcloud-arm64.qcow2" ]]
+}
+
+@test "PTRBOX_DISTRO selects the Ubuntu image" {
+  export PTRBOX_DISTRO=ubuntu2404
+  ptrbox_load_config
+  [[ "$PTRBOX_IMAGE_URL" == *"ubuntu-24.04-server-cloudimg-arm64.img" ]]
+}
+
+@test "an unknown distro is rejected with the supported list" {
+  export PTRBOX_DISTRO=gentoo
+  run ptrbox_load_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown PTRBOX_DISTRO 'gentoo'"* ]]
+  [[ "$output" == *"debian13 ubuntu2404"* ]]
+}
+
+@test "an explicit image URL overrides the distro" {
+  export PTRBOX_IMAGE_URL="https://example.com/custom-arm64.qcow2"
+  ptrbox_load_config
+  [ "$PTRBOX_IMAGE_URL" = "https://example.com/custom-arm64.qcow2" ]
+}
+
+@test "a plain http image URL is refused" {
+  # The image is booted with no verification beyond TLS.
+  export PTRBOX_IMAGE_URL="http://example.com/custom-arm64.qcow2"
+  run ptrbox_load_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must be https"* ]]
+}
+
 @test "squid log defaults under the brew prefix" {
   export PTRBOX_BREW_PREFIX=/usr/local
   ptrbox_load_config

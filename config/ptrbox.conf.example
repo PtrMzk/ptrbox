@@ -12,6 +12,16 @@
 # a slash are used literally and ignore this.
 #PTRBOX_REPO_ROOT="$HOME/code"
 
+# --- Guest distro ------------------------------------------------------------
+# debian13 (default) or ubuntu2404. Both are apt-based and share package names,
+# so provisioning is identical; Debian's cloud image is just smaller and has no
+# snap machinery. Anything else needs its own base provisioning script.
+#PTRBOX_DISTRO=debian13
+#
+# Escape hatch: an explicit image URL overrides the distro. Must be https, and
+# must be Debian-family or vm/provision/10-base.sh will not find its packages.
+#PTRBOX_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
+
 # --- VM sizing ---------------------------------------------------------------
 # CPUs are only consumed while the VM computes; memory is the one to watch if
 # you run several VMs on a 16GB Mac. Disk is sparse - a generous ceiling is

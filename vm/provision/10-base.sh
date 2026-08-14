@@ -2,6 +2,12 @@
 # =============================================================================
 # 10-base.sh - OS packages. Runs as root inside the guest, on EVERY boot.
 #
+# APT-FAMILY ONLY. This script is shared by every supported distro
+# (PTRBOX_DISTRO: debian13, ubuntu2404) because both are apt-based and, since
+# Debian's time_t transition, use identical package names - including the t64
+# suffixes below, which are the same on trixie and noble. Supporting a dnf or
+# pacman distro means a sibling script selected by distro, not edits here.
+#
 # Rendered into the generated Lima config; never executed on the host.
 # Network is open while this runs (the firewall is enabled but not started
 # until the post-provision reboot), which is why the done-marker guard matters:

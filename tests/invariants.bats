@@ -56,6 +56,14 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+@test "invariant: the guest image is fetched over https" {
+  # Lima verifies nothing beyond TLS, so the transport is the only thing
+  # standing between you and a swapped image.
+  grep -qE 'location: "https://' "$RENDERED"
+  run grep -E 'location: "http://' "$RENDERED"
+  [ "$status" -ne 0 ]
+}
+
 @test "invariant: the template does not inherit a Lima base config" {
   # `base:` would pull in Lima's defaults, including the home-directory mount
   # this whole design exists to exclude.

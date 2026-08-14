@@ -31,7 +31,17 @@ ptrbox_die() {
 
 PTRBOX_KEYS="REPO_ROOT CPUS MEMORY DISK PORT_MIN PORT_MAX PROXY_HOST \
 PROXY_PORT VM_SUBNET DNS_SERVERS CLAUDE_MODEL KEYCHAIN_SERVICE BREW_PREFIX \
-SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL"
+SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO IMAGE_URL"
+
+# Guest images, one per supported distro. Both are apt-based on purpose: the
+# provisioning scripts install Debian package names, and since the time_t
+# transition those names are identical on trixie and noble. A dnf or pacman
+# distro would need its own base script, not just a URL here.
+#
+# Always-current URLs (no pinned build), so fresh VMs pick up security updates.
+PTRBOX_IMAGE_debian13="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
+PTRBOX_IMAGE_ubuntu2404="https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+PTRBOX_DISTROS="debian13 ubuntu2404"
 
 ptrbox_config_path() {
   if [ -n "${PTRBOX_CONFIG:-}" ]; then
@@ -71,6 +81,7 @@ ptrbox_load_config() {
   : "${PTRBOX_DNS_SERVERS:=9.9.9.9 1.1.1.1}"
   : "${PTRBOX_CLAUDE_MODEL:=opus}"
   : "${PTRBOX_KEYCHAIN_SERVICE:=claude-sandbox-token}"
+  : "${PTRBOX_DISTRO:=debian13}"
 
   # 3. Config file.
   file="$(ptrbox_config_path)"
@@ -97,6 +108,16 @@ ptrbox_load_config() {
     fi
   fi
   : "${PTRBOX_SQUID_LOG:=$PTRBOX_BREW_PREFIX/var/logs/access.log}"
+
+  # Distro -> image URL, unless an explicit URL was configured. The override is
+  # an escape hatch for pinning a build or trying another apt-based image; you
+  # are on your own for package names if the image is not Debian-family.
+  if [ -z "${PTRBOX_IMAGE_URL:-}" ]; then
+    eval "PTRBOX_IMAGE_URL=\${PTRBOX_IMAGE_$PTRBOX_DISTRO:-}"
+    if [ -z "$PTRBOX_IMAGE_URL" ]; then
+      ptrbox_die "unknown PTRBOX_DISTRO '$PTRBOX_DISTRO' (supported: $PTRBOX_DISTROS)"
+    fi
+  fi
 
   # Git identity for in-VM commits, taken from the host unless configured.
   # Double quotes and backslashes are stripped: these values are interpolated
@@ -144,6 +165,13 @@ ptrbox_validate_config() {
 
   case "$PTRBOX_VM_SUBNET" in
     *[!0-9./]*) ptrbox_die "PTRBOX_VM_SUBNET must be a CIDR, got '$PTRBOX_VM_SUBNET'" ;;
+  esac
+
+  # The guest image is downloaded and booted with no signature check beyond
+  # TLS, so plain http would be a supply-chain hole.
+  case "$PTRBOX_IMAGE_URL" in
+    https://*) ;;
+    *) ptrbox_die "PTRBOX_IMAGE_URL must be https, got '$PTRBOX_IMAGE_URL'" ;;
   esac
 }
 
