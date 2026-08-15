@@ -9,7 +9,10 @@
 
 harness_setup() {
   # shellcheck disable=SC2034  # both are read by the .bats files that load this
-  REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  # -P: bin/ptrbox resolves its own location physically, so tests that compare
+  # paths against REPO_ROOT must too, or they fail when run via a symlinked
+  # checkout.
+  REPO_ROOT="$(cd -P "$BATS_TEST_DIRNAME/.." && pwd -P)"
   # shellcheck disable=SC2034
   PTRBOX="$REPO_ROOT/bin/ptrbox"
   TMP="$BATS_TEST_TMPDIR"
