@@ -57,6 +57,24 @@ setup() {
   grep -q 'apt-get install -y curl git build-essential' "$HOME/.lima/_generated/demo.yaml"
 }
 
+@test "PTRBOX_EXTRA_PACKAGES lands in the generated config as a literal" {
+  export PTRBOX_EXTRA_PACKAGES="ripgrep sqlite3"
+  "$PTRBOX" new demo
+  grep -q 'EXTRA_PACKAGES="ripgrep sqlite3"' "$HOME/.lima/_generated/demo.yaml"
+}
+
+@test "no extra packages renders an empty, inert install step" {
+  "$PTRBOX" new demo
+  grep -q 'EXTRA_PACKAGES=""' "$HOME/.lima/_generated/demo.yaml"
+}
+
+@test "an invalid extra package aborts new before any VM is touched" {
+  export PTRBOX_EXTRA_PACKAGES='ripgrep; reboot'
+  run "$PTRBOX" new demo
+  [ "$status" -ne 0 ]
+  assert_not_called "limactl start"
+}
+
 @test "new reboots the VM so the firewall clamps" {
   "$PTRBOX" new demo
   # Boot 1 provisions over an open network; the wall only goes up on reboot.

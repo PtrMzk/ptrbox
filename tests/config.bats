@@ -12,7 +12,7 @@ setup() {
     PTRBOX_PROXY_MEMORY PTRBOX_PROXY_DISK PTRBOX_DNS_SERVERS \
     PTRBOX_CLAUDE_MODEL PTRBOX_KEYCHAIN_SERVICE PTRBOX_BREW_PREFIX \
     PTRBOX_SQUID_LOG PTRBOX_GIT_USER_NAME PTRBOX_GIT_USER_EMAIL PTRBOX_DISTRO \
-    PTRBOX_IMAGE_URL PTRBOX_BIN_DIR
+    PTRBOX_IMAGE_URL PTRBOX_BIN_DIR PTRBOX_EXTRA_PACKAGES
 
   HOME="$TMP/home"
   mkdir -p "$HOME"
@@ -113,6 +113,51 @@ setup() {
   export PTRBOX_GIT_USER_NAME='Ex "quoted" \name'
   ptrbox_load_config
   [ "$PTRBOX_GIT_USER_NAME" = 'Ex quoted name' ]
+}
+
+# --- extra guest packages ----------------------------------------------------
+# The list is interpolated into a root shell script inside the guest, so it is
+# held to apt's package-name charset - config-file injection must die here,
+# not become a command in the VM.
+
+@test "extra packages default to none" {
+  ptrbox_load_config
+  [ -z "$PTRBOX_EXTRA_PACKAGES" ]
+}
+
+@test "extra packages accept names, pins, and wrapped whitespace" {
+  export PTRBOX_EXTRA_PACKAGES='ripgrep   libfoo2.1+dev=1:2.0~rc1-3
+  sqlite3'
+  ptrbox_load_config
+  [ "$PTRBOX_EXTRA_PACKAGES" = 'ripgrep libfoo2.1+dev=1:2.0~rc1-3 sqlite3' ]
+}
+
+@test "rejects a package entry with shell metacharacters" {
+  export PTRBOX_EXTRA_PACKAGES='ripgrep; rm -rf /'
+  run ptrbox_load_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"PTRBOX_EXTRA_PACKAGES"* ]]
+}
+
+@test "rejects a package entry with a command substitution" {
+  export PTRBOX_EXTRA_PACKAGES='jq$(reboot)'
+  run ptrbox_load_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"PTRBOX_EXTRA_PACKAGES"* ]]
+}
+
+@test "rejects a package entry that looks like an apt option" {
+  export PTRBOX_EXTRA_PACKAGES='--reinstall'
+  run ptrbox_load_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"PTRBOX_EXTRA_PACKAGES"* ]]
+}
+
+@test "rejects an uppercase package name" {
+  # Debian names are lowercase; a stray Capital is a typo, not a package.
+  export PTRBOX_EXTRA_PACKAGES='RipGrep'
+  run ptrbox_load_config
+  [ "$status" -ne 0 ]
 }
 
 # --- derived values ----------------------------------------------------------

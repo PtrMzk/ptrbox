@@ -22,6 +22,16 @@
 # must be Debian-family or vm/provision/10-base.sh will not find its packages.
 #PTRBOX_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
 
+# --- Extra guest packages ----------------------------------------------------
+# Space-separated apt packages installed into every sandbox VM on top of the
+# base list in vm/provision/10-base.sh. Version pins (pkg=1.2-3) are allowed.
+# Applies at VM creation: re-create existing VMs to pick up changes.
+#
+# Host-side on purpose - the list is baked into the generated config by
+# `ptrbox new`, never read from inside the VM. A package list under the repo
+# mount would let the agent install software into its own sandbox.
+#PTRBOX_EXTRA_PACKAGES="ripgrep sqlite3"
+
 # --- VM sizing ---------------------------------------------------------------
 # CPUs are only consumed while the VM computes; memory is the one to watch if
 # you run several VMs on a 16GB Mac. Disk is sparse - a generous ceiling is

@@ -32,7 +32,7 @@ ptrbox_die() {
 PTRBOX_KEYS="REPO_ROOT CPUS MEMORY DISK PORT_MIN PORT_MAX PROXY_HOST \
 PROXY_PORT PROXY_CPUS PROXY_MEMORY PROXY_DISK DNS_SERVERS CLAUDE_MODEL \
 KEYCHAIN_SERVICE BREW_PREFIX SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO \
-IMAGE_URL BIN_DIR"
+IMAGE_URL BIN_DIR EXTRA_PACKAGES"
 
 # Guest images, one per supported distro. Both are apt-based on purpose: the
 # provisioning scripts install Debian package names, and since the time_t
@@ -90,6 +90,11 @@ ptrbox_load_config() {
   : "${PTRBOX_DISTRO:=debian13}"
   # Where `ptrbox install` offers to symlink the CLI.
   : "${PTRBOX_BIN_DIR:=$HOME/bin}"
+  # Extra apt packages for sandbox VMs, space separated. Host-side by design:
+  # the list is rendered into the generated config at `ptrbox new` time, never
+  # read from inside a VM (a repo-provided list would let an agent install
+  # into its own sandbox).
+  : "${PTRBOX_EXTRA_PACKAGES:=}"
 
   # 3. Config file.
   file="$(ptrbox_config_path)"
@@ -142,6 +147,14 @@ ptrbox_load_config() {
   # shellcheck disable=SC1003
   PTRBOX_GIT_USER_EMAIL="$(printf '%s' "$PTRBOX_GIT_USER_EMAIL" | tr -d '"\\')"
 
+  # The package list is substituted into a single line of the generated
+  # config, so collapse any whitespace (a config file may wrap it across
+  # lines) to plain spaces and trim the ends.
+  PTRBOX_EXTRA_PACKAGES="$(printf '%s\n' "$PTRBOX_EXTRA_PACKAGES" |
+    tr -s '[:space:]' ' ')"
+  PTRBOX_EXTRA_PACKAGES="${PTRBOX_EXTRA_PACKAGES# }"
+  PTRBOX_EXTRA_PACKAGES="${PTRBOX_EXTRA_PACKAGES% }"
+
   ptrbox_validate_config
 }
 
@@ -149,7 +162,7 @@ ptrbox_load_config() {
 # config, so they are validated rather than trusted - a typo in a config file
 # should fail here, not produce a VM with a subtly wrong wall.
 ptrbox_validate_config() {
-  local ns
+  local ns pkg
 
   ptrbox_assert_number CPUS "$PTRBOX_CPUS"
   ptrbox_assert_number PROXY_CPUS "$PTRBOX_PROXY_CPUS"
@@ -170,6 +183,14 @@ ptrbox_validate_config() {
     ptrbox_assert_ipv4 DNS_SERVERS "$ns"
   done
   [ -n "$PTRBOX_DNS_SERVERS" ] || ptrbox_die "PTRBOX_DNS_SERVERS is empty"
+
+  # Each package name is interpolated into a root shell script inside the
+  # guest, so hold it to Debian's package-name charset (plus '=' for version
+  # pins). Anything else - shell metacharacters, an option-like leading dash -
+  # must stop the run here.
+  for pkg in $PTRBOX_EXTRA_PACKAGES; do
+    ptrbox_assert_package "$pkg"
+  done
 
   # The guest image is downloaded and booted with no signature check beyond
   # TLS, so plain http would be a supply-chain hole.
@@ -195,6 +216,21 @@ ptrbox_assert_size() {
   case "$2" in
     [0-9]*GiB | [0-9]*MiB) ;;
     *) ptrbox_die "PTRBOX_$1 must look like 8GiB or 512MiB, got '$2'" ;;
+  esac
+}
+
+# Debian package names: lowercase alphanumerics plus . + -, starting with an
+# alphanumeric (a leading dash would read as an apt option). '=' and the
+# version charset (adds : ~) are allowed for pins like pkg=1.2-3.
+ptrbox_assert_package() {
+  case "$1" in
+    [a-z0-9]*) ;;
+    *) ptrbox_die "PTRBOX_EXTRA_PACKAGES: '$1' is not a valid apt package name" ;;
+  esac
+  case "$1" in
+    *[!a-z0-9.+=:~-]*)
+      ptrbox_die "PTRBOX_EXTRA_PACKAGES: '$1' is not a valid apt package name"
+      ;;
   esac
 }
 

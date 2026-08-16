@@ -126,6 +126,10 @@ provision:
 
   - mode: system
     script: |
+      __INCLUDE:provision/15-extra-packages.sh__
+
+  - mode: system
+    script: |
       __INCLUDE:provision/20-firewall.sh__
 
   - mode: user

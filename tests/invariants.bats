@@ -202,13 +202,38 @@ setup() {
   # Lima re-runs provision scripts on EVERY boot. Unguarded, a post-firewall
   # boot hangs on network calls until cloud-init gives up ten minutes later.
   local f
-  for f in vm/provision/10-base.sh vm/provision/20-firewall.sh \
-    vm/provision/30-toolchain.sh vm/provision/40-userenv.sh \
-    vm/provision-proxy/10-squid.sh; do
+  for f in vm/provision/10-base.sh vm/provision/15-extra-packages.sh \
+    vm/provision/20-firewall.sh vm/provision/30-toolchain.sh \
+    vm/provision/40-userenv.sh vm/provision-proxy/10-squid.sh; do
     grep -q '\.done' "$f" || {
       echo "$f has no done-marker guard" >&2
       return 1
     }
+  done
+}
+
+@test "invariant: the extra package list is fixed at render time" {
+  # PTRBOX_EXTRA_PACKAGES is substituted into the generated config on the
+  # host. A list read inside the guest at boot - from a file, a command, or
+  # anything under the repo mount - would let the agent install software into
+  # its own sandbox on its next boot.
+  grep -q 'EXTRA_PACKAGES=""' "$RENDERED" # the fixture's empty list, as a literal
+  run grep -E 'EXTRA_PACKAGES=.*(\$\(|`|<|cat |curl |workspace)' "$RENDERED"
+  [ "$status" -ne 0 ]
+}
+
+@test "invariant: provision scripts never read the repo mount" {
+  # Nothing inside /workspace may influence provisioning. 40-userenv.sh gets a
+  # pass: it WRITES the string "/workspace" into Claude Code's settings
+  # pre-seed, which is not a read.
+  local f
+  for f in vm/provision/*.sh; do
+    [ "$f" = "vm/provision/40-userenv.sh" ] && continue
+    run grep -F '/workspace' "$f"
+    if [ "$status" -eq 0 ]; then
+      echo "$f references the repo mount: $output" >&2
+      return 1
+    fi
   done
 }
 
