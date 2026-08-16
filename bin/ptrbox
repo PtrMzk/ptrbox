@@ -38,16 +38,22 @@ USAGE
   ptrbox <command> [args]
 
 COMMANDS
-  install            set up the host: dependency checks, squid allowlist proxy,
+  install            set up the host: dependency checks, the squid proxy VM,
                      ssh config. Idempotent; safe to re-run.
   new <repo>         create the repo (if needed) and provision its VM
   rm <repo|vm>       destroy a VM. Never touches the repo on the host.
+  start <repo|vm>    start a stopped VM, bringing the proxy VM up first
+  stop <repo|vm>     stop a VM; the proxy VM stops with the last sandbox
   logs [--denied]    tail the proxy log; --denied shows blocked requests only
   allow [domain...]  add domains to the egress allowlist, or open it in
                      $EDITOR with no arguments; reloads squid afterwards
 
   help               this text
   version            print the ptrbox version
+
+The egress proxy itself runs in a dedicated VM, "ptrbox-proxy", managed
+automatically: any sandbox coming up starts it, the last one going away
+stops it.
 
 EXAMPLES
   ptrbox new my-api               # -> ~/code/my-api, git init, VM "my-api"
@@ -66,7 +72,7 @@ cmd="${1:-help}"
 [ "$#" -gt 0 ] && shift
 
 case "$cmd" in
-  install | new | rm | logs | allow)
+  install | new | rm | start | stop | logs | allow)
     # shellcheck source=/dev/null
     . "$PTRBOX_ROOT/lib/cmd_$cmd.sh"
     ptrbox_load_config

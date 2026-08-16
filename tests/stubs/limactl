@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Stub for limactl. Canned behaviour driven by:
-#   PTRBOX_STUB_VERIFY=ok|fail   what `limactl shell ... verify` reports
-#   PTRBOX_STUB_START_FAIL=1     make the first `start` fail
+#   PTRBOX_STUB_VERIFY=ok|fail       what `limactl shell ... verify` reports
+#   PTRBOX_STUB_START_FAIL=1         make the first `start` fail
+#   PTRBOX_STUB_SQUID_PARSE=fail     make in-VM `squid -k parse` reject
+#
+# VM state lives in $STUB_VMS as "name status" lines. Each VM also gets a fake
+# filesystem under $PTRBOX_STUB_DIR/vmfs-<name>/, which is what the
+# `shell <vm> -- sudo ...` file operations (tee/cat/mv/rm/tail) act on - that
+# is how the proxy VM's squid config, allowlist and access log are simulated.
 set -euo pipefail
 # shellcheck source=tests/stubs/_lib.sh
 . "$(dirname "$0")/_lib.sh"
@@ -10,8 +16,14 @@ stub_record limactl "$@"
 
 case "${1:-}" in
   list)
+    if [ "${2:-}" = "--format" ]; then
+      # `limactl list --format '{{.Name}} {{.Status}}'` - the file already
+      # stores exactly that shape.
+      [ -f "$STUB_VMS" ] && cat "$STUB_VMS"
+      exit 0
+    fi
     # `limactl list -q` - names only.
-    [ -f "$STUB_VMS" ] && cat "$STUB_VMS"
+    [ -f "$STUB_VMS" ] && awk '{print $1}' "$STUB_VMS"
     exit 0
     ;;
 
@@ -31,34 +43,114 @@ case "${1:-}" in
     if [ "${2:-}" = "--name" ]; then
       # Creation: `limactl start --name X -y --timeout 20m <config>`
       name="$3"
-      printf '%s\n' "$name" >>"$STUB_VMS"
+      printf '%s Running\n' "$name" >>"$STUB_VMS"
       # Lima writes a per-VM ssh config; ptrbox symlinks it.
       mkdir -p "$HOME/.lima/$name"
       printf 'Host lima-%s\n  Hostname 127.0.0.1\n' "$name" \
         >"$HOME/.lima/$name/ssh.config"
+    else
+      # Restart of an existing VM: `limactl start X`
+      stub_set_status "${2:-}" Running
     fi
     exit 0
     ;;
 
   stop)
+    stub_set_status "${2:-}" Stopped
     exit 0
     ;;
 
   delete)
     name="${3:-${2:-}}"
     if [ -f "$STUB_VMS" ]; then
-      grep -vx "$name" "$STUB_VMS" >"$STUB_VMS.tmp" || true
+      awk -v n="$name" '$1 != n' "$STUB_VMS" >"$STUB_VMS.tmp"
       mv "$STUB_VMS.tmp" "$STUB_VMS"
     fi
     exit 0
     ;;
 
   shell)
-    # Two callers, told apart by the bash flag in `limactl shell X -- bash …`:
-    #   -lc  the verification run; the script is in argv
-    #   -c   the token injection; the payload arrives on stdin
+    # Three callers:
+    #   shell <vm> -- sudo <cmd...>    proxy VM management (file ops + squid)
+    #   shell <vm> -- bash -lc <s>     the verification run; the script is in argv
+    #   shell <vm> -- bash -c <s>      the token injection; payload on stdin
     # Deciding on argv rather than `[ -t 0 ]` keeps the stub from ever blocking
     # on a stdin nobody is going to write to.
+    vm="${2:-}"
+    if [ "${4:-}" = "sudo" ]; then
+      vmfs="$PTRBOX_STUB_DIR/vmfs-$vm"
+      shift 4
+      case "${1:-}" in
+        tee)
+          # `sudo tee <path>` with the content on stdin; the caller discards
+          # tee's stdout echo, so the stub does not bother producing it.
+          mkdir -p "$vmfs$(dirname "$2")"
+          cat >"$vmfs$2"
+          exit 0
+          ;;
+        cat)
+          [ -f "$vmfs$2" ] || {
+            echo "cat: $2: No such file or directory" >&2
+            exit 1
+          }
+          cat "$vmfs$2"
+          exit 0
+          ;;
+        mv)
+          mv "$vmfs$2" "$vmfs$3"
+          exit 0
+          ;;
+        rm)
+          # `sudo rm -f <path>`
+          rm -f "$vmfs$3"
+          exit 0
+          ;;
+        squid)
+          # `squid -k parse`, `squid -f FILE -k parse`, `squid -k reconfigure`
+          if [ "${PTRBOX_STUB_SQUID_PARSE:-ok}" = "fail" ]; then
+            case "$*" in
+              *parse*)
+                echo "squid: FATAL: Bungled config" >&2
+                exit 1
+                ;;
+            esac
+          fi
+          exit 0
+          ;;
+        systemctl)
+          exit 0
+          ;;
+        tail)
+          # `sudo tail -n N [-f] <path>`. -f is ignored: a stub that blocks
+          # would hang the suite; emitting once is enough to test the plumbing.
+          n=10 path=""
+          shift
+          while [ "$#" -gt 0 ]; do
+            case "$1" in
+              -n)
+                n="$2"
+                shift 2
+                ;;
+              -f) shift ;;
+              *)
+                path="$1"
+                shift
+                ;;
+            esac
+          done
+          [ -f "$vmfs$path" ] || {
+            echo "tail: cannot open '$path'" >&2
+            exit 1
+          }
+          tail -n "$n" "$vmfs$path"
+          exit 0
+          ;;
+        *)
+          echo "limactl stub: unhandled sudo command: ${1:-}" >&2
+          exit 64
+          ;;
+      esac
+    fi
     if [ "${5:-}" = "-c" ]; then
       stub_capture_stdin
       exit 0

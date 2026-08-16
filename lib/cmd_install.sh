@@ -6,15 +6,17 @@
 # property is what makes it safe to run before `make smoke`, or after pulling
 # a new version of ptrbox.
 #
-# The squid config is marker-driven: our template carries "# ptrbox-managed
-# v<N>", so install can tell a config it owns (silently updatable) from a stock
-# or hand-rolled one (never overwritten without consent). Any existing file is
-# backed up first, and the config is validated by squid before being activated.
+# The egress proxy is a dedicated Lima VM (lib/proxy.sh), so "install" means:
+# check dependencies, seed the host-side allowlist, provision/start the proxy
+# VM and push the current squid config into it, wire up ssh, and offer a PATH
+# symlink. Nothing squid-related is installed on the Mac itself any more.
 # =============================================================================
+
+# shellcheck source=lib/proxy.sh
+. "$PTRBOX_ROOT/lib/proxy.sh"
 
 ptrbox_cmd_install() {
   local assume_yes=0 no_input=0 arg
-  local squid_conf allowlist changed_conf=0 changed_allowlist=0
 
   while [ "$#" -gt 0 ]; do
     arg="$1"
@@ -25,8 +27,7 @@ ptrbox_cmd_install() {
         cat <<'HELP'
 ptrbox install - set up the host
 
-  -y, --yes      answer yes to every prompt (overwrites an unmanaged squid
-                 config, after backing it up)
+  -y, --yes      answer yes to every prompt
       --no-input never prompt; decline anything that would need an answer
 HELP
         return 0
@@ -40,8 +41,6 @@ HELP
 
   # shellcheck source=lib/preflight.sh
   . "$PTRBOX_ROOT/lib/preflight.sh"
-  # shellcheck source=lib/render.sh
-  . "$PTRBOX_ROOT/lib/render.sh"
 
   ptrbox_preflight_deps || exit 1
 
@@ -51,18 +50,12 @@ HELP
   # --- ssh include -------------------------------------------------------
   ptrbox_install_ssh_include
 
-  # --- squid -------------------------------------------------------------
-  squid_conf="$PTRBOX_BREW_PREFIX/etc/squid.conf"
-  allowlist="$PTRBOX_BREW_PREFIX/etc/squid/allowed_domains.txt"
-  mkdir -p "$PTRBOX_BREW_PREFIX/etc/squid"
-
-  # Allowlist first: squid.conf references it, so validating the candidate
-  # config requires the file to already exist.
-  ptrbox_install_allowlist "$allowlist" && changed_allowlist=1
-  ptrbox_install_squid_conf "$squid_conf" && changed_conf=1
-
-  # --- activate ----------------------------------------------------------
-  ptrbox_activate_squid "$changed_conf" "$changed_allowlist"
+  # --- the egress proxy VM -----------------------------------------------
+  # Seeds the allowlist (migrating a pre-v2 one from the brew prefix if it
+  # exists), creates/starts the proxy VM, and pushes the current config.
+  ptrbox_proxy_ensure
+  ptrbox_install_allowlist_report
+  ptrbox_install_legacy_squid_note
 
   # --- put ptrbox on PATH ------------------------------------------------
   ptrbox_install_symlink
@@ -70,7 +63,7 @@ HELP
   # --- report ------------------------------------------------------------
   ptrbox_preflight_report
 
-  if [ "$changed_conf" -eq 0 ] && [ "$changed_allowlist" -eq 0 ]; then
+  if [ "$PTRBOX_PROXY_CHANGED" -eq 0 ]; then
     ptrbox_say "host already set up; nothing to do"
   else
     ptrbox_say "host setup complete"
@@ -160,115 +153,28 @@ ptrbox_install_symlink() {
   esac
 }
 
-# --- squid config ------------------------------------------------------------
+# --- allowlist reporting -----------------------------------------------------
 
-# Version of the ptrbox marker in a file, or empty if it has none.
-ptrbox_marker_version() {
-  [ -f "$1" ] || return 0
-  sed -n 's/^# ptrbox-managed v\([0-9][0-9]*\).*/\1/p' "$1" | head -1
-}
-
-# Returns 0 (success) if the config was changed, 1 if it was left alone.
-ptrbox_install_squid_conf() {
-  local target="$1" rendered="$1.ptrbox-new" ours theirs backup
-
-  ptrbox_render_file "$rendered" "$PTRBOX_ROOT/host/squid.conf.in" "$PTRBOX_ROOT/host" \
-    "PREFIX=$PTRBOX_BREW_PREFIX" \
-    "PROXY_PORT=$PTRBOX_PROXY_PORT" \
-    "VM_SUBNET=$PTRBOX_VM_SUBNET"
-
-  ours="$(ptrbox_marker_version "$rendered")"
-  theirs="$(ptrbox_marker_version "$target")"
-
-  if [ -f "$target" ] && cmp -s "$rendered" "$target"; then
-    rm -f "$rendered"
-    return 1 # identical; nothing to do
-  fi
-
-  # Validate the CANDIDATE, before it goes anywhere near the live path. Parsing
-  # after installing would leave a config squid refuses to load sitting in
-  # place - and the proxy is every VM's only way out.
-  if ! squid -f "$rendered" -k parse >/dev/null 2>&1; then
-    ptrbox_say "squid rejected the generated config:"
-    squid -f "$rendered" -k parse >&2 || true
-    rm -f "$rendered"
-    ptrbox_die "not installing a config squid cannot parse"
-  fi
-
-  if [ -f "$target" ] && [ -z "$theirs" ]; then
-    # Not ours: stock Homebrew config, or something hand-written.
-    ptrbox_say "$target is not managed by ptrbox. Proposed changes:"
-    diff -u "$target" "$rendered" >&2 || true
-    if ! ptrbox_confirm "replace $target? (a timestamped backup is kept)"; then
-      rm -f "$rendered"
-      ptrbox_say "left $target alone; VMs will not have egress until it is replaced"
-      return 1
-    fi
-  elif [ -n "$theirs" ] && [ "$theirs" != "$ours" ]; then
-    ptrbox_say "updating ptrbox-managed squid config (v$theirs -> v$ours)"
-  fi
-
-  if [ -f "$target" ]; then
-    backup="$target.pre-ptrbox.$(date +%Y%m%d%H%M%S)"
-    cp "$target" "$backup"
-    ptrbox_say "backed up $target -> $backup"
-    ptrbox_record_manifest "backup $backup"
-  fi
-
-  mv "$rendered" "$target"
-  ptrbox_record_manifest "wrote $target"
-  ptrbox_say "installed $target"
-  return 0
-}
-
-# The allowlist is the user's living capability list: installed once, then
-# never overwritten - only reported on. Returns 0 if it was created.
-ptrbox_install_allowlist() {
-  local target="$1" source="$PTRBOX_ROOT/host/allowed_domains.txt"
-
-  if [ ! -f "$target" ]; then
-    cp "$source" "$target"
-    ptrbox_record_manifest "wrote $target"
-    ptrbox_say "installed $target"
-    return 0
-  fi
-
-  if ! cmp -s "$source" "$target"; then
+# The allowlist is the user's living capability list: seeded once by
+# lib/proxy.sh, then never overwritten - only reported on.
+ptrbox_install_allowlist_report() {
+  local target
+  target="$(ptrbox_allowlist_path)"
+  if ! cmp -s "$PTRBOX_ROOT/host/allowed_domains.txt" "$target"; then
     ptrbox_say "$target differs from the shipped allowlist (yours is kept)."
-    ptrbox_say "compare with: diff $target $source"
-  fi
-  return 1
-}
-
-# --- activation --------------------------------------------------------------
-
-ptrbox_activate_squid() {
-  local changed_conf="$1" changed_allowlist="$2" running=""
-
-  if [ "$changed_conf" -eq 0 ] && [ "$changed_allowlist" -eq 0 ]; then
-    return 0
-  fi
-
-  running="$(brew services list 2>/dev/null | awk '/^squid/ {print $2}')"
-
-  if [ "$changed_conf" -eq 0 ] && [ "$running" = "started" ]; then
-    # Allowlist-only change: reconfigure reloads without dropping the listener.
-    # A restart severs every live VM tunnel, including Claude's in-flight
-    # request, which looks like a permanent failure but is not.
-    squid -k reconfigure
-    ptrbox_say "reloaded the allowlist (no tunnels dropped)"
-  else
-    brew services restart squid
-    ptrbox_say "restarted squid"
+    ptrbox_say "compare with: diff $target $PTRBOX_ROOT/host/allowed_domains.txt"
   fi
 }
 
-# --- manifest ----------------------------------------------------------------
-# What install touched, so a future `ptrbox uninstall` does not have to guess.
+# --- migration ---------------------------------------------------------------
 
-ptrbox_record_manifest() {
-  local dir
-  dir="$(dirname "$(ptrbox_config_path)")"
-  mkdir -p "$dir"
-  printf '%s\n' "$1" >>"$dir/install-manifest"
+# Before v2 the proxy was Homebrew's squid on the host. If install finds a
+# config it wrote back then, tell the user that daemon is now dead weight -
+# but do not stop or uninstall anything: host services are the user's call.
+ptrbox_install_legacy_squid_note() {
+  local legacy="$PTRBOX_BREW_PREFIX/etc/squid.conf"
+  if [ -f "$legacy" ] && grep -q '^# ptrbox-managed' "$legacy"; then
+    ptrbox_say "squid on the host is no longer used - the proxy now runs in the ptrbox-proxy VM"
+    ptrbox_say "stop the old one with: brew services stop squid"
+  fi
 }

@@ -6,18 +6,25 @@
 #   ptrbox allow                      open the file in $EDITOR
 #   ptrbox allow --list               print the current domains
 #
-# Either way the file is validated by squid and then reloaded with
-# `squid -k reconfigure`, which reloads without dropping live tunnels. A
-# restart would sever every VM's connection, including Claude's in-flight
-# request.
+# The allowlist lives on the HOST (next to ptrbox's config file) and is the
+# source of truth; lib/proxy.sh pushes it into the proxy VM, where squid
+# validates it and reloads with `squid -k reconfigure` - which drops no live
+# tunnels. A restart would sever every VM's connection, including Claude's
+# in-flight request.
 #
-# If the result does not parse, the previous file is restored automatically and
-# your version is kept alongside it - a broken allowlist means squid refuses to
-# start, which takes every sandbox offline.
+# If squid rejects the result, both the host file and the VM are restored
+# and your version is kept alongside - a broken allowlist means squid refuses
+# to start, which takes every sandbox offline.
 #
-# Every entry is a capability grant to EVERY VM: the proxy is shared and cannot
-# tell sandboxes apart.
+# With the proxy VM down, edits still land in the host file and are pushed by
+# the next `ptrbox new`/`ptrbox start`.
+#
+# Every entry is a capability grant to EVERY VM: the proxy is shared and
+# cannot tell sandboxes apart.
 # =============================================================================
+
+# shellcheck source=lib/proxy.sh
+. "$PTRBOX_ROOT/lib/proxy.sh"
 
 ptrbox_cmd_allow() {
   local allowlist arg list=0 editor backup rejected
@@ -45,9 +52,7 @@ HELP
     shift
   done
 
-  command -v squid >/dev/null 2>&1 || ptrbox_die "squid not found - run 'ptrbox install' first"
-
-  allowlist="$PTRBOX_BREW_PREFIX/etc/squid/allowed_domains.txt"
+  allowlist="$(ptrbox_allowlist_path)"
   [ -f "$allowlist" ] || ptrbox_die "no allowlist at $allowlist - run 'ptrbox install' first"
 
   if [ "$list" -eq 1 ]; then
@@ -84,20 +89,30 @@ HELP
     fi
   fi
 
-  # Validate against the live squid.conf, which references this file.
-  if ! squid -k parse >/dev/null 2>&1; then
-    rejected="$allowlist.rejected"
-    mv "$allowlist" "$rejected"
-    mv "$backup" "$allowlist"
-    ptrbox_say "squid rejected the new allowlist; restored the previous one"
-    ptrbox_say "your version is kept at $rejected"
-    squid -k parse >&2 || true
-    exit 1
+  # --- apply to the proxy VM ---------------------------------------------
+  if ! ptrbox_proxy_running; then
+    rm -f "$backup"
+    ptrbox_say "saved. The proxy VM is not running; the change is applied when it next starts."
+    return 0
   fi
 
-  rm -f "$backup"
-  squid -k reconfigure
-  ptrbox_say "allowlist reloaded (no tunnels dropped)"
+  ptrbox_proxy_sync
+  case "$PTRBOX_PROXY_SYNC" in
+    rejected)
+      # The VM was already restored by the sync; restore the host file too,
+      # keeping the refused version for inspection.
+      rejected="$allowlist.rejected"
+      mv "$allowlist" "$rejected"
+      mv "$backup" "$allowlist"
+      ptrbox_say "squid rejected the new allowlist; restored the previous one"
+      ptrbox_say "your version is kept at $rejected"
+      exit 1
+      ;;
+    *)
+      rm -f "$backup"
+      ptrbox_say "allowlist reloaded (no tunnels dropped)"
+      ;;
+  esac
 }
 
 # A domain here becomes a squid ACL entry, so anything that is not plainly a

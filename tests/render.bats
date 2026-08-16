@@ -125,3 +125,18 @@ setup() {
   run diff -u tests/golden/claude-repo.rendered.yaml "$TMP/rendered.yaml"
   [ "$status" -eq 0 ]
 }
+
+@test "the proxy VM template renders with no leftover placeholders" {
+  proxy_args=()
+  fixture_load_proxy_args
+  run ptrbox_render_file "$TMP/proxy.yaml" vm/proxy.yaml vm "${proxy_args[@]}"
+  [ "$status" -eq 0 ]
+}
+
+@test "rendered proxy VM config matches the golden file" {
+  proxy_args=()
+  fixture_load_proxy_args
+  ptrbox_render_file "$TMP/proxy.yaml" vm/proxy.yaml vm "${proxy_args[@]}"
+  run diff -u tests/golden/proxy.rendered.yaml "$TMP/proxy.yaml"
+  [ "$status" -eq 0 ]
+}

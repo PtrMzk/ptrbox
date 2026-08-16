@@ -9,7 +9,8 @@
 #
 # State, all under $PTRBOX_STUB_DIR:
 #   calls          one line per invocation, in order
-#   vms            names of "existing" VMs, one per line
+#   vms            "existing" VMs, one "name status" line each
+#   vmfs-<name>/   a VM's fake filesystem (proxy squid config, logs, ...)
 #   stdin.N        stdin captured from a call that read it
 #   script.N       any argument too long to log inline (e.g. verify.sh)
 # =============================================================================
@@ -60,5 +61,13 @@ stub_capture_stdin() {
 }
 
 stub_vm_exists() {
-  [ -f "$STUB_VMS" ] && grep -qx "$1" "$STUB_VMS"
+  [ -f "$STUB_VMS" ] && awk -v n="$1" '$1 == n { found = 1 } END { exit !found }' "$STUB_VMS"
+}
+
+# Rewrite a VM's status line ("name status") in place.
+stub_set_status() {
+  [ -f "$STUB_VMS" ] || return 0
+  awk -v n="$1" -v s="$2" '$1 == n { print n, s; next } { print }' \
+    "$STUB_VMS" >"$STUB_VMS.tmp"
+  mv "$STUB_VMS.tmp" "$STUB_VMS"
 }

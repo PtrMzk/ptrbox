@@ -12,6 +12,8 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"ptrbox new"* ]]
   [[ "$output" == *"ptrbox logs"* ]]
+  [[ "$output" == *"start"* ]]
+  [[ "$output" == *"stop"* ]]
 }
 
 @test "no arguments prints help rather than failing" {

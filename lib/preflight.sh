@@ -14,10 +14,11 @@
 # limactl comes from the `lima` formula, which is the one that trips people up.
 #
 # Only list what ptrbox actually runs on the host - every entry here is a hard
-# blocker on install. (jq used to be listed and never called; the guest still
-# apt-installs it in vm/provision/10-base.sh, which is a separate thing.)
-# tests/invariants.bats enforces that each entry is really used.
-PTRBOX_DEPS="limactl:lima squid:squid git:git"
+# blocker on install. (jq used to be listed and never called; squid used to be
+# listed and ran on the host, but now lives inside the proxy VM and is only
+# ever invoked through limactl shell.) tests/invariants.bats enforces that
+# each entry is really used.
+PTRBOX_DEPS="limactl:lima git:git"
 
 ptrbox_preflight_deps() {
   local entry tool formula missing_tools="" missing_formulae=""
@@ -57,10 +58,11 @@ ptrbox_preflight_report() {
   fi
 
   # A foreign listener on the proxy port means VMs would talk to whatever that
-  # is - worth flagging, not worth blocking on (it is usually our own squid).
+  # is - worth flagging, not worth blocking on (it is usually the proxy VM's
+  # own port forward, or a leftover host squid from the pre-proxy-VM setup).
   if command -v lsof >/dev/null 2>&1; then
     if lsof -nP -iTCP:"$PTRBOX_PROXY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-      ptrbox_say "something is already listening on port $PTRBOX_PROXY_PORT (expected: squid)"
+      ptrbox_say "something is listening on port $PTRBOX_PROXY_PORT (expected: the ptrbox-proxy port forward)"
     fi
   fi
 }

@@ -30,8 +30,9 @@ ptrbox_die() {
 # ~/.config/ptrbox/config.
 
 PTRBOX_KEYS="REPO_ROOT CPUS MEMORY DISK PORT_MIN PORT_MAX PROXY_HOST \
-PROXY_PORT VM_SUBNET DNS_SERVERS CLAUDE_MODEL KEYCHAIN_SERVICE BREW_PREFIX \
-SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO IMAGE_URL BIN_DIR"
+PROXY_PORT PROXY_CPUS PROXY_MEMORY PROXY_DISK DNS_SERVERS CLAUDE_MODEL \
+KEYCHAIN_SERVICE BREW_PREFIX SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO \
+IMAGE_URL BIN_DIR"
 
 # Guest images, one per supported distro. Both are apt-based on purpose: the
 # provisioning scripts install Debian package names, and since the time_t
@@ -71,11 +72,16 @@ ptrbox_load_config() {
   : "${PTRBOX_DISK:=50GiB}"
   : "${PTRBOX_PORT_MIN:=3000}"
   : "${PTRBOX_PORT_MAX:=9000}"
-  # Lima vzNAT's conventional gateway and subnet. If `ip route | grep default`
-  # inside a VM shows something else, override both here and in the squid ACL.
+  # Where a sandbox VM reaches the proxy: Lima usernet's conventional gateway
+  # address, which relays to 127.0.0.1 on the host - where the proxy VM's port
+  # forward listens. If `ip route | grep default` inside a VM shows something
+  # else, override here.
   : "${PTRBOX_PROXY_HOST:=192.168.5.2}"
   : "${PTRBOX_PROXY_PORT:=8888}"
-  : "${PTRBOX_VM_SUBNET:=192.168.5.0/24}"
+  # The proxy VM runs squid and nothing else; it stays deliberately tiny.
+  : "${PTRBOX_PROXY_CPUS:=1}"
+  : "${PTRBOX_PROXY_MEMORY:=512MiB}"
+  : "${PTRBOX_PROXY_DISK:=4GiB}"
   # Quad9 + Cloudflare. Quad9 also blocks known-malicious domains at resolution
   # time, a bonus filter layer.
   : "${PTRBOX_DNS_SERVERS:=9.9.9.9 1.1.1.1}"
@@ -101,6 +107,8 @@ ptrbox_load_config() {
   done
 
   # 5. Derived defaults, resolved after the file has had its say.
+  # The brew prefix is only consulted to find leftovers of the pre-proxy-VM
+  # setup (squid used to run on the host via Homebrew).
   if [ -z "${PTRBOX_BREW_PREFIX:-}" ]; then
     # `|| true` plus the emptiness check: a brew that exists but errors would
     # otherwise abort the whole run here, before anything has been printed.
@@ -109,7 +117,8 @@ ptrbox_load_config() {
       PTRBOX_BREW_PREFIX="/opt/homebrew"
     fi
   fi
-  : "${PTRBOX_SQUID_LOG:=$PTRBOX_BREW_PREFIX/var/logs/access.log}"
+  # A path INSIDE the proxy VM (Debian squid's default), read via limactl shell.
+  : "${PTRBOX_SQUID_LOG:=/var/log/squid/access.log}"
 
   # Distro -> image URL, unless an explicit URL was configured. The override is
   # an escape hatch for pinning a build or trying another apt-based image; you
@@ -143,6 +152,7 @@ ptrbox_validate_config() {
   local ns
 
   ptrbox_assert_number CPUS "$PTRBOX_CPUS"
+  ptrbox_assert_number PROXY_CPUS "$PTRBOX_PROXY_CPUS"
   ptrbox_assert_number PORT_MIN "$PTRBOX_PORT_MIN"
   ptrbox_assert_number PORT_MAX "$PTRBOX_PORT_MAX"
   ptrbox_assert_number PROXY_PORT "$PTRBOX_PROXY_PORT"
@@ -150,24 +160,16 @@ ptrbox_validate_config() {
   [ "$PTRBOX_PORT_MIN" -le "$PTRBOX_PORT_MAX" ] ||
     ptrbox_die "PTRBOX_PORT_MIN ($PTRBOX_PORT_MIN) is above PTRBOX_PORT_MAX ($PTRBOX_PORT_MAX)"
 
-  case "$PTRBOX_MEMORY" in
-    [0-9]*GiB | [0-9]*MiB) ;;
-    *) ptrbox_die "PTRBOX_MEMORY must look like 8GiB, got '$PTRBOX_MEMORY'" ;;
-  esac
-  case "$PTRBOX_DISK" in
-    [0-9]*GiB | [0-9]*MiB) ;;
-    *) ptrbox_die "PTRBOX_DISK must look like 50GiB, got '$PTRBOX_DISK'" ;;
-  esac
+  ptrbox_assert_size MEMORY "$PTRBOX_MEMORY"
+  ptrbox_assert_size DISK "$PTRBOX_DISK"
+  ptrbox_assert_size PROXY_MEMORY "$PTRBOX_PROXY_MEMORY"
+  ptrbox_assert_size PROXY_DISK "$PTRBOX_PROXY_DISK"
 
   ptrbox_assert_ipv4 PROXY_HOST "$PTRBOX_PROXY_HOST"
   for ns in $PTRBOX_DNS_SERVERS; do
     ptrbox_assert_ipv4 DNS_SERVERS "$ns"
   done
   [ -n "$PTRBOX_DNS_SERVERS" ] || ptrbox_die "PTRBOX_DNS_SERVERS is empty"
-
-  case "$PTRBOX_VM_SUBNET" in
-    *[!0-9./]*) ptrbox_die "PTRBOX_VM_SUBNET must be a CIDR, got '$PTRBOX_VM_SUBNET'" ;;
-  esac
 
   # The guest image is downloaded and booted with no signature check beyond
   # TLS, so plain http would be a supply-chain hole.
@@ -186,6 +188,13 @@ ptrbox_assert_number() {
 ptrbox_assert_ipv4() {
   case "$2" in
     '' | *[!0-9.]*) ptrbox_die "PTRBOX_$1 must be an IPv4 address, got '$2'" ;;
+  esac
+}
+
+ptrbox_assert_size() {
+  case "$2" in
+    [0-9]*GiB | [0-9]*MiB) ;;
+    *) ptrbox_die "PTRBOX_$1 must look like 8GiB or 512MiB, got '$2'" ;;
   esac
 }
 
@@ -223,4 +232,21 @@ ptrbox_ssh_config_link() { printf '%s/.ssh/config.d/lima-%s\n' "$HOME" "$1"; }
 
 ptrbox_vm_exists() {
   limactl list -q 2>/dev/null | grep -qx "$1"
+}
+
+# "Running", "Stopped", ... - or empty if the VM does not exist.
+ptrbox_vm_status() {
+  limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null |
+    awk -v n="$1" '$1 == n { print $2 }'
+}
+
+# --- install manifest --------------------------------------------------------
+# What ptrbox wrote outside its own checkout, so a future `ptrbox uninstall`
+# does not have to guess. Shared by cmd_install.sh and proxy.sh.
+
+ptrbox_record_manifest() {
+  local dir
+  dir="$(dirname "$(ptrbox_config_path)")"
+  mkdir -p "$dir"
+  printf '%s\n' "$1" >>"$dir/install-manifest"
 }

@@ -1,11 +1,15 @@
 #!/usr/bin/env bats
-# ptrbox logs - reading the egress proxy log.
+# ptrbox logs - reading the egress proxy log, which lives inside the proxy VM.
 
 load lib/harness
 
 setup() {
   harness_setup
-  LOG="$PTRBOX_STUB_PREFIX/var/logs/access.log"
+  # A running proxy VM with a populated access log, as the limactl stub
+  # simulates them.
+  stub_add_vm ptrbox-proxy Running
+  LOG="$(proxy_fs)/var/log/squid/access.log"
+  mkdir -p "$(dirname "$LOG")"
   cat >"$LOG" <<'LOGLINES'
 1691000001.000 12 127.0.0.1 TCP_TUNNEL/200 5000 CONNECT pypi.org:443 - HIER_DIRECT/1.2.3.4 -
 1691000002.000  1 127.0.0.1 TCP_DENIED/403 4000 CONNECT example.com:443 - HIER_NONE/- text/html
@@ -21,6 +25,11 @@ LOGLINES
   [[ "$output" == *"example.com:443"* ]]
 }
 
+@test "logs reads via limactl shell, not a host path" {
+  run "$PTRBOX" logs
+  assert_called "limactl shell ptrbox-proxy -- sudo tail"
+}
+
 @test "--denied shows only blocked requests" {
   run "$PTRBOX" logs --denied
   [ "$status" -eq 0 ]
@@ -31,8 +40,7 @@ LOGLINES
 
 @test "--denied explains how to allow a domain" {
   run "$PTRBOX" logs --denied
-  [[ "$output" == *"allowed_domains.txt"* ]]
-  [[ "$output" == *"squid -k reconfigure"* ]]
+  [[ "$output" == *"ptrbox allow"* ]]
 }
 
 @test "-n limits how far back it reads" {
@@ -54,7 +62,14 @@ LOGLINES
   rm -f "$LOG"
   run "$PTRBOX" logs
   [ "$status" -ne 0 ]
-  [[ "$output" == *"is squid running"* ]]
+  [[ "$output" == *"no proxy log"* ]]
+}
+
+@test "a stopped proxy VM is the diagnosis, not a crash" {
+  stub_set_vm_status ptrbox-proxy Stopped
+  run "$PTRBOX" logs
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"proxy VM is not running"* ]]
 }
 
 @test "an unknown option is rejected rather than ignored" {
@@ -68,9 +83,10 @@ LOGLINES
   [ "$status" -ne 0 ]
 }
 
-@test "logs reads the configured path" {
-  export PTRBOX_SQUID_LOG="$TMP/elsewhere.log"
-  printf 'custom line TCP_DENIED\n' >"$PTRBOX_SQUID_LOG"
+@test "logs reads the configured in-VM path" {
+  export PTRBOX_SQUID_LOG="/custom/access.log"
+  mkdir -p "$(proxy_fs)/custom"
+  printf 'custom line TCP_DENIED\n' >"$(proxy_fs)/custom/access.log"
   run "$PTRBOX" logs
   [[ "$output" == *"custom line"* ]]
 }

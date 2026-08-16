@@ -30,3 +30,22 @@ fixture_load_args() {
     args+=("$line")
   done < <(fixture_render_args)
 }
+
+# Same idea for the proxy VM template (vm/proxy.yaml).
+fixture_proxy_render_args() {
+  cat <<'ARGS'
+IMAGE_URL=https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2
+PROXY_CPUS=1
+PROXY_MEMORY=512MiB
+PROXY_DISK=4GiB
+PROXY_PORT=8888
+ARGS
+}
+
+fixture_load_proxy_args() {
+  proxy_args=()
+  local line
+  while IFS= read -r line; do
+    proxy_args+=("$line")
+  done < <(fixture_proxy_render_args)
+}

@@ -23,6 +23,13 @@ setup() {
   RENDERED="$TMP/rendered.yaml"
   ptrbox_render_file "$RENDERED" vm/claude-repo.yaml vm "${args[@]}"
 
+  proxy_args=()
+  fixture_load_proxy_args
+  PROXY_RENDERED="$TMP/proxy.yaml"
+  ptrbox_render_file "$PROXY_RENDERED" vm/proxy.yaml vm "${proxy_args[@]}"
+  PROXY_STRIPPED="$TMP/proxy-stripped.yaml"
+  sed 's/#.*//' "$PROXY_RENDERED" >"$PROXY_STRIPPED"
+
   # Comments stripped: "must not appear" assertions have to be about what the
   # config DOES, not about prose. The header comment legitimately mentions
   # ~/.ssh and secrets while explaining why neither is present.
@@ -150,6 +157,45 @@ setup() {
   [ "$(grep -c 'HTTPS_PROXY=' "$RENDERED")" -eq 1 ]
 }
 
+# --- the proxy VM ------------------------------------------------------------
+# Squid parses attacker-influenceable bytes from every sandbox; these pin the
+# properties that make its VM a blast chamber rather than a second host.
+
+@test "invariant: the proxy VM mounts nothing" {
+  grep -q '^mounts: \[\]' "$PROXY_STRIPPED"
+  # Belt and braces: no mount entry anywhere outside the images block.
+  run grep -E 'mountPoint|writable' "$PROXY_STRIPPED"
+  [ "$status" -ne 0 ]
+}
+
+@test "invariant: the proxy VM's only host surface is a loopback forward" {
+  grep -q 'hostIP: "127.0.0.1"' "$PROXY_RENDERED"
+  [ "$(grep -c 'hostPort' "$PROXY_STRIPPED")" -eq 1 ]
+  run grep -E 'hostIP: "(0\.0\.0\.0|::)?"' "$PROXY_STRIPPED"
+  [ "$status" -ne 0 ]
+}
+
+@test "invariant: no credentials reach the proxy VM" {
+  run grep -iE 'oauth|token|password|api[_-]?key|secret|keychain' "$PROXY_STRIPPED"
+  [ "$status" -ne 0 ]
+}
+
+@test "invariant: the proxy VM gets squid and none of the sandbox toolchain" {
+  grep -q 'apt-get install -y squid' "$PROXY_RENDERED"
+  run grep -E 'nvm|node|claude|playwright|build-essential' "$PROXY_STRIPPED"
+  [ "$status" -ne 0 ]
+}
+
+@test "invariant: the proxy VM forwards no ssh agent" {
+  grep -q 'forwardAgent: false' "$PROXY_RENDERED"
+}
+
+@test "invariant: the squid config keeps default-deny last" {
+  # Rules evaluate top to bottom; anything after "deny all" is dead, anything
+  # missing it is an open proxy.
+  [ "$(grep '^http_access' host/squid.conf.in | tail -1)" = "http_access deny all" ]
+}
+
 # --- provisioning safety -----------------------------------------------------
 
 @test "invariant: every network-dependent provision step is guarded" {
@@ -157,7 +203,8 @@ setup() {
   # boot hangs on network calls until cloud-init gives up ten minutes later.
   local f
   for f in vm/provision/10-base.sh vm/provision/20-firewall.sh \
-    vm/provision/30-toolchain.sh vm/provision/40-userenv.sh; do
+    vm/provision/30-toolchain.sh vm/provision/40-userenv.sh \
+    vm/provision-proxy/10-squid.sh; do
     grep -q '\.done' "$f" || {
       echo "$f has no done-marker guard" >&2
       return 1
@@ -167,7 +214,7 @@ setup() {
 
 @test "invariant: provision scripts stop on the first error" {
   local f
-  for f in vm/provision/*.sh; do
+  for f in vm/provision/*.sh vm/provision-proxy/*.sh; do
     grep -q '^set -eux$' "$f" || {
       echo "$f does not set -eux" >&2
       return 1

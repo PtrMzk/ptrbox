@@ -1,0 +1,103 @@
+# =============================================================================
+# proxy.yaml - the shared egress proxy VM ("ptrbox-proxy").
+#
+# DO NOT start this file directly. lib/proxy.sh renders it - substituting the
+# double-underscore placeholders and inlining the provision script - into
+# ~/.lima/_generated/ptrbox-proxy.yaml, and starts THAT.
+#
+# Squid runs HERE, not on the Mac. Squid's job is parsing bytes that every
+# sandboxed agent can influence, which makes it the most exposed process in
+# the design - so it gets a blast chamber: a VM with no mounts, no
+# credentials, and nothing else installed. A squid exploit lands in a
+# throwaway guest instead of in a host process running with your privileges.
+#
+# The host's entire share of the proxy is the 127.0.0.1 port forward below.
+# The sandbox VMs are unchanged: they dial the host at 192.168.5.2 (Lima's
+# usernet gateway), the usernet relay delivers that to 127.0.0.1 on the Mac,
+# and this VM's forward carries it to squid.
+#
+# Deliberately tiny - squid idles in a few tens of MB, so the ceilings are
+# set one notch above "obviously enough" rather than sized like a sandbox.
+# The squid.conf and allowlist are NOT baked in here: ptrbox pushes them via
+# limactl shell on every sync (lib/proxy.sh), so this VM can always be
+# deleted and re-created without losing anything.
+# =============================================================================
+
+vmType: "vz"
+cpus: 1
+memory: "512MiB"
+disk: "4GiB"
+
+# No containerd: same 250MB saving as in the sandbox template, and one less
+# thing running in the VM whose whole point is a minimal attack surface.
+containerd:
+  system: false
+  user: false
+
+# Same image as the sandboxes (chosen by PTRBOX_DISTRO), so it is already in
+# Lima's download cache by the time either kind of VM boots second.
+images:
+  - location: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
+    arch: "aarch64"
+
+# NO MOUNTS. The core of why this VM exists: the process most likely to be
+# exploited gets to see nothing of the host. Empty list, not an omission -
+# a from-scratch Lima config mounts only what is declared.
+mounts: []
+
+# The host's only share of the proxy: loopback-bound, so nothing on the LAN
+# can reach squid, and the sandboxes reach it only via the usernet relay.
+portForwards:
+  - guestPort: 8888
+    hostPort: 8888
+    hostIP: "127.0.0.1"
+
+ssh:
+  forwardAgent: false   # Same rationale as the sandboxes: a compromised
+                        # guest must not be able to sign with your keys.
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      # =============================================================================
+      # 10-squid.sh - the proxy VM's only provisioning step. Runs as root inside
+      # the guest, on EVERY boot (Lima installs provision scripts per-boot), hence
+      # the done-marker guard: without it a later boot would hang on apt until
+      # cloud-init gives up.
+      #
+      # Installs squid and NOTHING else - no sandbox toolchain, no extras. The real
+      # squid.conf and allowlist are pushed by lib/proxy.sh after boot; they are
+      # host-side artifacts, which is what keeps this VM disposable.
+      # =============================================================================
+      set -eux
+
+      if [ -f /var/lib/ptrbox/squid.done ]; then
+        exit 0
+      fi
+
+      export DEBIAN_FRONTEND=noninteractive
+
+      apt-get update
+      # This VM terminates traffic from every sandbox, so of all the guests it is
+      # the one that must not boot with known-patched holes. Lima's image cache
+      # never expires; this line is what keeps a fresh proxy current.
+      apt-get upgrade -y
+
+      apt-get install -y squid
+
+      # The allowlist must exist before any config referencing it can parse. Empty
+      # on purpose - with the distro's stock config still active, squid serves
+      # nothing until ptrbox pushes the real config and allowlist.
+      touch /etc/squid/allowed_domains.txt
+
+      mkdir -p /var/lib/ptrbox
+      touch /var/lib/ptrbox/squid.done
+
+# limactl start blocks until the probe passes, so the first sync in
+# lib/proxy.sh never races the package install.
+probes:
+  - description: "squid installed"
+    script: |
+      #!/bin/bash
+      command -v squid >/dev/null

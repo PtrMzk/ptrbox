@@ -8,9 +8,11 @@ setup() {
   # Isolate from the developer's real environment: an exported PTRBOX_* here
   # would silently win over everything these tests set up.
   unset PTRBOX_REPO_ROOT PTRBOX_CPUS PTRBOX_MEMORY PTRBOX_DISK PTRBOX_PORT_MIN \
-    PTRBOX_PORT_MAX PTRBOX_PROXY_HOST PTRBOX_PROXY_PORT PTRBOX_VM_SUBNET \
-    PTRBOX_DNS_SERVERS PTRBOX_CLAUDE_MODEL PTRBOX_KEYCHAIN_SERVICE \
-    PTRBOX_BREW_PREFIX PTRBOX_SQUID_LOG PTRBOX_GIT_USER_NAME PTRBOX_GIT_USER_EMAIL
+    PTRBOX_PORT_MAX PTRBOX_PROXY_HOST PTRBOX_PROXY_PORT PTRBOX_PROXY_CPUS \
+    PTRBOX_PROXY_MEMORY PTRBOX_PROXY_DISK PTRBOX_DNS_SERVERS \
+    PTRBOX_CLAUDE_MODEL PTRBOX_KEYCHAIN_SERVICE PTRBOX_BREW_PREFIX \
+    PTRBOX_SQUID_LOG PTRBOX_GIT_USER_NAME PTRBOX_GIT_USER_EMAIL PTRBOX_DISTRO \
+    PTRBOX_IMAGE_URL PTRBOX_BIN_DIR
 
   HOME="$TMP/home"
   mkdir -p "$HOME"
@@ -29,6 +31,10 @@ setup() {
   [ "$PTRBOX_CPUS" = "4" ]
   [ "$PTRBOX_PROXY_HOST" = "192.168.5.2" ]
   [ "$PTRBOX_DNS_SERVERS" = "9.9.9.9 1.1.1.1" ]
+  # The proxy VM stays tiny: squid is the only thing running in it.
+  [ "$PTRBOX_PROXY_CPUS" = "1" ]
+  [ "$PTRBOX_PROXY_MEMORY" = "512MiB" ]
+  [ "$PTRBOX_PROXY_DISK" = "4GiB" ]
 }
 
 @test "config file overrides defaults" {
@@ -73,6 +79,13 @@ setup() {
   run ptrbox_load_config
   [ "$status" -ne 0 ]
   [[ "$output" == *"PTRBOX_MEMORY"* ]]
+}
+
+@test "rejects malformed proxy VM sizing" {
+  export PTRBOX_PROXY_MEMORY=lots
+  run ptrbox_load_config
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"PTRBOX_PROXY_MEMORY"* ]]
 }
 
 @test "rejects a non-IPv4 proxy host" {
@@ -149,10 +162,9 @@ setup() {
   [[ "$output" == *"must be https"* ]]
 }
 
-@test "squid log defaults under the brew prefix" {
-  export PTRBOX_BREW_PREFIX=/usr/local
+@test "the squid log defaults to Debian's path inside the proxy VM" {
   ptrbox_load_config
-  [ "$PTRBOX_SQUID_LOG" = "/usr/local/var/logs/access.log" ]
+  [ "$PTRBOX_SQUID_LOG" = "/var/log/squid/access.log" ]
 }
 
 # --- names and paths ---------------------------------------------------------

@@ -1,25 +1,29 @@
 #!/usr/bin/env bats
 # ptrbox allow - managing the egress allowlist.
 #
-# The allowlist is a squid ACL file, so the interesting cases are the ones
-# where bad input or a broken edit could take the proxy down.
+# The allowlist lives on the host and is pushed into the proxy VM, where squid
+# validates it. The interesting cases are the ones where bad input or a broken
+# edit could take the proxy down - and, since the proxy became a VM, the ones
+# where it is not running.
 
 load lib/harness
 
 setup() {
   harness_setup
   export PTRBOX_REPO_ROOT="$TMP/code"
-  ALLOWLIST="$PTRBOX_STUB_PREFIX/etc/squid/allowed_domains.txt"
+  ALLOWLIST="$(dirname "$PTRBOX_CONFIG")/allowed_domains.txt"
+  VM_ALLOWLIST="$(proxy_fs)/etc/squid/allowed_domains.txt"
   "$PTRBOX" install >/dev/null 2>&1
   rm -f "$PTRBOX_STUB_DIR/calls"
 }
 
 # --- appending ---------------------------------------------------------------
 
-@test "allow appends a domain" {
+@test "allow appends a domain and pushes it to the proxy VM" {
   run "$PTRBOX" allow files.example.com
   [ "$status" -eq 0 ]
   grep -qx "files.example.com" "$ALLOWLIST"
+  grep -qx "files.example.com" "$VM_ALLOWLIST"
 }
 
 @test "allow accepts several domains at once" {
@@ -52,16 +56,16 @@ setup() {
 @test "a change reloads squid without restarting it" {
   "$PTRBOX" allow files.example.com
   # A restart severs every live VM tunnel, including Claude's request.
-  assert_called "squid -k reconfigure"
-  assert_not_called "brew services restart"
+  assert_called "sudo squid -k reconfigure"
+  assert_not_called "systemctl restart"
 }
 
 @test "the new allowlist is validated before it is kept" {
   "$PTRBOX" allow files.example.com
-  assert_order "squid -k parse" "squid -k reconfigure"
+  assert_order "sudo squid -k parse" "sudo squid -k reconfigure"
 }
 
-@test "an allowlist squid rejects is rolled back" {
+@test "an allowlist squid rejects is rolled back on host and in the VM" {
   export PTRBOX_STUB_SQUID_PARSE=fail
   run "$PTRBOX" allow files.example.com
   [ "$status" -ne 0 ]
@@ -70,9 +74,27 @@ setup() {
   # mentions example domains in its comments.
   run grep -qx "files.example.com" "$ALLOWLIST"
   [ "$status" -ne 0 ]
+  # The proxy VM was restored too - a later squid restart there must not trip
+  # over a file we knew was bad.
+  run grep -qx "files.example.com" "$VM_ALLOWLIST"
+  [ "$status" -ne 0 ]
   # ...and the rejected version is kept rather than thrown away.
   grep -qx "files.example.com" "$ALLOWLIST.rejected"
   assert_not_called "squid -k reconfigure"
+}
+
+# --- the proxy VM is down ----------------------------------------------------
+
+@test "with the proxy stopped the edit is saved and deferred" {
+  stub_set_vm_status ptrbox-proxy Stopped
+  rm -f "$PTRBOX_STUB_DIR/calls"
+  run "$PTRBOX" allow files.example.com
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"applied when it next starts"* ]]
+  grep -qx "files.example.com" "$ALLOWLIST"
+  # Nothing was pushed at a VM that cannot answer.
+  assert_not_called "sudo tee"
+  assert_not_called "squid -k"
 }
 
 # --- validation --------------------------------------------------------------
@@ -114,7 +136,8 @@ ED
   run "$PTRBOX" allow
   [ "$status" -eq 0 ]
   grep -qx "edited.example.com" "$ALLOWLIST"
-  assert_called "squid -k reconfigure"
+  grep -qx "edited.example.com" "$VM_ALLOWLIST"
+  assert_called "sudo squid -k reconfigure"
 }
 
 @test "an editor session that changes nothing does not reload squid" {

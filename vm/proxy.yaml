@@ -1,0 +1,70 @@
+# =============================================================================
+# proxy.yaml - the shared egress proxy VM ("ptrbox-proxy").
+#
+# DO NOT start this file directly. lib/proxy.sh renders it - substituting the
+# double-underscore placeholders and inlining the provision script - into
+# ~/.lima/_generated/ptrbox-proxy.yaml, and starts THAT.
+#
+# Squid runs HERE, not on the Mac. Squid's job is parsing bytes that every
+# sandboxed agent can influence, which makes it the most exposed process in
+# the design - so it gets a blast chamber: a VM with no mounts, no
+# credentials, and nothing else installed. A squid exploit lands in a
+# throwaway guest instead of in a host process running with your privileges.
+#
+# The host's entire share of the proxy is the 127.0.0.1 port forward below.
+# The sandbox VMs are unchanged: they dial the host at 192.168.5.2 (Lima's
+# usernet gateway), the usernet relay delivers that to 127.0.0.1 on the Mac,
+# and this VM's forward carries it to squid.
+#
+# Deliberately tiny - squid idles in a few tens of MB, so the ceilings are
+# set one notch above "obviously enough" rather than sized like a sandbox.
+# The squid.conf and allowlist are NOT baked in here: ptrbox pushes them via
+# limactl shell on every sync (lib/proxy.sh), so this VM can always be
+# deleted and re-created without losing anything.
+# =============================================================================
+
+vmType: "vz"
+cpus: __PROXY_CPUS__
+memory: "__PROXY_MEMORY__"
+disk: "__PROXY_DISK__"
+
+# No containerd: same 250MB saving as in the sandbox template, and one less
+# thing running in the VM whose whole point is a minimal attack surface.
+containerd:
+  system: false
+  user: false
+
+# Same image as the sandboxes (chosen by PTRBOX_DISTRO), so it is already in
+# Lima's download cache by the time either kind of VM boots second.
+images:
+  - location: "__IMAGE_URL__"
+    arch: "aarch64"
+
+# NO MOUNTS. The core of why this VM exists: the process most likely to be
+# exploited gets to see nothing of the host. Empty list, not an omission -
+# a from-scratch Lima config mounts only what is declared.
+mounts: []
+
+# The host's only share of the proxy: loopback-bound, so nothing on the LAN
+# can reach squid, and the sandboxes reach it only via the usernet relay.
+portForwards:
+  - guestPort: __PROXY_PORT__
+    hostPort: __PROXY_PORT__
+    hostIP: "127.0.0.1"
+
+ssh:
+  forwardAgent: false   # Same rationale as the sandboxes: a compromised
+                        # guest must not be able to sign with your keys.
+
+provision:
+  - mode: system
+    script: |
+      __INCLUDE:provision-proxy/10-squid.sh__
+
+# limactl start blocks until the probe passes, so the first sync in
+# lib/proxy.sh never races the package install.
+probes:
+  - description: "squid installed"
+    script: |
+      #!/bin/bash
+      command -v squid >/dev/null

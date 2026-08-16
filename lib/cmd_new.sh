@@ -6,11 +6,15 @@
 #   repo dir + git init    a brand-new project is one command
 #   neutralise git hooks   agent-written hooks must never run on the Mac
 #   render + validate      fail before touching any VM state
+#   proxy VM up            the sandbox's only way out, once its wall is up
 #   boot 1 (open network)  installers need hosts that are not on the allowlist
 #   reboot                 sandbox-firewall.service starts; the wall goes up
 #   verify                 every security property, asserted
 #   token                  injected only into a VM that passed verification
 # =============================================================================
+
+# shellcheck source=lib/proxy.sh
+. "$PTRBOX_ROOT/lib/proxy.sh"
 
 ptrbox_cmd_new() {
   local arg repo_dir name config verify_out token
@@ -50,6 +54,9 @@ ptrbox_cmd_new() {
   git -C "$repo_dir" config core.hooksPath /dev/null
 
   name="$(ptrbox_vm_name "$repo_dir")"
+  if [ "$name" = "$PTRBOX_PROXY_VM" ]; then
+    ptrbox_die "'$name' is reserved for the egress proxy VM - pick another repo name"
+  fi
   if ptrbox_vm_exists "$name"; then
     ptrbox_die "VM '$name' already exists. Enter it: ssh lima-$name   Remove it: ptrbox rm $name"
   fi
@@ -78,6 +85,12 @@ ptrbox_cmd_new() {
 
   # Validate before touching any VM state.
   limactl validate "$config"
+
+  # --- the shared egress proxy -------------------------------------------
+  # Up-front, not lazily: from the post-provision reboot onward the proxy is
+  # this VM's only way out, and vm/verify.sh needs it to prove that egress
+  # works. Idempotent and cheap when the proxy is already running.
+  ptrbox_proxy_ensure
 
   # --- boot 1: provisioning over an open network -------------------------
   # Minutes, not seconds: installers, plus the base image download on the very

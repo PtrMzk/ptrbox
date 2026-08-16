@@ -4,8 +4,12 @@
 #
 # Removes: the Lima VM and its disk, the generated config, the ssh config
 # symlink. Never touches the repo on the host - that is the whole point of
-# keeping the repo outside the VM's lifecycle.
+# keeping the repo outside the VM's lifecycle. The proxy VM is out of scope
+# here: it is stopped (not deleted) once the last running sandbox is gone.
 # =============================================================================
+
+# shellcheck source=lib/proxy.sh
+. "$PTRBOX_ROOT/lib/proxy.sh"
 
 ptrbox_cmd_rm() {
   local arg name config link
@@ -18,6 +22,10 @@ ptrbox_cmd_rm() {
   # Same derivation as `new`, so a repo path, a bare repo name and the VM name
   # all resolve identically and the two commands cannot drift.
   name="$(ptrbox_vm_name "$arg")"
+
+  if [ "$name" = "$PTRBOX_PROXY_VM" ]; then
+    ptrbox_die "'$name' is the shared egress proxy, not a sandbox - it stops by itself when the last sandbox does (limactl delete $name if you really mean to destroy it)"
+  fi
 
   if ! ptrbox_vm_exists "$name"; then
     ptrbox_say "no VM named '$name'. Existing VMs:"
@@ -32,4 +40,7 @@ ptrbox_cmd_rm() {
   rm -f "$config" "$link"
 
   ptrbox_say "deleted VM '$name' (the repo on the host is untouched)"
+
+  # With this sandbox gone the proxy may have nobody left to serve.
+  ptrbox_proxy_stop_if_idle
 }

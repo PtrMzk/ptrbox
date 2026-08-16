@@ -37,12 +37,21 @@
 #PTRBOX_PORT_MAX=9000
 
 # --- Network -----------------------------------------------------------------
-# Lima vzNAT's conventional gateway and subnet. If `ip route | grep default`
-# inside a VM disagrees, change both - PROXY_HOST is the only address a VM may
-# talk to, and VM_SUBNET is the squid ACL that matches it.
+# Where a sandbox reaches the egress proxy: Lima usernet's conventional
+# gateway address, which the relay delivers to 127.0.0.1 on the Mac - where
+# the proxy VM's port forward listens. PROXY_HOST is the only address a
+# sandbox may talk to; if `ip route | grep default` inside a VM disagrees,
+# change it here.
 #PTRBOX_PROXY_HOST=192.168.5.2
 #PTRBOX_PROXY_PORT=8888
-#PTRBOX_VM_SUBNET=192.168.5.0/24
+
+# The proxy VM itself ("ptrbox-proxy") runs squid and nothing else, so it is
+# sized one notch above "obviously enough". Sizing changes apply on the next
+# re-creation (limactl delete ptrbox-proxy; any `ptrbox new`/`start` rebuilds
+# it).
+#PTRBOX_PROXY_CPUS=1
+#PTRBOX_PROXY_MEMORY=512MiB
+#PTRBOX_PROXY_DISK=4GiB
 
 # DNS resolvers, space separated. Pinned at both the firewall and the guest's
 # /etc/resolv.conf: unpinned port-53 egress is a covert exfiltration channel.
@@ -65,9 +74,12 @@
 #PTRBOX_GIT_USER_NAME="Your Name"
 #PTRBOX_GIT_USER_EMAIL="you@example.com"
 
-# --- Host paths --------------------------------------------------------------
-# Homebrew prefix; auto-detected via `brew --prefix` (/opt/homebrew on Apple
-# Silicon, /usr/local on Intel). The proxy log defaults to
-# $PTRBOX_BREW_PREFIX/var/logs/access.log.
+# --- Paths -------------------------------------------------------------------
+# The squid access log, as a path INSIDE the proxy VM (read via limactl
+# shell). Defaults to Debian's standard location.
+#PTRBOX_SQUID_LOG=/var/log/squid/access.log
+
+# Homebrew prefix; auto-detected via `brew --prefix`. Only consulted to find
+# leftovers of the old host-squid setup (allowlist migration, retirement
+# note).
 #PTRBOX_BREW_PREFIX=/opt/homebrew
-#PTRBOX_SQUID_LOG=/opt/homebrew/var/logs/access.log
