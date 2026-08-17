@@ -6,7 +6,7 @@
 # cloud-init gives up.
 #
 # Installs squid and NOTHING else - no sandbox toolchain, no extras. The real
-# squid.conf and allowlist are pushed by lib/proxy.sh after boot; they are
+# squid.conf and allowlist are pushed in from the host after boot; they are
 # host-side artifacts, which is what keeps this VM disposable.
 # =============================================================================
 set -eux
