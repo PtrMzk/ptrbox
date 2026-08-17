@@ -18,7 +18,7 @@ GO ?= go
 
 .DEFAULT_GOAL := help
 
-.PHONY: help lint govet shlint test gotest bats check smoke clean
+.PHONY: help lint govet shlint test gotest bats check golden smoke clean
 
 help: ## Show this help
 	@grep -hE '^[a-z][a-z-]*:.*##' $(MAKEFILE_LIST) | sed 's/:[^#]*## /\t/' | expand -t 12
@@ -43,6 +43,10 @@ bats: ## Run the legacy bats suite against bin/ptrbox (needs bats-core)
 	@tests/run.sh
 
 check: lint test ## Everything that runs without a Mac
+
+golden: ## Regenerate the golden rendered VM configs - then READ THE DIFF
+	@$(GO) test ./internal/render -run TestGolden -update
+	@git diff --stat -- tests/golden || true
 
 clean: ## Remove build output
 	@rm -rf dist
