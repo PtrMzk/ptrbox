@@ -43,6 +43,8 @@ func main() {
 		// Usage was already printed; the status is what distinguishes "you
 		// typed something that is not a command" from "the command failed".
 		os.Exit(2)
+	case errors.Is(err, cli.ErrReported):
+		os.Exit(1)
 	default:
 		fmt.Fprintf(os.Stderr, "ptrbox: error: %v\n", err)
 		os.Exit(1)

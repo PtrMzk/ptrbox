@@ -64,6 +64,12 @@ var needsConfig = map[string]bool{
 // command that ran and failed.
 var ErrUsage = errors.New("usage")
 
+// ErrReported means the command already explained itself and main should just
+// take the exit status. For failures whose useful form is several lines - a
+// missing dependency and the brew line that fixes it - where restating the
+// headline as "ptrbox: error: ..." would only say it twice.
+var ErrReported = errors.New("reported")
+
 // Run dispatches one invocation. args excludes the program name.
 func Run(env *Env, args []string) error {
 	command := "help"

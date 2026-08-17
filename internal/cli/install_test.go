@@ -9,6 +9,7 @@ package cli
 // config never lands, and the user's allowlist is never overwritten.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -311,10 +312,15 @@ func TestAMissingDependencyStopsTheInstallAndNamesTheFormula(t *testing.T) {
 	h := newHarness(t)
 	h.missing["limactl"] = true
 
-	if err := h.run("install"); err == nil {
-		t.Fatal("install succeeded without limactl")
+	err := h.run("install")
+	if !errors.Is(err, ErrReported) {
+		t.Fatalf("err = %v, want ErrReported (the message is already on screen)", err)
 	}
 	h.assertOutputContains("missing dependencies: limactl")
+	// Said once, not once by the command and again by main.
+	if n := strings.Count(h.output(), "missing dependencies"); n != 1 {
+		t.Errorf("the diagnosis appears %d times, want 1:\n%s", n, h.output())
+	}
 	// ptrbox never installs packages itself - it prints the command and stops.
 	h.assertOutputContains("brew install lima")
 	if h.exists(config.AllowlistPath()) {

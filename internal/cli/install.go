@@ -244,7 +244,7 @@ func preflightDeps(env *Env) error {
 	env.Out.Say("missing dependencies: %s", strings.Join(tools, " "))
 	env.Out.Say("install them with:")
 	env.Out.Say("  brew install %s", strings.Join(formulae, " "))
-	return fmt.Errorf("missing dependencies: %s", strings.Join(tools, " "))
+	return ErrReported
 }
 
 // haveTool answers for limactl through the lima client, so a test's fake
