@@ -2,7 +2,7 @@
 # ptrbox - development entry points.
 #
 #   make lint    syntax + shellcheck, runs anywhere
-#   make test    unit + simulation tests against stubbed lima/brew/keychain,
+#   make test    unit + simulation tests against stubbed lima/keychain,
 #                runs anywhere (no Mac, no VM, no network)
 #   make smoke   the real VM cycle - macOS + lima only, destroys and recreates
 #                a scratch VM, takes minutes

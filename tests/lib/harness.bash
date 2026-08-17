@@ -2,7 +2,7 @@
 # =============================================================================
 # harness.bash - shared setup for stub-driven tests.
 #
-# Gives each test a throwaway HOME, a stubbed PATH (lima, brew, security are
+# Gives each test a throwaway HOME, a stubbed PATH (lima and security are
 # fakes; git is real, because its behaviour is part of what we assert), and
 # helpers for reading the stub call log. The limactl stub also emulates each
 # VM's filesystem, which is how the proxy VM's squid is simulated.
@@ -23,7 +23,7 @@ harness_setup() {
   unset PTRBOX_REPO_ROOT PTRBOX_CPUS PTRBOX_MEMORY PTRBOX_DISK PTRBOX_PORT_MIN \
     PTRBOX_PORT_MAX PTRBOX_PROXY_HOST PTRBOX_PROXY_PORT PTRBOX_PROXY_CPUS \
     PTRBOX_PROXY_MEMORY PTRBOX_PROXY_DISK PTRBOX_DNS_SERVERS \
-    PTRBOX_CLAUDE_MODEL PTRBOX_KEYCHAIN_SERVICE PTRBOX_BREW_PREFIX \
+    PTRBOX_CLAUDE_MODEL PTRBOX_KEYCHAIN_SERVICE \
     PTRBOX_SQUID_LOG PTRBOX_GIT_USER_NAME PTRBOX_GIT_USER_EMAIL PTRBOX_DISTRO \
     PTRBOX_IMAGE_URL PTRBOX_BIN_DIR PTRBOX_EXTRA_PACKAGES
 
@@ -37,9 +37,6 @@ harness_setup() {
   export PTRBOX_CONFIG="$TMP/ptrbox.conf"
   : >"$PTRBOX_CONFIG"
 
-  # Fake Homebrew prefix so nothing reaches for a real /opt/homebrew.
-  export PTRBOX_STUB_PREFIX="$TMP/brew"
-  mkdir -p "$PTRBOX_STUB_PREFIX/etc/squid" "$PTRBOX_STUB_PREFIX/var/logs"
 
   # Deterministic git identity: without this, `new` picks up whatever the
   # machine running the tests has configured.

@@ -53,22 +53,14 @@ ptrbox_proxy_write() { ptrbox_proxy_sh tee "$1" >/dev/null; }
 
 # Seed the host-side allowlist. Returns 0 if it was created, 1 if it existed.
 ptrbox_allowlist_seed() {
-  local target legacy
+  local target
   target="$(ptrbox_allowlist_path)"
   if [ -f "$target" ]; then
     return 1
   fi
   mkdir -p "$(dirname "$target")"
-  # Migration from the pre-proxy-VM layout, where the allowlist lived under
-  # the Homebrew prefix: the user's accumulated grants must not be lost.
-  legacy="$PTRBOX_BREW_PREFIX/etc/squid/allowed_domains.txt"
-  if [ -f "$legacy" ]; then
-    cp "$legacy" "$target"
-    ptrbox_say "migrated the allowlist from $legacy to $target"
-  else
-    cp "$PTRBOX_ROOT/host/allowed_domains.txt" "$target"
-    ptrbox_say "installed $target"
-  fi
+  cp "$PTRBOX_ROOT/host/allowed_domains.txt" "$target"
+  ptrbox_say "installed $target"
   ptrbox_record_manifest "wrote $target"
   return 0
 }

@@ -31,7 +31,7 @@ ptrbox_die() {
 
 PTRBOX_KEYS="REPO_ROOT CPUS MEMORY DISK PORT_MIN PORT_MAX PROXY_HOST \
 PROXY_PORT PROXY_CPUS PROXY_MEMORY PROXY_DISK DNS_SERVERS CLAUDE_MODEL \
-KEYCHAIN_SERVICE BREW_PREFIX SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO \
+KEYCHAIN_SERVICE SQUID_LOG GIT_USER_NAME GIT_USER_EMAIL DISTRO \
 IMAGE_URL BIN_DIR EXTRA_PACKAGES"
 
 # Guest images, one per supported distro. Both are apt-based on purpose: the
@@ -112,16 +112,6 @@ ptrbox_load_config() {
   done
 
   # 5. Derived defaults, resolved after the file has had its say.
-  # The brew prefix is only consulted to find leftovers of the pre-proxy-VM
-  # setup (squid used to run on the host via Homebrew).
-  if [ -z "${PTRBOX_BREW_PREFIX:-}" ]; then
-    # `|| true` plus the emptiness check: a brew that exists but errors would
-    # otherwise abort the whole run here, before anything has been printed.
-    PTRBOX_BREW_PREFIX="$(brew --prefix 2>/dev/null || true)"
-    if [ -z "$PTRBOX_BREW_PREFIX" ]; then
-      PTRBOX_BREW_PREFIX="/opt/homebrew"
-    fi
-  fi
   # A path INSIDE the proxy VM (Debian squid's default), read via limactl shell.
   : "${PTRBOX_SQUID_LOG:=/var/log/squid/access.log}"
 

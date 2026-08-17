@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # =============================================================================
-# ptrbox install against stubbed brew/lima.
+# ptrbox install against stubbed lima.
 #
 # Install's job since the proxy moved into a VM: seed the host-side allowlist,
 # provision/start the ptrbox-proxy VM, push a validated squid config into it,
@@ -117,31 +117,6 @@ setup() {
   assert_not_called "systemctl restart"
 }
 
-# --- migration from the host-squid layout ------------------------------------
-
-@test "a pre-existing brew allowlist is migrated, not discarded" {
-  mkdir -p "$PTRBOX_STUB_PREFIX/etc/squid"
-  printf 'my.hard.won.grants\n' >"$PTRBOX_STUB_PREFIX/etc/squid/allowed_domains.txt"
-  run "$PTRBOX" install
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"migrated the allowlist"* ]]
-  [ "$(cat "$ALLOWLIST")" = "my.hard.won.grants" ]
-}
-
-@test "a leftover ptrbox-managed host squid gets a retirement note" {
-  printf '# ptrbox-managed v1\nhttp_port 8888\n' >"$PTRBOX_STUB_PREFIX/etc/squid.conf"
-  run "$PTRBOX" install
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"brew services stop squid"* ]]
-}
-
-@test "a hand-rolled host squid config is not commented on" {
-  printf '# mine\nhttp_port 3128\n' >"$PTRBOX_STUB_PREFIX/etc/squid.conf"
-  run "$PTRBOX" install
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"brew services stop"* ]]
-}
-
 # --- ssh ---------------------------------------------------------------------
 
 @test "install adds the ssh Include line" {
@@ -229,15 +204,12 @@ setup() {
   # stubs source it from their own directory.
   mkdir -p "$TMP/partial"
   ln -s "$REPO_ROOT/tests/stubs/_lib.sh" "$TMP/partial/_lib.sh"
-  for t in brew security; do
-    ln -s "$REPO_ROOT/tests/stubs/$t" "$TMP/partial/$t"
-  done
+  ln -s "$REPO_ROOT/tests/stubs/security" "$TMP/partial/security"
   PATH="$TMP/partial:/usr/bin:/bin" run "$PTRBOX" install
   [ "$status" -ne 0 ]
   [[ "$output" == *"missing dependencies: limactl"* ]]
+  # ptrbox never installs packages itself - it prints the command and stops.
   [[ "$output" == *"brew install lima"* ]]
-  # ptrbox never installs packages itself.
-  assert_not_called "brew install"
   [ ! -f "$ALLOWLIST" ]
 }
 

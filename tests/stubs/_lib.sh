@@ -3,7 +3,7 @@
 # _lib.sh - shared plumbing for the command stubs. Sourced by each stub.
 #
 # The stubs let the whole ptrbox lifecycle run on a machine with no Lima, no
-# Squid, no Homebrew and no Keychain: they record how they were called and
+# Squid and no Keychain: they record how they were called and
 # answer from canned state. That is what makes install/provision/deprovision
 # testable without a Mac.
 #

@@ -51,11 +51,10 @@ HELP
   ptrbox_install_ssh_include
 
   # --- the egress proxy VM -----------------------------------------------
-  # Seeds the allowlist (migrating a pre-v2 one from the brew prefix if it
-  # exists), creates/starts the proxy VM, and pushes the current config.
+  # Seeds the allowlist, creates/starts the proxy VM, and pushes the current
+  # config.
   ptrbox_proxy_ensure
   ptrbox_install_allowlist_report
-  ptrbox_install_legacy_squid_note
 
   # --- put ptrbox on PATH ------------------------------------------------
   ptrbox_install_symlink
@@ -163,18 +162,5 @@ ptrbox_install_allowlist_report() {
   if ! cmp -s "$PTRBOX_ROOT/host/allowed_domains.txt" "$target"; then
     ptrbox_say "$target differs from the shipped allowlist (yours is kept)."
     ptrbox_say "compare with: diff $target $PTRBOX_ROOT/host/allowed_domains.txt"
-  fi
-}
-
-# --- migration ---------------------------------------------------------------
-
-# Before v2 the proxy was Homebrew's squid on the host. If install finds a
-# config it wrote back then, tell the user that daemon is now dead weight -
-# but do not stop or uninstall anything: host services are the user's call.
-ptrbox_install_legacy_squid_note() {
-  local legacy="$PTRBOX_BREW_PREFIX/etc/squid.conf"
-  if [ -f "$legacy" ] && grep -q '^# ptrbox-managed' "$legacy"; then
-    ptrbox_say "squid on the host is no longer used - the proxy now runs in the ptrbox-proxy VM"
-    ptrbox_say "stop the old one with: brew services stop squid"
   fi
 }

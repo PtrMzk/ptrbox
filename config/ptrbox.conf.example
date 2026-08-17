@@ -88,8 +88,3 @@
 # The squid access log, as a path INSIDE the proxy VM (read via limactl
 # shell). Defaults to Debian's standard location.
 #PTRBOX_SQUID_LOG=/var/log/squid/access.log
-
-# Homebrew prefix; auto-detected via `brew --prefix`. Only consulted to find
-# leftovers of the old host-squid setup (allowlist migration, retirement
-# note).
-#PTRBOX_BREW_PREFIX=/opt/homebrew
