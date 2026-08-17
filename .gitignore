@@ -12,5 +12,8 @@
 # Test scratch space
 tests/tmp/
 
+# Compiled CLI
+/dist/
+
 # Half-rendered artifacts (render_file cleans up after itself; belt and braces)
 *.tmp.*

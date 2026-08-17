@@ -1,31 +1,51 @@
 # =============================================================================
 # ptrbox - development entry points.
 #
-#   make lint    syntax + shellcheck, runs anywhere
-#   make test    unit + simulation tests against stubbed lima/keychain,
-#                runs anywhere (no Mac, no VM, no network)
+#   make lint    go vet + shell syntax/shellcheck, runs anywhere
+#   make test    unit + simulation tests against a fake lima, runs anywhere
+#                (no Mac, no VM, no network)
 #   make smoke   the real VM cycle - macOS + lima only, destroys and recreates
 #                a scratch VM, takes minutes
 #
 # lint and test are the automated feedback loop: they must pass before a
 # commit. smoke is the only step that needs actual hardware.
+#
+# The host CLI is Go; the guest-side provisioning scripts stay bash, so both
+# toolchains are linted.
 # =============================================================================
 SHELL := /bin/bash
+GO ?= go
 
 .DEFAULT_GOAL := help
 
-.PHONY: help lint test check smoke
+.PHONY: help lint govet shlint test gotest bats check smoke clean
 
 help: ## Show this help
 	@grep -hE '^[a-z][a-z-]*:.*##' $(MAKEFILE_LIST) | sed 's/:[^#]*## /\t/' | expand -t 12
 
-lint: ## Syntax-check and shellcheck every shell file
+lint: govet shlint ## Vet the Go code and shellcheck the guest scripts
+
+govet:
+	@$(GO) vet ./...
+
+shlint:
 	@tests/lint.sh
 
-test: ## Run unit + simulation tests (bats)
+test: gotest ## Run unit + simulation tests
+
+gotest:
+	@$(GO) test ./...
+
+# The bats suite is the pre-Go harness, kept runnable while the CLI is ported
+# package by package and deleted once nothing bash-side is left to test. It is
+# deliberately not part of `check`: it exercises bin/ptrbox, not the Go build.
+bats: ## Run the legacy bats suite against bin/ptrbox (needs bats-core)
 	@tests/run.sh
 
 check: lint test ## Everything that runs without a Mac
+
+clean: ## Remove build output
+	@rm -rf dist
 
 smoke: ## Real VM cycle on macOS (destroys/recreates the sandbox-test VM)
 	@[ "$$(uname -s)" = "Darwin" ] || { echo "smoke: macOS only" >&2; exit 1; }
