@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lint.sh - syntax-check and shellcheck every shell file in the repo.
+# lint.sh - syntax-check and shellcheck the GUEST-side shell scripts.
+#
+# The host CLI is Go; `go vet` covers it. What is left in bash is the code that
+# runs inside the VMs - the provisioning steps and the verification script -
+# because bash is the native language of a Debian guest and vm/ is the
+# documented review surface for what a sandbox contains.
 #
 # `bash -n` always runs (it needs nothing but bash). shellcheck runs when it is
 # installed and is skipped with a warning otherwise, so a missing optional tool
@@ -8,56 +13,29 @@
 #   macOS:  brew install shellcheck
 #   Linux:  apt install shellcheck   (or: npm i -g shellcheck)
 #
-# Bash 3.2 compatible on purpose - that is what macOS ships as /bin/bash, and
-# these scripts run on the host Mac.
+# These scripts are rendered into a Lima config before they run, so they carry
+# double-underscore placeholders that neither tool minds.
 # =============================================================================
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Every tracked shell file: .sh/.bash by extension, plus anything whose first
-# line is a sh/bash shebang (that is how bin/ptrbox and the stubs are found).
-shell_files() {
-  find . -path ./.git -prune -o -path ./tests/tmp -prune -o -type f -print |
-    while IFS= read -r f; do
-      case "$f" in
-        *.sh | *.bash)
-          printf '%s\n' "$f"
-          continue
-          ;;
-      esac
-      case "$(head -n 1 "$f" 2>/dev/null)" in
-        '#!'*sh | '#!'*sh\ *) printf '%s\n' "$f" ;;
-      esac
-    done
-}
-
-files=""
-while IFS= read -r f; do
-  files="$files $f"
-done <<EOF
-$(shell_files)
-EOF
-
-# shellcheck disable=SC2086  # word splitting is the point: $files is a list
-set -- $files
-if [ "$#" -eq 0 ]; then
-  echo "lint: no shell files found" >&2
+set -- vm/verify.sh vm/provision/*.sh vm/provision-proxy/*.sh
+if [ "$#" -eq 0 ] || [ ! -e "$1" ]; then
+  echo "lint: no guest scripts found" >&2
   exit 1
 fi
 
 status=0
 
-echo "== bash -n ($# files)"
+echo "== bash -n ($# guest scripts)"
 for f in "$@"; do
   bash -n "$f" || status=1
 done
 
 if command -v shellcheck >/dev/null 2>&1; then
   echo "== shellcheck ($(shellcheck --version | awk '/version:/ {print $2}'))"
-  # -x: follow `source` directives so lib/*.sh sourced by bin/ptrbox is checked
-  # in context rather than reported as "not specified as input".
-  shellcheck -x "$@" || status=1
+  shellcheck "$@" || status=1
 else
   echo "== shellcheck SKIPPED (not installed - brew install shellcheck)" >&2
 fi

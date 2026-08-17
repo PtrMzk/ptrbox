@@ -20,10 +20,13 @@ BIN := dist/ptrbox
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build lint govet shlint test gotest bats check golden smoke clean
+.PHONY: help build install lint govet shlint test gotest check golden smoke clean
 
 build: ## Compile the CLI to dist/ptrbox
 	@$(GO) build -o $(BIN) ./cmd/ptrbox
+
+install: ## Install ptrbox into your Go bin directory
+	@$(GO) install ./cmd/ptrbox
 
 help: ## Show this help
 	@grep -hE '^[a-z][a-z-]*:.*##' $(MAKEFILE_LIST) | sed 's/:[^#]*## /\t/' | expand -t 12
@@ -41,12 +44,6 @@ test: gotest ## Run unit + simulation tests
 gotest:
 	@$(GO) test ./...
 
-# The bats suite is the pre-Go harness, kept runnable while the CLI is ported
-# package by package and deleted once nothing bash-side is left to test. It is
-# deliberately not part of `check`: it exercises bin/ptrbox, not the Go build.
-bats: ## Run the legacy bats suite against bin/ptrbox (needs bats-core)
-	@tests/run.sh
-
 check: lint test ## Everything that runs without a Mac
 
 golden: ## Regenerate the golden rendered VM configs - then READ THE DIFF
@@ -56,8 +53,8 @@ golden: ## Regenerate the golden rendered VM configs - then READ THE DIFF
 clean: ## Remove build output
 	@rm -rf dist
 
-smoke: ## Real VM cycle on macOS (destroys/recreates the sandbox-test VM)
+smoke: build ## Real VM cycle on macOS (destroys/recreates the sandbox-test VM)
 	@[ "$$(uname -s)" = "Darwin" ] || { echo "smoke: macOS only" >&2; exit 1; }
-	bin/ptrbox install
-	-bin/ptrbox rm sandbox-test
-	bin/ptrbox new sandbox-test
+	$(BIN) install
+	-$(BIN) rm sandbox-test
+	$(BIN) new sandbox-test
