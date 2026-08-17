@@ -1,0 +1,195 @@
+// Package cli is ptrbox's command surface.
+//
+// Every command runs on the HOST with your privileges. Nothing here is ever
+// provisioned into a sandbox VM - an agent that can edit its own sandbox's
+// provisioning code is not sandboxed.
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+
+	"github.com/PtrMzk/ptrbox/internal/config"
+	"github.com/PtrMzk/ptrbox/internal/lima"
+	"github.com/PtrMzk/ptrbox/internal/proxy"
+	"github.com/PtrMzk/ptrbox/internal/ui"
+)
+
+// Env is everything a command needs that is not its own arguments. Assembled
+// once in main and, in tests, assembled against fakes - which is what lets the
+// whole lifecycle be simulated without a Mac.
+type Env struct {
+	Cfg    *config.Config
+	Lima   *lima.Client
+	Proxy  *proxy.Proxy
+	Assets fs.FS
+
+	// Out carries progress notes; Stdout carries command output that a caller
+	// might pipe (a log tail, the allowlist).
+	Out    ui.Printer
+	Stdout io.Writer
+	Stdin  io.Reader
+
+	// Keychain is where the Claude token comes from.
+	Keychain Keychain
+
+	// Exe is the path to the running binary, for the PATH symlink offer.
+	Exe string
+
+	// Interactive says whether a question can be asked at all.
+	Interactive bool
+	// AssumeYes and NoInput come from install's flags.
+	AssumeYes bool
+	NoInput   bool
+
+	// Editor opens a file for the user. A field so tests can supply one
+	// without needing a real editor on the machine.
+	Editor func(path string) error
+
+	// Load resolves the configuration and everything derived from it. It is
+	// called only for commands that need it, so `ptrbox help` and
+	// `ptrbox version` still work on a host whose config file does not parse.
+	Load func(*Env) error
+}
+
+// needsConfig lists the commands that cannot run without a resolved config.
+var needsConfig = map[string]bool{
+	"install": true, "new": true, "rm": true,
+	"start": true, "stop": true, "logs": true, "allow": true,
+}
+
+// ErrUsage is returned for an unknown command: exit status 2, distinct from a
+// command that ran and failed.
+var ErrUsage = errors.New("usage")
+
+// Run dispatches one invocation. args excludes the program name.
+func Run(env *Env, args []string) error {
+	command := "help"
+	if len(args) > 0 {
+		command = args[0]
+		args = args[1:]
+	}
+
+	if needsConfig[command] {
+		if err := env.Load(env); err != nil {
+			return err
+		}
+	}
+
+	switch command {
+	case "install":
+		return cmdInstall(env, args)
+	case "new":
+		return cmdNew(env, args)
+	case "rm":
+		return cmdRm(env, args)
+	case "start":
+		return cmdStart(env, args)
+	case "stop":
+		return cmdStop(env, args)
+	case "logs":
+		return cmdLogs(env, args)
+	case "allow":
+		return cmdAllow(env, args)
+	case "help", "-h", "--help":
+		fmt.Fprint(env.Stdout, usage)
+		return nil
+	case "version", "--version":
+		fmt.Fprintf(env.Stdout, "ptrbox %s\n", config.Version)
+		return nil
+	}
+
+	fmt.Fprintf(env.Out.W, "ptrbox: unknown command: %s\n\n", command)
+	fmt.Fprint(env.Out.W, usage)
+	return ErrUsage
+}
+
+const usage = `ptrbox - sandboxed Claude Code VMs, one per repo
+
+USAGE
+  ptrbox <command> [args]
+
+COMMANDS
+  install            set up the host: dependency checks, the squid proxy VM,
+                     ssh config. Idempotent; safe to re-run.
+  new <repo>         create the repo (if needed) and provision its VM
+  rm <repo|vm>       destroy a VM. Never touches the repo on the host.
+  start <repo|vm>    boot an already-provisioned VM (seconds, not minutes)
+  stop <repo|vm>     power a VM off, keeping its disk and state
+  logs [--denied]    tail the proxy log; --denied shows blocked requests only
+  allow [domain...]  add domains to the egress allowlist, or open it in
+                     $EDITOR with no arguments; reloads squid afterwards
+
+  help               this text
+  version            print the ptrbox version
+
+new/rm bracket a project's lifetime; start/stop bracket a work session
+(freeing RAM overnight, recovering after a Mac reboot). All four keep the
+egress proxy - a dedicated VM, "ptrbox-proxy" - consistent automatically:
+any sandbox coming up starts it, the last one going down stops it. Prefer
+them over limactl start/stop, which know nothing about the proxy.
+
+EXAMPLES
+  ptrbox new my-api               # -> ~/code/my-api, git init, VM "my-api"
+  ptrbox new ~/src/existing       # explicit path, existing repo used as-is
+  ssh lima-my-api                 # then: cd /workspace && claude
+  ptrbox logs --denied            # find the domain your build needs
+  ptrbox allow files.example.com  # ...then grant it
+
+CONFIGURATION
+  ~/.config/ptrbox/config (see config/ptrbox.conf.example). Every key can also
+  be set as a PTRBOX_* environment variable, which wins over the file.
+`
+
+// requireLima is the first thing several commands do, so that a machine
+// without Lima says "run ptrbox install first" rather than failing three
+// layers down.
+func requireLima(env *Env) error {
+	if !env.Lima.Available() {
+		return errors.New("limactl not found - run 'ptrbox install' first")
+	}
+	return nil
+}
+
+// resolveSandbox turns a repo path or VM name into a sandbox VM name, refusing
+// the shared proxy. reserved explains why the proxy is not a valid target for
+// this particular command.
+func resolveSandbox(arg, reserved string) (string, error) {
+	name, err := config.VMName(arg)
+	if err != nil {
+		return "", err
+	}
+	if name == config.ProxyVM {
+		return "", errors.New(reserved)
+	}
+	return name, nil
+}
+
+// confirm asks a yes/no question.
+//
+// Every prompt must be bypassable: an interactive-only question about a
+// security-relevant file cannot be covered by the test suite, and an install
+// that hangs waiting for input in a script is worse than one that declines.
+func confirm(env *Env, question string) bool {
+	if env.AssumeYes {
+		return true
+	}
+	if env.NoInput || !env.Interactive {
+		env.Out.Say("declining (no input available): %s", question)
+		env.Out.Say("re-run with --yes to accept")
+		return false
+	}
+
+	fmt.Fprintf(env.Out.W, "ptrbox: %s [y/N] ", question)
+	var answer string
+	if _, err := fmt.Fscanln(env.Stdin, &answer); err != nil {
+		return false
+	}
+	switch answer {
+	case "y", "Y", "yes", "YES":
+		return true
+	}
+	return false
+}

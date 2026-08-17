@@ -1,6 +1,7 @@
 # =============================================================================
 # ptrbox - development entry points.
 #
+#   make build   compile the CLI to dist/ptrbox
 #   make lint    go vet + shell syntax/shellcheck, runs anywhere
 #   make test    unit + simulation tests against a fake lima, runs anywhere
 #                (no Mac, no VM, no network)
@@ -15,10 +16,14 @@
 # =============================================================================
 SHELL := /bin/bash
 GO ?= go
+BIN := dist/ptrbox
 
 .DEFAULT_GOAL := help
 
-.PHONY: help lint govet shlint test gotest bats check golden smoke clean
+.PHONY: help build lint govet shlint test gotest bats check golden smoke clean
+
+build: ## Compile the CLI to dist/ptrbox
+	@$(GO) build -o $(BIN) ./cmd/ptrbox
 
 help: ## Show this help
 	@grep -hE '^[a-z][a-z-]*:.*##' $(MAKEFILE_LIST) | sed 's/:[^#]*## /\t/' | expand -t 12
