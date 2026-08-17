@@ -70,6 +70,7 @@ ptrbox_cmd_new() {
   ptrbox_render_file "$config" "$PTRBOX_ROOT/vm/claude-repo.yaml" "$PTRBOX_ROOT/vm" \
     "REPO_DIR=$repo_dir" \
     "VM_NAME=$name" \
+    "VM_COLOR=$(ptrbox_vm_color "$name")" \
     "IMAGE_URL=$PTRBOX_IMAGE_URL" \
     "CPUS=$PTRBOX_CPUS" \
     "MEMORY=$PTRBOX_MEMORY" \

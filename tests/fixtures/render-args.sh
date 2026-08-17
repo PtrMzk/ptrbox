@@ -7,6 +7,7 @@ fixture_render_args() {
   cat <<'ARGS'
 REPO_DIR=/Users/example/code/demo
 VM_NAME=demo
+VM_COLOR=1;32
 IMAGE_URL=https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2
 CPUS=4
 MEMORY=8GiB

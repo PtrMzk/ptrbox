@@ -46,11 +46,13 @@ cat >>"$HOME/.bashrc" <<'RC'
 if [ -f /usr/lib/git-core/git-sh-prompt ]; then
   . /usr/lib/git-core/git-sh-prompt
 fi
+# The name's color is derived from the name on the host (ptrbox_vm_color),
+# so every sandbox keeps its own hue across recreations.
 if declare -F __git_ps1 >/dev/null; then
   # Branch only - no dirty-state markers, which cost a status walk per prompt.
-  PS1='\[\e[1;33m\][__VM_NAME__]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\[\e[0;36m\]$(__git_ps1 " (%s)")\[\e[0m\]\$ '
+  PS1='\[\e[__VM_COLOR__m\][__VM_NAME__]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\[\e[0;36m\]$(__git_ps1 " (%s)")\[\e[0m\]\$ '
 else
-  PS1='\[\e[1;33m\][__VM_NAME__]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\$ '
+  PS1='\[\e[__VM_COLOR__m\][__VM_NAME__]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\$ '
 fi
 case "$TERM" in
 xterm* | rxvt* | tmux* | screen*)
@@ -65,7 +67,7 @@ alias grep='grep --color=auto'
 # start where the work is, and say what this box is.
 if shopt -q login_shell; then
   [ "$PWD" = "$HOME" ] && cd /workspace
-  printf '\e[1;33m[__VM_NAME__]\e[0m ptrbox sandbox - repo: /workspace, egress: allowlist proxy, sudo: off\n'
+  printf '\e[__VM_COLOR__m[__VM_NAME__]\e[0m ptrbox sandbox - repo: /workspace, egress: allowlist proxy, sudo: off\n'
 fi
 RC
 

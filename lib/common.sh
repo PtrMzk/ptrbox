@@ -262,6 +262,22 @@ ptrbox_vm_name() {
   printf '%s\n' "$name"
 }
 
+# VM name -> a stable ANSI color (SGR attributes, e.g. "1;32") for the guest
+# prompt, so shells in different sandboxes are tellable apart at a glance.
+# Plain char-code sum: names differing by one letter usually land on different
+# colors, and the same name always gets the same one. The palette skips blue
+# (the prompt's cwd color) and unstyled white/black; red stays in - it reads
+# "caution", which a sandbox shell arguably should.
+ptrbox_vm_color() {
+  local name="$1" sum=0 i
+  for ((i = 0; i < ${#name}; i++)); do
+    sum=$((sum + $(printf '%d' "'${name:i:1}")))
+  done
+  set -- 31 32 33 35 36
+  shift $((sum % 5))
+  printf '1;%s\n' "$1"
+}
+
 ptrbox_generated_dir() { printf '%s/.lima/_generated\n' "$HOME"; }
 ptrbox_generated_config() { printf '%s/%s.yaml\n' "$(ptrbox_generated_dir)" "$1"; }
 ptrbox_ssh_config_link() { printf '%s/.ssh/config.d/lima-%s\n' "$HOME" "$1"; }

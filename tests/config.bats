@@ -237,6 +237,25 @@ setup() {
   [ "$(ptrbox_vm_name "$HOME/code/My.Api")" = "$(ptrbox_vm_name "My.Api")" ]
 }
 
+@test "VM prompt colors are stable and stay in the palette" {
+  ptrbox_load_config
+  # Same name, same color - across calls and therefore across recreations.
+  [ "$(ptrbox_vm_color demo)" = "$(ptrbox_vm_color demo)" ]
+  # Every color is a bold ANSI foreground from the fixed palette.
+  local n
+  for n in demo myrepo a zz some-long-repo-name; do
+    case "$(ptrbox_vm_color "$n")" in
+    "1;31" | "1;32" | "1;33" | "1;35" | "1;36") ;;
+    *)
+      echo "unexpected color for $n: $(ptrbox_vm_color "$n")" >&2
+      return 1
+      ;;
+    esac
+  done
+  # Similar names should usually differ - pin one known-distinct pair.
+  [ "$(ptrbox_vm_color demo)" != "$(ptrbox_vm_color demp)" ]
+}
+
 @test "rejects a repo name with no usable characters" {
   ptrbox_load_config
   run ptrbox_vm_name "!!!"
