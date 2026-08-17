@@ -374,6 +374,41 @@ provision:
       export PATH="$HOME/.local/bin:$PATH"
       RC
 
+      # Interactive-only quality of life. This one goes in ~/.bashrc, BELOW the
+      # stock interactive guard: prompts, aliases and banners are meaningless to
+      # scripts, and here the early return works in our favor - none of this can
+      # leak into `bash -lc` output or the verification run.
+      cat >>"$HOME/.bashrc" <<'RC'
+
+      # --- ptrbox ------------------------------------------------------------------
+      # Make this shell unmistakably the sandbox: VM name in the prompt and in the
+      # terminal title, so a host terminal and a sandbox terminal never look alike.
+      if [ -f /usr/lib/git-core/git-sh-prompt ]; then
+        . /usr/lib/git-core/git-sh-prompt
+      fi
+      if declare -F __git_ps1 >/dev/null; then
+        # Branch only - no dirty-state markers, which cost a status walk per prompt.
+        PS1='\[\e[1;33m\][demo]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\[\e[0;36m\]$(__git_ps1 " (%s)")\[\e[0m\]\$ '
+      else
+        PS1='\[\e[1;33m\][demo]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\$ '
+      fi
+      case "$TERM" in
+      xterm* | rxvt* | tmux* | screen*)
+        PS1="\[\e]0;demo \w\a\]$PS1"
+        ;;
+      esac
+
+      alias ls='ls --color=auto'
+      alias grep='grep --color=auto'
+
+      # Once per ssh login (tmux panes are non-login shells, so they stay quiet):
+      # start where the work is, and say what this box is.
+      if shopt -q login_shell; then
+        [ "$PWD" = "$HOME" ] && cd /workspace
+        printf '\e[1;33m[demo]\e[0m ptrbox sandbox - repo: /workspace, egress: allowlist proxy, sudo: off\n'
+      fi
+      RC
+
       # Git identity for agent commits - set globally in the VM so the agent never
       # has to guess one (it will otherwise copy whatever it finds in git log, or
       # invent something). ptrbox fills these in from the HOST's global git config;
