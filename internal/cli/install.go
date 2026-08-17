@@ -110,6 +110,11 @@ func installSSHInclude(env *Env) error {
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return err
 	}
+	// WriteFile leaves an existing file's mode alone, and ssh is particular
+	// about this one.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return err
+	}
 	env.Out.Say("added 'Include config.d/*' to ~/.ssh/config")
 	return nil
 }

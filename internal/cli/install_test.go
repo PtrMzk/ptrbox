@@ -410,3 +410,23 @@ func goSources(t *testing.T, dir string, skip ...string) string {
 	}
 	return b.String()
 }
+
+func TestTheSSHConfigIsNotLeftWorldReadable(t *testing.T) {
+	// ssh is particular about this one, and an existing file keeps its mode
+	// through a rewrite unless something says otherwise.
+	h := newHarness(t)
+	path := filepath.Join(h.home, ".ssh", "config")
+	write(t, path, "Host example\n")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h.mustRun("install")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("~/.ssh/config is mode %o, want 600", info.Mode().Perm())
+	}
+}

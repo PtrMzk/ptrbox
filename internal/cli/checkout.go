@@ -47,10 +47,18 @@ func findCheckoutAbove(start string) string {
 	}
 }
 
-// scanDepth bounds the descendant search. Three levels finds the usual
-// ~/src/ptrbox and ~/code/tools/ptrbox without turning `ptrbox new ~` into a
-// full-disk walk.
-const scanDepth = 3
+// scanDepth bounds the descendant search. Two levels finds the realistic
+// case - pointing at a directory that has a ptrbox checkout in it - without
+// turning `ptrbox new ~` into a full-disk walk.
+const scanDepth = 2
+
+// skipDirs are directories that cannot hold a ptrbox checkout but can hold
+// tens of thousands of subdirectories. Descending them would make `new` on an
+// established project pause for no reason.
+var skipDirs = map[string]bool{
+	"node_modules": true, "vendor": true, "target": true,
+	"__pycache__": true, "venv": true,
+}
 
 // checkoutInside returns the path of a ptrbox checkout at or under dir, or "".
 func checkoutInside(dir string) string {
@@ -68,15 +76,17 @@ func checkoutInside(dir string) string {
 		}
 		// Skip dot directories: .git holds no checkout, and neither do the
 		// caches that make a deep scan expensive.
-		if strings.HasPrefix(d.Name(), ".") {
-			return fs.SkipDir
-		}
-		if strings.Count(path, "/") >= scanDepth {
+		if strings.HasPrefix(d.Name(), ".") || skipDirs[d.Name()] {
 			return fs.SkipDir
 		}
 		if isCheckout(filepath.Join(dir, path)) {
 			found = filepath.Join(dir, path)
 			return fs.SkipAll
+		}
+		// depth of "a" is 1, of "a/b" is 2 - so at scanDepth we examine the
+		// directory but do not descend past it.
+		if strings.Count(path, "/")+1 >= scanDepth {
+			return fs.SkipDir
 		}
 		return nil
 	})

@@ -309,3 +309,22 @@ func write(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestTheCheckoutScanDoesNotDescendDependencyTrees(t *testing.T) {
+	// A checkout two levels down is found; one buried under node_modules is
+	// not looked for, because scanning those trees would stall `new` on every
+	// established project for a case that does not happen.
+	h := newHarness(t)
+
+	shallow := filepath.Join(h.tmp, "src", "tools", "ptrbox")
+	write(t, filepath.Join(shallow, "go.mod"), "module github.com/PtrMzk/ptrbox\n")
+	if got := containedCheckout(filepath.Join(h.tmp, "src"), ""); got != shallow {
+		t.Errorf("containedCheckout = %q, want %q", got, shallow)
+	}
+
+	buried := filepath.Join(h.tmp, "app", "node_modules", "ptrbox")
+	write(t, filepath.Join(buried, "go.mod"), "module github.com/PtrMzk/ptrbox\n")
+	if got := containedCheckout(filepath.Join(h.tmp, "app"), ""); got != "" {
+		t.Errorf("containedCheckout descended node_modules and found %q", got)
+	}
+}
