@@ -24,6 +24,7 @@ import (
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/lima/limafake"
+	"github.com/PtrMzk/ptrbox/internal/narrate"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
@@ -51,6 +52,11 @@ type harness struct {
 
 	// portInUse answers for the host's TCP ports; see newHarness.
 	portInUse func(port int) bool
+
+	// verbose is --verbose; narrator is the limactl output translator, built
+	// per run and kept so a test can replay it.
+	verbose  bool
+	narrator *narrate.Stream
 
 	// Result of the most recent run.
 	stderr string
@@ -137,6 +143,11 @@ func (h *harness) run(args ...string) error {
 	h.t.Helper()
 	stderr, stdout := &bytes.Buffer{}, &bytes.Buffer{}
 
+	// Wired the way main wires it: limactl's output goes through the
+	// translator, on stderr. Kept here rather than pointed straight at the
+	// buffers so that what these tests read is what a user reads.
+	h.narrator = &narrate.Stream{Out: ui.Printer{W: stderr}, Verbose: h.verbose}
+
 	env := &Env{
 		Assets:      ptrbox.Assets,
 		Out:         ui.Printer{W: stderr},
@@ -148,16 +159,19 @@ func (h *harness) run(args ...string) error {
 		Editor:      func(path string) error { return h.editor(path) },
 		// A fixed clock, so an archive filename is the same on every run.
 		Now:  func() time.Time { return time.Date(2026, 8, 17, 20, 45, 0, 0, time.UTC) },
-		Lima: &lima.Client{Runner: h.fake, Stdout: stdout, Stderr: stderr},
+		Lima: &lima.Client{Runner: h.fake, Stdout: h.narrator, Stderr: h.narrator},
 	}
 	if h.missing["limactl"] {
-		env.Lima = &lima.Client{Runner: unavailableRunner{h.fake}, Stdout: stdout, Stderr: stderr}
+		env.Lima = &lima.Client{Runner: unavailableRunner{h.fake}, Stdout: h.narrator, Stderr: h.narrator}
 	}
 	env.Load = func(e *Env) error {
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
+		// main names the image for the narrator here too - it is the first
+		// moment anyone knows the distro.
+		h.narrator.Image = cfg.Distro
 		e.Cfg = cfg
 		e.Proxy = &proxy.Proxy{Cfg: cfg, Lima: e.Lima, Assets: e.Assets, Out: e.Out}
 		return nil

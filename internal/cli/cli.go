@@ -171,6 +171,9 @@ CONFIGURATION
 OUTPUT
   Progress goes to stderr, command output to stdout. Colour is used when
   stderr is a terminal; --no-color, NO_COLOR and TERM=dumb turn it off.
+  limactl's own log is translated into ptrbox's wording as it arrives;
+  --verbose shows it exactly as lima wrote it. A failed limactl invocation
+  reprints its raw output either way.
 `
 
 // requireLima is the first thing several commands do, so that a machine

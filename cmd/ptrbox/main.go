@@ -15,13 +15,21 @@ import (
 	"github.com/PtrMzk/ptrbox/internal/cli"
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
+	"github.com/PtrMzk/ptrbox/internal/narrate"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
 
 func main() {
 	args, color := colorFlag(os.Args[1:])
+	args, verbose := verboseFlag(args)
 	out := ui.Printer{W: os.Stderr, Color: color}
+
+	// limactl's output is translated into ptrbox's voice and, like every other
+	// informational line, goes to stderr. Both streams of the child go through
+	// it: lima writes its log to stderr but not exclusively, and neither half
+	// is command output anyone would pipe.
+	narrator := &narrate.Stream{Out: out, Verbose: verbose}
 
 	env := &cli.Env{
 		Assets:      ptrbox.Assets,
@@ -33,8 +41,8 @@ func main() {
 		Interactive: interactive(),
 		Editor:      cli.DefaultEditor,
 		Now:         time.Now,
-		Lima:        &lima.Client{Runner: lima.Exec{}, Stdout: os.Stdout, Stderr: os.Stderr},
-		Load:        load,
+		Lima:        &lima.Client{Runner: lima.Exec{}, Stdout: narrator, Stderr: narrator},
+		Load:        loadWith(narrator),
 	}
 
 	err := cli.Run(env, args)
@@ -48,9 +56,29 @@ func main() {
 	case errors.Is(err, cli.ErrReported):
 		os.Exit(1)
 	default:
+		// Whatever the mode, a failed limactl invocation gets its raw bytes
+		// reprinted: the translation is a convenience, and a failure is when
+		// you want what was actually said.
+		narrator.Replay()
 		out.Fail("%v", err)
 		os.Exit(1)
 	}
+}
+
+// verboseFlag removes --verbose from the arguments and reports it, the same
+// way colorFlag does: it is a decision about output, so no subcommand needs
+// to carry it.
+func verboseFlag(args []string) ([]string, bool) {
+	kept := make([]string, 0, len(args))
+	verbose := false
+	for _, arg := range args {
+		if arg == "--verbose" {
+			verbose = true
+			continue
+		}
+		kept = append(kept, arg)
+	}
+	return kept, verbose
 }
 
 // colorFlag decides whether ptrbox may style its output, and removes
@@ -85,20 +113,27 @@ func colorFlag(args []string) ([]string, bool) {
 	return kept, info.Mode()&os.ModeCharDevice != 0
 }
 
-// load resolves the configuration and everything that depends on it. Called
-// only for commands that need it, so a config file that does not parse cannot
-// stop `ptrbox help` from explaining itself.
-func load(env *cli.Env) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
+// loadWith resolves the configuration and everything that depends on it.
+// Called only for commands that need it, so a config file that does not parse
+// cannot stop `ptrbox help` from explaining itself.
+//
+// The narrator is handed the distro here because this is the first moment
+// anyone knows it, and "downloading the debian13 image" is a better line than
+// "downloading the VM image" during the several minutes that download takes.
+func loadWith(narrator *narrate.Stream) func(*cli.Env) error {
+	return func(env *cli.Env) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		for _, warning := range cfg.Warnings {
+			env.Out.Warn("%s", warning)
+		}
+		narrator.Image = cfg.Distro
+		env.Cfg = cfg
+		env.Proxy = &proxy.Proxy{Cfg: cfg, Lima: env.Lima, Assets: env.Assets, Out: env.Out}
+		return nil
 	}
-	for _, warning := range cfg.Warnings {
-		env.Out.Warn("%s", warning)
-	}
-	env.Cfg = cfg
-	env.Proxy = &proxy.Proxy{Cfg: cfg, Lima: env.Lima, Assets: env.Assets, Out: env.Out}
-	return nil
 }
 
 // executable is the path to this binary, with symlinks resolved, so

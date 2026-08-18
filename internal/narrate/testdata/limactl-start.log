@@ -1,0 +1,22 @@
+INFO[0000] Using the existing instance "demo"
+INFO[0000] Downloading the image from "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
+INFO[0031] Downloaded image from "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
+INFO[0031] Attempting to download the nerdctl archive  arch=aarch64 digest="sha256:0000"
+INFO[0032] [hostagent] hostagent socket created at /Users/you/.lima/demo/ha.sock
+INFO[0032] [hostagent] Starting VZ (hint: to watch the boot progress, see "/Users/you/.lima/demo/serial*.log")
+INFO[0032] SSH Local Port: 61234
+INFO[0032] [hostagent] Waiting for the essential requirement 1 of 5: "ssh"
+INFO[0049] [hostagent] The essential requirement 1 of 5 is satisfied
+INFO[0049] [hostagent] Waiting for the essential requirement 2 of 5: "user session is ready for ssh"
+INFO[0052] [hostagent] The essential requirement 2 of 5 is satisfied
+INFO[0052] [hostagent] Waiting for the essential requirement 3 of 5: "the guest agent to be running"
+INFO[0058] [hostagent] The essential requirement 3 of 5 is satisfied
+INFO[0058] [hostagent] Waiting for the essential requirement 4 of 5: "cloud-init to be completed"
+INFO[0212] [hostagent] The essential requirement 4 of 5 is satisfied
+INFO[0212] [hostagent] Waiting for the essential requirement 5 of 5: "/etc/environment to be ready"
+INFO[0213] [hostagent] The essential requirement 5 of 5 is satisfied
+INFO[0213] [hostagent] Waiting for the optional requirement 1 of 1: "user probe 1/1"
+INFO[0214] [hostagent] The optional requirement 1 of 1 is satisfied
+INFO[0214] [hostagent] Waiting for the final requirement 1 of 1: "boot scripts must have finished"
+INFO[0398] [hostagent] The final requirement 1 of 1 is satisfied
+INFO[0398] READY. Run `limactl shell demo` to open the shell.

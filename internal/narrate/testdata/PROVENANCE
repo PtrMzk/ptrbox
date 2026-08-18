@@ -1,0 +1,25 @@
+limactl-start.log
+=================
+
+The transcript internal/narrate is tested against. Its whole value is
+provenance: patterns written from memory, tested against lines written from
+the same memory, prove nothing about what lima actually prints.
+
+THIS COPY IS RECONSTRUCTED, NOT CAPTURED. It was written from lima's message
+shapes while ptrbox was being built on Linux against a faked limactl, because
+no Mac was available to run a real `limactl start` on. Replace it at the first
+`make smoke`:
+
+    limactl start --name scratch ~/.lima/_generated/scratch.yaml 2>&1 \
+      | tee internal/narrate/testdata/limactl-start.log
+
+Then run `make test` and read what changed. Lines the translator does not
+recognise are shown verbatim rather than dropped, so a mismatch surfaces as
+untranslated output rather than as a missing step - but untranslated output is
+exactly what this file exists to prevent.
+
+Not a .md file on purpose: this repo gitignores *.md, and a note about a
+fixture's trustworthiness is worth less than nothing if it is untracked.
+
+limafake replays this file when a test asks it to, so the command-level tests
+and the translator's own tests run on identical bytes.

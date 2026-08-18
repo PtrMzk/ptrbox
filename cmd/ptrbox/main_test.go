@@ -62,3 +62,19 @@ func TestAPipedStderrIsNotStyled(t *testing.T) {
 		t.Error("colour was enabled with stderr redirected")
 	}
 }
+
+func TestVerboseIsRemovedFromTheArgumentsToo(t *testing.T) {
+	args, verbose := verboseFlag([]string{"new", "--verbose", "demo"})
+	if !verbose {
+		t.Error("--verbose was not seen")
+	}
+	if want := []string{"new", "demo"}; !reflect.DeepEqual(args, want) {
+		t.Errorf("args = %v, want %v", args, want)
+	}
+}
+
+func TestVerboseIsOffByDefault(t *testing.T) {
+	if _, verbose := verboseFlag([]string{"new", "demo"}); verbose {
+		t.Error("--verbose was on without being asked for")
+	}
+}

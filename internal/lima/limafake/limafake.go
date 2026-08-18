@@ -47,6 +47,11 @@ type Fake struct {
 	// means the VM has none, which is the state of one nobody has worked in.
 	Transcripts map[string][]byte
 
+	// StartOutput is what `limactl start` writes to stderr, where lima's log
+	// goes. Empty by default - most tests do not care - and set to a recorded
+	// transcript by the ones that exercise the output translator.
+	StartOutput []byte
+
 	// Canned failures.
 	VerifyFails      bool // `bash -lc <verify.sh>` reports a failed sandbox
 	ProxyVerifyFails bool // `bash -lc <verify-proxy.sh>` reports dead egress
@@ -129,6 +134,9 @@ func (f *Fake) validate(c lima.Cmd) error {
 }
 
 func (f *Fake) start(c lima.Cmd) error {
+	if len(f.StartOutput) > 0 && c.Stderr != nil {
+		c.Stderr.Write(f.StartOutput)
+	}
 	if f.StartFails {
 		fmt.Fprintln(c.Stderr, "limactl: FATA start failed")
 		return errors.New("start failed")

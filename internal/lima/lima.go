@@ -72,8 +72,27 @@ func (c *Client) Available() bool {
 	return false
 }
 
+// Narrator is an output writer that wants to know where one limactl
+// invocation begins and ends: enough to translate the stream into ptrbox's
+// voice, and to hand the raw bytes back when the invocation fails.
+//
+// Declared here rather than imported so that this package keeps knowing
+// nothing about how output is presented. A plain io.Writer is still a
+// perfectly good Stdout.
+type Narrator interface {
+	io.Writer
+	Begin(args []string)
+	End(err error)
+}
+
 // Passthrough runs limactl with its output going straight to the user.
 func (c *Client) Passthrough(args ...string) error {
+	if n, ok := c.Stdout.(Narrator); ok {
+		n.Begin(args)
+		err := c.Runner.Run(Cmd{Args: args, Stdout: c.Stdout, Stderr: c.Stderr})
+		n.End(err)
+		return err
+	}
 	return c.Runner.Run(Cmd{Args: args, Stdout: c.Stdout, Stderr: c.Stderr})
 }
 

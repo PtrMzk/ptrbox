@@ -135,6 +135,34 @@ func (p Printer) Prompt(question string) {
 // else, like squid's complaint about a config it refused.
 func (p Printer) Raw(s string) { fmt.Fprintln(p.W, s) }
 
+// Dim writes a line from somewhere else verbatim, turned down. For output
+// ptrbox is relaying rather than saying: it stays visible, it stops
+// competing. With colour off it is exactly Raw, which is the point - nothing
+// is hidden, only quietened.
+func (p Printer) Dim(s string) { fmt.Fprintln(p.W, p.paint(dim, s)) }
+
+// Check renders one assertion's verdict - a line of vm/verify.sh's output.
+//
+// With colour off it is reproduced byte for byte in the guest script's own
+// layout, because that layout is already a readable check list and because
+// those bytes are what the test suite and every past transcript contain.
+// Colour turns the verdict into a glyph.
+func (p Printer) Check(name string, ok bool, detail string) {
+	if !p.Color {
+		if ok {
+			fmt.Fprintf(p.W, "  %-22s OK\n", name)
+			return
+		}
+		fmt.Fprintf(p.W, "  %-22s FAIL - %s\n", name, detail)
+		return
+	}
+	if ok {
+		fmt.Fprintf(p.W, "  %s %s\n", p.paint(green, "✓"), name)
+		return
+	}
+	fmt.Fprintf(p.W, "  %s %s %s\n", p.paint(red, "✗"), name, p.paint(dim, "- "+detail))
+}
+
 // --- numbered steps ----------------------------------------------------------
 
 // Plan starts a numbered sequence of steps. The counter is what gives a

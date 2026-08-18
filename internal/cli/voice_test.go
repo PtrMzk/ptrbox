@@ -8,8 +8,13 @@ package cli
 // one escape byte anywhere.
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PtrMzk/ptrbox/internal/ui"
 )
 
 func TestNewCountsItsStepsToTheDeclaredTotal(t *testing.T) {
@@ -92,5 +97,68 @@ func TestAPlainRunHasNoEscapesInIt(t *testing.T) {
 			t.Errorf("ptrbox %s put an escape in plain output:\n%q",
 				strings.Join(args, " "), h.output())
 		}
+	}
+}
+
+// --- limactl's stream --------------------------------------------------------
+//
+// The bytes come from internal/narrate/testdata, replayed by limafake, so
+// these exercise the same transcript the translator is tested against - only
+// through the whole command this time.
+
+func limaTranscript(t *testing.T) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "narrate", "testdata", "limactl-start.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func TestNewTranslatesTheBootIntoPtrboxsVoice(t *testing.T) {
+	h := newHarness(t)
+	h.fake.StartOutput = limaTranscript(t)
+
+	h.mustRun("new", "demo")
+	for _, want := range []string{
+		"downloading the debian13 image (first boot only)",
+		"booting (1/5): ssh",
+		"finishing (1/1): boot scripts must have finished",
+	} {
+		h.assertOutputContains(want)
+	}
+	// ...and lima's own phrasing is gone from the loud path.
+	if strings.Contains(h.output(), "Waiting for the essential requirement") {
+		t.Errorf("lima's wording survived the translation:\n%s", h.output())
+	}
+}
+
+func TestVerboseShowsTheStreamAsLimaWroteIt(t *testing.T) {
+	h := newHarness(t)
+	h.verbose = true
+	h.fake.StartOutput = limaTranscript(t)
+
+	h.mustRun("new", "demo")
+	if !strings.Contains(h.output(), "INFO[0032] [hostagent] Waiting for the essential requirement 1 of 5") {
+		t.Errorf("--verbose did not show the raw stream:\n%s", h.output())
+	}
+}
+
+func TestAFailedStartReprintsWhatLimactlSaid(t *testing.T) {
+	// main replays the raw bytes of a failed invocation whatever the mode:
+	// the translation is a convenience, and a failure is when you want what
+	// was actually said.
+	h := newHarness(t)
+	h.fake.StartOutput = limaTranscript(t)
+	h.fake.StartFails = true
+
+	if err := h.run("new", "demo"); err == nil {
+		t.Fatal("new succeeded with a limactl that would not start")
+	}
+	replayed := &bytes.Buffer{}
+	h.narrator.Out = ui.Printer{W: replayed}
+	h.narrator.Replay()
+	if !strings.Contains(replayed.String(), "Waiting for the essential requirement 1 of 5") {
+		t.Errorf("the raw stream was not kept for the failure:\n%s", replayed.String())
 	}
 }
