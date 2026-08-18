@@ -49,6 +49,9 @@ type harness struct {
 	tty     bool
 	missing map[string]bool // tools this host pretends not to have
 
+	// portInUse answers for the host's TCP ports; see newHarness.
+	portInUse func(port int) bool
+
 	// Result of the most recent run.
 	stderr string
 	stdout string
@@ -114,8 +117,16 @@ func newHarness(t *testing.T) *harness {
 	// without limactl without touching the real PATH.
 	realLookPath := lookPath
 	lookPath = func(tool string) bool { return !h.missing[tool] && realLookPath(tool) }
+
+	// The proxy's port forward exists exactly while the proxy VM is running,
+	// so the fake's VM state is what answers "is the forward up". A test that
+	// wants a different host - a foreign listener, or Lima failing to publish
+	// the forward - replaces h.portInUse.
 	realPortInUse := portInUse
-	portInUse = func(int) bool { return false }
+	h.portInUse = func(int) bool {
+		return h.fake.VMStatus(config.ProxyVM) == lima.StatusRunning
+	}
+	portInUse = func(port int) bool { return h.portInUse(port) }
 	t.Cleanup(func() { lookPath, portInUse = realLookPath, realPortInUse })
 
 	return h

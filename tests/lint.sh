@@ -20,7 +20,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-set -- vm/verify.sh vm/provision/*.sh vm/provision-proxy/*.sh
+set -- vm/verify.sh vm/verify-proxy.sh vm/provision/*.sh vm/provision-proxy/*.sh
 if [ "$#" -eq 0 ] || [ ! -e "$1" ]; then
   echo "lint: no guest scripts found" >&2
   exit 1

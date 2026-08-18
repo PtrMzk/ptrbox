@@ -306,6 +306,63 @@ func TestSyncWithoutAnAllowlistPointsAtInstall(t *testing.T) {
 
 // --- stopping ----------------------------------------------------------------
 
+// --- verification ------------------------------------------------------------
+
+func TestVerifyRunsTheEgressAssertionsInsideTheProxyVM(t *testing.T) {
+	h := newHarness(t)
+	h.mustEnsure(t)
+	if err := h.Verify(); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	h.assertCalled(t, `shell ptrbox-proxy -- bash -lc`)
+}
+
+func TestVerifySendsTheScriptItselfNotAPathToIt(t *testing.T) {
+	// The proxy VM has no mounts, so there is no file there to name: the
+	// script is embedded in the binary and piped in, the way verify.sh is for
+	// a sandbox.
+	h := newHarness(t)
+	h.mustEnsure(t)
+	if err := h.Verify(); err != nil {
+		t.Fatal(err)
+	}
+	sent := strings.Join(h.fake.Scripts, "\n")
+	for _, want := range []string{"squid listening", "denied domain refused", "/dev/tcp/"} {
+		if !strings.Contains(sent, want) {
+			t.Errorf("the script the VM ran has no %q check", want)
+		}
+	}
+}
+
+func TestAFailedAssertionIsAFailedVerification(t *testing.T) {
+	// The whole point of the exercise: a proxy whose config parses but whose
+	// squid is not carrying traffic must not read as healthy.
+	h := newHarness(t)
+	h.mustEnsure(t)
+	h.fake.ProxyVerifyFails = true
+
+	err := h.Verify()
+	if err == nil {
+		t.Fatal("Verify passed a proxy that is not serving egress")
+	}
+	if !strings.Contains(err.Error(), "no network") {
+		t.Errorf("the error does not say what it costs the user: %v", err)
+	}
+}
+
+func TestEnsureDoesNotVerify(t *testing.T) {
+	// Kept separate on purpose. Ensure runs on every `new`, `start` and `rm`,
+	// where a live sandbox's own verify.sh already exercises the egress path
+	// end to end; paying for a second round trip there would slow the common
+	// command to re-prove what the next step proves anyway.
+	h := newHarness(t)
+	h.fake.ProxyVerifyFails = true
+	if _, err := h.Ensure(); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	h.assertNotCalled(t, `bash -lc`)
+}
+
 func TestStopIfIdleStopsTheProxyWhenNoSandboxIsRunning(t *testing.T) {
 	h := newHarness(t)
 	h.mustEnsure(t)

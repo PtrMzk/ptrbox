@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
 )
 
@@ -47,10 +48,11 @@ type Fake struct {
 	Transcripts map[string][]byte
 
 	// Canned failures.
-	VerifyFails     bool // `bash -lc <verify.sh>` reports a failed sandbox
-	SquidParseFails bool // in-VM `squid -k parse` rejects the config
-	StartFails      bool // `limactl start` fails
-	ListFails       bool // `limactl list` fails, i.e. state is unknowable
+	VerifyFails      bool // `bash -lc <verify.sh>` reports a failed sandbox
+	ProxyVerifyFails bool // `bash -lc <verify-proxy.sh>` reports dead egress
+	SquidParseFails  bool // in-VM `squid -k parse` rejects the config
+	StartFails       bool // `limactl start` fails
+	ListFails        bool // `limactl list` fails, i.e. state is unknowable
 }
 
 // New returns a Fake with no VMs.
@@ -166,8 +168,13 @@ func (f *Fake) delete(c lima.Cmd) error {
 // shell handles the three shapes ptrbox uses:
 //
 //	shell <vm> -- sudo <cmd...>     proxy VM management (file ops + squid)
-//	shell <vm> -- bash -lc <script> the verification run
+//	shell <vm> -- bash -lc <script> a verification run
 //	shell <vm> -- bash -c <script>  the token injection, payload on stdin
+//
+// Which verification is which is decided by the VM: the proxy gets
+// verify-proxy.sh, everything else gets verify.sh, and the two fail
+// independently because an install and a sandbox creation can each go wrong
+// while the other is fine.
 func (f *Fake) shell(c lima.Cmd) error {
 	vm := arg(c.Args, 1)
 	rest := c.Args[min(3, len(c.Args)):]
@@ -175,6 +182,13 @@ func (f *Fake) shell(c lima.Cmd) error {
 	switch {
 	case len(rest) > 0 && rest[0] == "sudo":
 		return f.sudo(c, vm, rest[1:])
+
+	case vm == config.ProxyVM && len(rest) > 1 && rest[1] == "-lc":
+		if f.ProxyVerifyFails {
+			fmt.Fprintln(c.Stderr, "  squid listening        FAIL - nothing accepts connections on port 8888 in the VM")
+			return errors.New("proxy verification failed")
+		}
+		return nil
 	case len(rest) > 2 && rest[1] == "-c" && strings.Contains(rest[2], ".claude/projects"):
 		// The transcript pull: a tar streamed out on stdout. No output at all
 		// is how a VM says it has nothing to archive.

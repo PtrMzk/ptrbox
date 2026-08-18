@@ -213,6 +213,30 @@ func (p *Proxy) restoreAllowlist(changed bool, previous string) error {
 	return p.write(AllowlistPath, previous)
 }
 
+// --- verification ------------------------------------------------------------
+
+// Verify runs vm/verify-proxy.sh inside the proxy VM and fails if any of its
+// assertions do: squid running, squid listening, an allowlisted domain
+// tunnelling, a domain that is not on the list refused.
+//
+// Sync proves that squid PARSED a config, which is a different claim: a proxy
+// can parse its config and then die on start, and until this ran that state
+// was indistinguishable from a working install. The output is passed through
+// rather than captured - a list of OK/FAIL lines is the report, and the same
+// reasoning applies here as to the sandbox verification.
+func (p *Proxy) Verify() error {
+	script, err := fs.ReadFile(p.Assets, "vm/verify-proxy.sh")
+	if err != nil {
+		return err
+	}
+	err = p.Lima.Passthrough(lima.ShellArgs(config.ProxyVM, "bash", "-lc", string(script))...)
+	if err != nil {
+		return fmt.Errorf("the proxy VM is not serving egress - sandboxes created now would have no network. Look at it with: limactl shell %s -- sudo systemctl status squid",
+			config.ProxyVM)
+	}
+	return nil
+}
+
 // --- lifecycle ---------------------------------------------------------------
 
 // Ensure makes sure the proxy VM exists, is running, and serves the current

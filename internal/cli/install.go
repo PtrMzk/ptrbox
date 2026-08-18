@@ -74,6 +74,13 @@ func cmdInstall(env *Env, args []string) error {
 		return err
 	}
 
+	// --- prove the egress path works ----------------------------------------
+	// Before anything else, including the questions: an install that cannot
+	// carry traffic has nothing to offer a PATH symlink for.
+	if err := verifyEgress(env); err != nil {
+		return err
+	}
+
 	// --- put ptrbox on PATH -------------------------------------------------
 	if err := installSymlink(env); err != nil {
 		return err
@@ -211,6 +218,32 @@ func reportAllowlist(env *Env) error {
 		env.Out.Say("shipped entries yours does not have: %s", strings.Join(missing, " "))
 	}
 	return nil
+}
+
+// --- egress verification -----------------------------------------------------
+
+// verifyEgress asserts the path a sandbox's traffic actually takes, and is
+// what install's success message means. It is split across the boundary
+// because the two halves cannot see each other: the host owns the port
+// forward and knows nothing about squid; the proxy VM owns squid and cannot
+// tell whether Lima ever published the forward.
+//
+// A failure here is a failed install, not a warning. The alternative is what
+// this replaces - "host setup complete" on the strength of a config squid
+// merely parsed - and a proxy that is down surfaces later as an agent with no
+// network, which is a much harder thing to trace back to here.
+func verifyEgress(env *Env) error {
+	env.Out.Say("verifying the egress path")
+
+	// The host's entire share of the proxy is this forward. Nothing listening
+	// means Lima never published it, and every sandbox's traffic would go to a
+	// closed port however healthy squid is on the other side.
+	if !portInUse(env.Cfg.ProxyPort) {
+		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: limactl list",
+			env.Cfg.ProxyPort, config.ProxyVM)
+	}
+
+	return env.Proxy.Verify()
 }
 
 // --- dependencies ------------------------------------------------------------

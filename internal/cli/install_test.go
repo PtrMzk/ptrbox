@@ -134,6 +134,91 @@ func TestAConfigSquidRejectsIsNeverActivated(t *testing.T) {
 	h.assertNotCalled("systemctl restart")
 }
 
+// --- the egress path ---------------------------------------------------------
+//
+// Install's success message is a claim about egress, so it is gated on the
+// same kind of assertions vm/verify.sh makes about a sandbox. Parsing a config
+// is not evidence that traffic moves.
+
+func TestInstallVerifiesTheEgressPathBeforeClaimingSuccess(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("install")
+	h.assertCalled(`shell ptrbox-proxy -- bash -lc`)
+	h.assertOrder(`sudo systemctl restart squid`, `shell ptrbox-proxy -- bash -lc`)
+	h.assertOutputContains("host setup complete")
+}
+
+func TestAProxyThatFailsVerificationFailsTheInstall(t *testing.T) {
+	// The hole this closes: squid parses its config, dies on start, and
+	// install reports success. Nothing downstream notices until an agent has
+	// no network.
+	h := newHarness(t)
+	h.fake.ProxyVerifyFails = true
+
+	err := h.run("install")
+	if err == nil {
+		t.Fatal("install succeeded with a proxy that is not serving egress")
+	}
+	if !strings.Contains(err.Error(), "no network") {
+		t.Errorf("the error does not say what it costs the user: %v", err)
+	}
+	if strings.Contains(h.output(), "setup complete") {
+		t.Errorf("install claimed success anyway:\n%s", h.output())
+	}
+}
+
+func TestVerificationFailsBeforeInstallAsksForAnything(t *testing.T) {
+	// A broken install has nothing to offer a PATH symlink for, and a prompt
+	// is the worst place to learn the thing you are configuring does not work.
+	h := newHarness(t)
+	h.fake.ProxyVerifyFails = true
+
+	if err := h.run("install", "--yes"); err == nil {
+		t.Fatal("install succeeded")
+	}
+	if h.exists(filepath.Join(h.home, "bin", "ptrbox")) {
+		t.Error("install linked ptrbox onto PATH despite failing verification")
+	}
+}
+
+func TestADeadPortForwardFailsTheInstall(t *testing.T) {
+	// squid can be perfectly healthy inside the VM while Lima never published
+	// the forward - and the sandboxes reach squid only through the forward.
+	// This is the half of the path the VM cannot see.
+	h := newHarness(t)
+	h.portInUse = func(int) bool { return false }
+
+	err := h.run("install")
+	if err == nil {
+		t.Fatal("install succeeded with no port forward")
+	}
+	for _, want := range []string{"127.0.0.1:8888", "port forward is not up"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error %q does not mention %q", err, want)
+		}
+	}
+	if strings.Contains(h.output(), "setup complete") {
+		t.Error("install claimed success anyway")
+	}
+}
+
+func TestAnInstallWithNothingToDoStillVerifies(t *testing.T) {
+	// "already set up" is a claim about the egress path too, and the run that
+	// changes nothing is the one people make when something is wrong.
+	h := newHarness(t)
+	h.mustRun("install")
+	h.fake.Reset()
+	h.fake.ProxyVerifyFails = true
+
+	if err := h.run("install"); err == nil {
+		t.Fatal("a no-op install skipped verification")
+	}
+	h.assertCalled(`shell ptrbox-proxy -- bash -lc`)
+	if strings.Contains(h.output(), "already set up") {
+		t.Error("install reported a healthy setup it had not checked")
+	}
+}
+
 // --- the allowlist -----------------------------------------------------------
 
 func TestAnExistingAllowlistIsNeverOverwrittenByInstall(t *testing.T) {
