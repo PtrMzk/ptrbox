@@ -7,7 +7,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -21,7 +20,8 @@ import (
 )
 
 func main() {
-	out := ui.Printer{W: os.Stderr}
+	args, color := colorFlag(os.Args[1:])
+	out := ui.Printer{W: os.Stderr, Color: color}
 
 	env := &cli.Env{
 		Assets:      ptrbox.Assets,
@@ -37,7 +37,7 @@ func main() {
 		Load:        load,
 	}
 
-	err := cli.Run(env, os.Args[1:])
+	err := cli.Run(env, args)
 	switch {
 	case err == nil:
 		return
@@ -48,9 +48,41 @@ func main() {
 	case errors.Is(err, cli.ErrReported):
 		os.Exit(1)
 	default:
-		fmt.Fprintf(os.Stderr, "ptrbox: error: %v\n", err)
+		out.Fail("%v", err)
 		os.Exit(1)
 	}
+}
+
+// colorFlag decides whether ptrbox may style its output, and removes
+// --no-color from the arguments so no subcommand has to know about it.
+//
+// The decision is made here and passed down as one bool, because a terminal
+// is a property of the process rather than of a message. stderr is what is
+// tested: that is where every informational line goes, so a run whose stdout
+// is piped into a file still gets its progress coloured.
+func colorFlag(args []string) ([]string, bool) {
+	kept := make([]string, 0, len(args))
+	asked := true
+	for _, arg := range args {
+		if arg == "--no-color" {
+			asked = false
+			continue
+		}
+		kept = append(kept, arg)
+	}
+	if !asked || os.Getenv("NO_COLOR") != "" {
+		return kept, false
+	}
+	// An unset TERM is the same answer as "dumb": something is running ptrbox
+	// that never said it could render anything.
+	if term := os.Getenv("TERM"); term == "" || term == "dumb" {
+		return kept, false
+	}
+	info, err := os.Stderr.Stat()
+	if err != nil {
+		return kept, false
+	}
+	return kept, info.Mode()&os.ModeCharDevice != 0
 }
 
 // load resolves the configuration and everything that depends on it. Called

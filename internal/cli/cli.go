@@ -124,7 +124,8 @@ func Run(env *Env, args []string) error {
 		return nil
 	}
 
-	fmt.Fprintf(env.Out.W, "ptrbox: unknown command: %s\n\n", command)
+	env.Out.Say("unknown command: %s", command)
+	fmt.Fprintln(env.Out.W)
 	fmt.Fprint(env.Out.W, usage)
 	return ErrUsage
 }
@@ -166,6 +167,10 @@ EXAMPLES
 CONFIGURATION
   ~/.config/ptrbox/config (see config/ptrbox.conf.example). Every key can also
   be set as a PTRBOX_* environment variable, which wins over the file.
+
+OUTPUT
+  Progress goes to stderr, command output to stdout. Colour is used when
+  stderr is a terminal; --no-color, NO_COLOR and TERM=dumb turn it off.
 `
 
 // requireLima is the first thing several commands do, so that a machine
@@ -207,7 +212,7 @@ func confirm(env *Env, question string) bool {
 		return false
 	}
 
-	fmt.Fprintf(env.Out.W, "ptrbox: %s [y/N] ", question)
+	env.Out.Prompt(question)
 	var answer string
 	if _, err := fmt.Fscanln(env.Stdin, &answer); err != nil {
 		return false

@@ -44,14 +44,18 @@ func cmdInstall(env *Env, args []string) error {
 		}
 	}
 
+	steps := env.Out.Plan(5)
+
 	// --- preflight ----------------------------------------------------------
 	// Everything that can be known before any VM state is touched, said while
 	// it is still cheap to act on.
+	steps.Next("checking the host")
 	if err := preflight(env); err != nil {
 		return err
 	}
 
-	// --- directories --------------------------------------------------------
+	// --- directories and the ssh include ------------------------------------
+	steps.Next("preparing directories and ssh")
 	for _, dir := range []string{env.Cfg.RepoRoot, config.GeneratedDir()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -60,8 +64,6 @@ func cmdInstall(env *Env, args []string) error {
 	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".ssh", "config.d"), 0o700); err != nil {
 		return err
 	}
-
-	// --- ssh include --------------------------------------------------------
 	if err := installSSHInclude(env); err != nil {
 		return err
 	}
@@ -69,6 +71,7 @@ func cmdInstall(env *Env, args []string) error {
 	// --- the egress proxy VM ------------------------------------------------
 	// Seeds the allowlist, creates/starts the proxy VM, and pushes the current
 	// config.
+	steps.Next("bringing up the egress proxy")
 	changed, err := env.Proxy.Ensure()
 	if err != nil {
 		return err
@@ -80,22 +83,28 @@ func cmdInstall(env *Env, args []string) error {
 	// --- prove the egress path works ----------------------------------------
 	// Before anything else, including the questions: an install that cannot
 	// carry traffic has nothing to offer a PATH symlink for.
+	steps.Next("verifying the egress path")
 	if err := verifyEgress(env); err != nil {
 		return err
 	}
 
 	// --- put ptrbox on PATH -------------------------------------------------
+	steps.Next("putting ptrbox on PATH")
 	if err := installSymlink(env); err != nil {
 		return err
 	}
 
 	// --- report -------------------------------------------------------------
-	if changed {
-		env.Out.Say("host setup complete")
-	} else {
-		env.Out.Say("host already set up; nothing to do")
+	headline := "host setup complete"
+	if !changed {
+		headline = "host already set up; nothing to do"
 	}
-	env.Out.Say("next: ptrbox new <repo>")
+	env.Out.Summary(headline,
+		"next: ptrbox new <repo>",
+		"",
+		fmt.Sprintf("proxy     %s, reached at 127.0.0.1:%d", config.ProxyVM, env.Cfg.ProxyPort),
+		fmt.Sprintf("allowlist %s", config.AllowlistPath()),
+	)
 	return nil
 }
 
@@ -235,8 +244,6 @@ func reportAllowlist(env *Env) error {
 // merely parsed - and a proxy that is down surfaces later as an agent with no
 // network, which is a much harder thing to trace back to here.
 func verifyEgress(env *Env) error {
-	env.Out.Say("verifying the egress path")
-
 	// The host's entire share of the proxy is this forward. Nothing listening
 	// means Lima never published it, and every sandbox's traffic would go to a
 	// closed port however healthy squid is on the other side.
@@ -276,9 +283,8 @@ func preflightDeps(env *Env) error {
 	if len(tools) == 0 {
 		return nil
 	}
-	env.Out.Say("missing dependencies: %s", strings.Join(tools, " "))
-	env.Out.Say("install them with:")
-	env.Out.Say("  brew install %s", strings.Join(formulae, " "))
+	env.Out.Say("missing dependencies: %s. Install them with:", strings.Join(tools, " "))
+	env.Out.Detail("brew install %s", strings.Join(formulae, " "))
 	return ErrReported
 }
 
@@ -346,7 +352,7 @@ func preflightKeychain(env *Env) {
 	if env.Keychain.Token(env.Cfg.KeychainService) == "" {
 		env.Out.Warn("no Keychain entry %q - new VMs will be unauthenticated. Create one with:",
 			env.Cfg.KeychainService)
-		env.Out.Warn("  claude setup-token")
-		env.Out.Warn("  security add-generic-password -a \"$USER\" -s %s -w", env.Cfg.KeychainService)
+		env.Out.Detail("claude setup-token")
+		env.Out.Detail("security add-generic-password -a \"$USER\" -s %s -w", env.Cfg.KeychainService)
 	}
 }

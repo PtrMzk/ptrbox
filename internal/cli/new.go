@@ -36,7 +36,14 @@ func cmdNew(env *Env, args []string) error {
 		return err
 	}
 
+	// The five steps below are what the wait is made of. Numbered because
+	// "provisioning" on its own could be the first of two things or the first
+	// of ten, and this one is followed by several minutes of someone else's
+	// log output.
+	steps := env.Out.Plan(5)
+
 	// --- repo ---------------------------------------------------------------
+	steps.Next("preparing the repo and its VM config")
 	repoDir, err := prepareRepoDir(env, env.Cfg.RepoDir(arg))
 	if err != nil {
 		return err
@@ -92,12 +99,13 @@ func cmdNew(env *Env, args []string) error {
 	// Up-front, not lazily: from the post-provision reboot onward the proxy is
 	// this VM's only way out, and vm/verify.sh needs it to prove that egress
 	// works. Idempotent and cheap when the proxy is already running.
+	steps.Next("bringing up the egress proxy")
 	if _, err := env.Proxy.Ensure(); err != nil {
 		return err
 	}
 
 	// --- boot 1: provisioning over an open network --------------------------
-	env.Out.Say("provisioning %s (this takes a few minutes)", name)
+	steps.Next("provisioning %s (this takes a few minutes)", name)
 	if err := env.Lima.Create(name, configPath); err != nil {
 		return err
 	}
@@ -106,7 +114,7 @@ func cmdNew(env *Env, args []string) error {
 	// sandbox-firewall.service is enabled but not started during
 	// provisioning, because the installers need hosts that are deliberately
 	// off the allowlist.
-	env.Out.Say("rebooting to activate the egress firewall")
+	steps.Next("rebooting to activate the egress firewall")
 	if err := env.Lima.Stop(name); err != nil {
 		return err
 	}
@@ -120,7 +128,7 @@ func cmdNew(env *Env, args []string) error {
 	}
 
 	// --- verification -------------------------------------------------------
-	env.Out.Say("verifying sandbox properties")
+	steps.Next("verifying sandbox properties")
 	verify, err := fs.ReadFile(env.Assets, "vm/verify.sh")
 	if err != nil {
 		return err
@@ -135,15 +143,14 @@ func cmdNew(env *Env, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(env.Stdout, `
-VM '%s' is ready.
-
-  ssh lima-%s
-  cd /workspace && claude
-
-The repo lives on the host at %s and is mounted at /workspace.
-Commit and push from the host: the VM has no credentials but the Claude token.
-`, name, name, repoDir)
+	env.Out.Summary(fmt.Sprintf("VM %q is ready", name),
+		fmt.Sprintf("ssh lima-%s", name),
+		"cd /workspace && claude",
+		"",
+		fmt.Sprintf("distro   %s, %d CPUs, %s memory", env.Cfg.Distro, env.Cfg.CPUs, env.Cfg.Memory),
+		fmt.Sprintf("repo     %s, mounted at /workspace", repoDir),
+		"push     from the host; the VM has no credentials but the Claude token",
+	)
 	return nil
 }
 
@@ -214,8 +221,8 @@ func injectToken(env *Env, name string) error {
 	token := env.Keychain.Token(env.Cfg.KeychainService)
 	if token == "" {
 		env.Out.Warn("no Keychain entry %q; create one with:", env.Cfg.KeychainService)
-		env.Out.Warn("  claude setup-token")
-		env.Out.Warn("  security add-generic-password -a \"$USER\" -s %s -w", env.Cfg.KeychainService)
+		env.Out.Detail("claude setup-token")
+		env.Out.Detail("security add-generic-password -a \"$USER\" -s %s -w", env.Cfg.KeychainService)
 		return nil
 	}
 	if strings.ContainsAny(token, "\"\\") {
