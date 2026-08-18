@@ -427,8 +427,9 @@ provision:
       fi
 
       # Claude Code defaults, pre-seeded so fresh VMs go straight to work:
-      # - settings.json: the model to default to ("opus" is an alias tracking the
-      #   latest Opus-class model, so no updates needed on releases)
+      # - statusline-command.sh + settings.json: the model to default to ("opus" is
+      #   an alias tracking the latest Opus-class model, so no updates needed on
+      #   releases) and the statusline that renders above the prompt
       # - .claude.json: skip the first-run onboarding wizard AND the per-project
       #   trust dialog. Auto-trust is a deliberate call: the dialog gates loading
       #   repo-provided config (CLAUDE.md, hooks), and in this design the VM itself
@@ -438,7 +439,101 @@ provision:
       #   wizard/dialog reappearing - safe, and the fix is to update this block
       #   rather than remove it.
       mkdir -p "$HOME/.claude"
-      printf '{"model": "opus"}\n' >"$HOME/.claude/settings.json"
+
+      # The statusline. Quoted heredoc: every $var and $(...) below belongs to the
+      # script at render time inside the guest, not to this provisioning shell.
+      #
+      # It shells out to jq (in the base package list), git, date and hostname, all
+      # present. `git -C "$cwd"` reads the repo mount at runtime - which is fine
+      # here in a way it would not be on the host: the agent already has execution
+      # inside this VM, so a repo-triggered git exec is no escalation. The host's
+      # clone is protected separately, by core.hooksPath=/dev/null.
+      cat >"$HOME/.claude/statusline-command.sh" <<'STATUSLINE'
+      #!/bin/sh
+      # Claude Code statusLine command - styled after the Oh My Zsh "ys" theme.
+      # Provisioned by ptrbox; edit vm/provision/40-userenv.sh and re-create the VM.
+
+      input=$(cat)
+      cwd=$(echo "$input" | jq -r '.workspace.current_dir')
+      model=$(echo "$input" | jq -r '.model.display_name')
+      remaining=$(echo "$input" | jq -r '.context_window.remaining_percentage // empty')
+      transcript=$(echo "$input" | jq -r '.transcript_path // empty')
+
+      # Context used % (color-coded: green <50, yellow 50-75, red >75)
+      if [ -n "$remaining" ]; then
+          used=$(echo "$remaining" | awk '{printf "%.0f", 100 - $1}')
+          if [ "$used" -ge 75 ] 2>/dev/null; then
+              ctx_color="\033[1;31m"
+          elif [ "$used" -ge 50 ] 2>/dev/null; then
+              ctx_color="\033[1;33m"
+          else
+              ctx_color="\033[1;32m"
+          fi
+      fi
+
+      user=$(whoami)
+      host=$(hostname -s)
+
+      # Git branch (skip optional locks to avoid blocking)
+      git_branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null)
+
+      # Git dirty indicator
+      git_dirty=""
+      if [ -n "$git_branch" ]; then
+          if [ -n "$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)" ]; then
+              git_dirty="\033[1;31m*\033[0m"
+          fi
+      fi
+
+      # Message count from transcript (count assistant turns)
+      msg_count=""
+      if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+          count=$(grep -c '"role":"assistant"' "$transcript" 2>/dev/null || echo "0")
+          if [ "$count" -gt 0 ] 2>/dev/null; then
+              msg_count="$count"
+          fi
+      fi
+
+      # Timestamp (statusline refreshes after each response, so this is ~last response time)
+      time_str=$(date +%H:%M:%S)
+
+      # Bold blue "#"
+      part_hash="\033[1;34m#\033[0m"
+      # Cyan user
+      part_user="\033[0;36m${user}\033[0m"
+      # Green host
+      part_host="\033[0;32m${host}\033[0m"
+      # Bold yellow cwd
+      part_cwd="\033[1;33m${cwd}\033[0m"
+      # Bold magenta model
+      part_model="\033[1;35m${model}\033[0m"
+
+      line="${part_hash} ${part_user} @ ${part_host} in ${part_cwd}"
+
+      if [ -n "$git_branch" ]; then
+          part_git="on \033[0;34mgit\033[0m:\033[0;36m${git_branch}\033[0m${git_dirty}"
+          line="${line} ${part_git}"
+      fi
+
+      line="${line} [${time_str}] | ${part_model}"
+
+      if [ -n "$used" ]; then
+          line="${line} | ${ctx_color}${used}%\033[0m"
+      fi
+
+      if [ -n "$msg_count" ]; then
+          line="${line} | \033[0;36m${msg_count} msgs\033[0m"
+      fi
+
+      printf '%b' "$line"
+      STATUSLINE
+      chmod 755 "$HOME/.claude/statusline-command.sh"
+
+      # $HOME rather than a literal path: Lima's guest home carries a
+      # version-dependent suffix and must never be hardcoded.
+      printf '{"model": "opus", "statusLine": {"type": "command", "command": "%s/.claude/statusline-command.sh"}}\n' \
+        "$HOME" >"$HOME/.claude/settings.json"
+
       cat >"$HOME/.claude.json" <<'JSON'
       {
         "hasCompletedOnboarding": true,

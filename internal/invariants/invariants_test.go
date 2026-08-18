@@ -464,3 +464,66 @@ func probeSection(body string) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+func TestEmbeddedGuestScriptsAreValidShell(t *testing.T) {
+	// tests/lint.sh runs `bash -n` over the provision scripts, but a heredoc's
+	// contents are opaque to it - a syntax error in a script that a provision
+	// step writes out would surface only inside a VM, on first boot, as a
+	// feature that silently does nothing.
+	body := asset(t, "vm/provision/40-userenv.sh")
+	for _, embedded := range []struct{ name, marker string }{
+		{"statusline-command.sh", "STATUSLINE"},
+	} {
+		script := heredoc(t, body, embedded.marker)
+		if script == "" {
+			t.Errorf("no %s heredoc in 40-userenv.sh", embedded.marker)
+			continue
+		}
+		path := filepath.Join(t.TempDir(), embedded.name)
+		if err := os.WriteFile(path, []byte(script), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
+			t.Errorf("%s is not valid shell: %v\n%s", embedded.name, err, out)
+		}
+	}
+}
+
+func TestTheStatuslineIsWiredIntoClaudeSettings(t *testing.T) {
+	rendered, _ := sandbox(t)
+
+	// A quoted heredoc, or the guest's provisioning shell would expand the
+	// script's own $vars and $(...) as it wrote the file out.
+	mustMatch(t, rendered, `<<'STATUSLINE'`, "the statusline heredoc is not quoted")
+	// Rendered verbatim - no placeholder substitution has chewed it up.
+	mustMatch(t, rendered, `part_hash="\\033\[1;34m#\\033\[0m"`,
+		"the statusline script did not survive rendering intact")
+	mustMatch(t, rendered, `chmod 755 "\$HOME/\.claude/statusline-command\.sh"`,
+		"the statusline is not made executable")
+	mustMatch(t, rendered, `"statusLine": \{"type": "command"`,
+		"settings.json does not point at the statusline")
+
+	// Lima's guest home carries a version-dependent suffix, so the path is
+	// built from $HOME rather than written out.
+	mustNotMatch(t, rendered, `command": "/home/`, "the guest home path is hardcoded")
+}
+
+// heredoc returns the body of a <<'MARKER' block, or "".
+func heredoc(t *testing.T, body, marker string) string {
+	t.Helper()
+	var out []string
+	in := false
+	for _, line := range strings.Split(body, "\n") {
+		if in {
+			if line == marker {
+				return strings.Join(out, "\n") + "\n"
+			}
+			out = append(out, line)
+			continue
+		}
+		if strings.HasSuffix(line, "<<'"+marker+"'") {
+			in = true
+		}
+	}
+	return ""
+}
