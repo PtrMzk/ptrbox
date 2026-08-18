@@ -411,3 +411,56 @@ func repoRoot(t *testing.T) string {
 	}
 	return root
 }
+
+func TestProbesDoNotDependOnASuperuserPATH(t *testing.T) {
+	// Lima runs probes over ssh as the unprivileged default user, whose PATH
+	// on Debian and Ubuntu excludes /usr/sbin. A probe that resolves an
+	// sbin binary by name alone can never pass, and `limactl start` then
+	// blocks for its whole timeout with the guest sitting there perfectly
+	// healthy - a failure mode that looks exactly like a hang.
+	//
+	// Tools known to live on a plain user's PATH are fine by name; anything
+	// else needs an absolute-path check alongside.
+	onUserPath := map[string]bool{"git": true, "curl": true, "node": true, "python3": true}
+
+	commandV := regexp.MustCompile(`command -v ([a-z0-9_.-]+)`)
+	for _, tc := range []struct{ name, body string }{
+		{"vm/claude-repo.yaml", rendertest.Sandbox(t)},
+		{"vm/proxy.yaml", rendertest.Proxy(t)},
+	} {
+		probes := probeSection(tc.body)
+		if probes == "" {
+			t.Errorf("%s declares no probes", tc.name)
+			continue
+		}
+		for _, match := range commandV.FindAllStringSubmatch(probes, -1) {
+			tool := match[1]
+			if onUserPath[tool] {
+				continue
+			}
+			if !strings.Contains(probes, "/usr/sbin/"+tool) && !strings.Contains(probes, "/sbin/"+tool) {
+				t.Errorf("%s probes for %q by name only; it is not on an unprivileged PATH, "+
+					"so add an absolute-path check or limactl start will hang", tc.name, tool)
+			}
+		}
+	}
+}
+
+// probeSection is the probes: block of a rendered config.
+func probeSection(body string) string {
+	var out []string
+	in := false
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "probes:") {
+			in = true
+			continue
+		}
+		if in && len(line) > 0 && isTopLevelKey(line[0]) {
+			in = false
+		}
+		if in {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}

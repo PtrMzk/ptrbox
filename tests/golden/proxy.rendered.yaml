@@ -100,4 +100,8 @@ probes:
   - description: "squid installed"
     script: |
       #!/bin/bash
-      command -v squid >/dev/null
+      # Lima runs probes over ssh as the unprivileged default user, and Debian
+      # keeps /usr/sbin off a non-root PATH - so a bare `command -v squid` can
+      # never pass here however well the install went, and limactl start then
+      # waits out its entire timeout. Check the path squid actually lands on.
+      command -v squid >/dev/null || [ -x /usr/sbin/squid ]
