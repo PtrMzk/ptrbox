@@ -44,7 +44,10 @@ func cmdInstall(env *Env, args []string) error {
 		}
 	}
 
-	if err := preflightDeps(env); err != nil {
+	// --- preflight ----------------------------------------------------------
+	// Everything that can be known before any VM state is touched, said while
+	// it is still cheap to act on.
+	if err := preflight(env); err != nil {
 		return err
 	}
 
@@ -87,7 +90,6 @@ func cmdInstall(env *Env, args []string) error {
 	}
 
 	// --- report -------------------------------------------------------------
-	preflightReport(env)
 	if changed {
 		env.Out.Say("host setup complete")
 	} else {
@@ -289,9 +291,54 @@ func haveTool(env *Env, tool string) bool {
 	return lookPath(tool)
 }
 
-// preflightReport prints non-fatal environment notes: things worth knowing
-// about that should not stop an install.
-func preflightReport(env *Env) {
+// preflight is everything install can decide before it changes anything: the
+// dependencies it needs, a conflict on the proxy port, and the Keychain entry
+// new VMs will want.
+//
+// The position is the whole point. All of this used to run after Ensure(),
+// under the name preflightReport, where a warning about a missing Keychain
+// entry arrived at the end of a multi-minute provision - and where a listener
+// on the proxy port could not be read at all, because by then the healthy
+// case has one.
+func preflight(env *Env) error {
+	if err := preflightDeps(env); err != nil {
+		return err
+	}
+	if err := preflightProxyPort(env); err != nil {
+		return err
+	}
+	preflightKeychain(env)
+	return nil
+}
+
+// preflightProxyPort refuses to install over a foreign listener.
+//
+// With the proxy VM down, nothing of ptrbox's should hold its port, so
+// whatever does is somebody else's - a leftover host squid from before the
+// proxy moved into a VM, most likely. Left alone it does not announce itself:
+// Lima's forward cannot bind, the sandboxes dial that port anyway, and their
+// egress silently belongs to a process ptrbox knows nothing about. The
+// symptom arrives much later as "the agent has no network", or worse, does
+// not arrive at all.
+//
+// A running proxy is the same observation with the opposite meaning - that
+// listener is ours - which is why this can only be asked before Ensure().
+func preflightProxyPort(env *Env) error {
+	if env.Proxy.Running() {
+		return nil
+	}
+	if !portInUse(env.Cfg.ProxyPort) {
+		return nil
+	}
+	return fmt.Errorf("something else is already listening on 127.0.0.1:%d, which is where the %s port forward has to go - the sandboxes would reach that instead of ptrbox's proxy. Find it with: lsof -nP -iTCP:%d -sTCP:LISTEN (a squid left running on the Mac from before the proxy moved into a VM is the usual answer), or set PTRBOX_PROXY_PORT to a free port",
+		env.Cfg.ProxyPort, config.ProxyVM, env.Cfg.ProxyPort)
+}
+
+// preflightKeychain reports a missing token source. A warning rather than an
+// error: a VM without a token is still a usable VM, and `ptrbox new` says the
+// same thing again at the point where it matters. Said here so that it is
+// said before the provisioning, not after it.
+func preflightKeychain(env *Env) {
 	if !env.Keychain.Available() {
 		env.Out.Warn("no macOS Keychain (`security`) - VMs will need CLAUDE_CODE_OAUTH_TOKEN set by hand")
 		return
@@ -301,13 +348,5 @@ func preflightReport(env *Env) {
 			env.Cfg.KeychainService)
 		env.Out.Warn("  claude setup-token")
 		env.Out.Warn("  security add-generic-password -a \"$USER\" -s %s -w", env.Cfg.KeychainService)
-	}
-
-	// A foreign listener on the proxy port means VMs would talk to whatever
-	// that is - worth flagging, not worth blocking on (it is usually the
-	// ptrbox-proxy port forward this very run just brought up).
-	if portInUse(env.Cfg.ProxyPort) {
-		env.Out.Say("something is listening on port %d (expected: the ptrbox-proxy port forward)",
-			env.Cfg.ProxyPort)
 	}
 }

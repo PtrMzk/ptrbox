@@ -219,6 +219,76 @@ func TestAnInstallWithNothingToDoStillVerifies(t *testing.T) {
 	}
 }
 
+// --- preflight ---------------------------------------------------------------
+//
+// What install can know before it provisions anything, said before it does.
+
+func TestAForeignListenerOnTheProxyPortStopsTheInstall(t *testing.T) {
+	// With the proxy VM down, nothing of ptrbox's holds that port - so
+	// whatever does would end up receiving every sandbox's egress.
+	h := newHarness(t)
+	h.portInUse = func(int) bool { return true }
+
+	err := h.run("install")
+	if err == nil {
+		t.Fatal("install proceeded over a foreign listener on the proxy port")
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1:8888") {
+		t.Errorf("the error does not name the port: %v", err)
+	}
+	// And it stopped before spending minutes provisioning a VM whose forward
+	// could not bind.
+	h.assertNotCalled("^start")
+}
+
+func TestTheProxysOwnForwardIsNotMistakenForAConflict(t *testing.T) {
+	// The same observation means the opposite thing once the proxy is up,
+	// which is why the question is only asked beforehand. A second install
+	// must not trip over the forward the first one created.
+	h := newHarness(t)
+	h.mustRun("install")
+	if h.fake.VMStatus(config.ProxyVM) != lima.StatusRunning {
+		t.Fatal("the proxy is not running, so this proves nothing")
+	}
+	h.mustRun("install")
+}
+
+func TestInstallNoLongerReportsItsOwnPortForwardAsANote(t *testing.T) {
+	// It used to say "something is listening on port 8888 (expected: the
+	// ptrbox-proxy port forward)" - true on every healthy run, and therefore
+	// silent on a broken one.
+	h := newHarness(t)
+	h.mustRun("install")
+	if strings.Contains(h.output(), "something is listening") {
+		t.Errorf("install still reports the expected case:\n%s", h.output())
+	}
+}
+
+func TestAMissingKeychainEntryIsReportedBeforeProvisioning(t *testing.T) {
+	// The warning is only useful in time to act on it. Proved by breaking the
+	// provisioning: whatever install says before that point, it said early.
+	h := newHarness(t)
+	h.keychain.token = ""
+	h.fake.StartFails = true
+
+	if err := h.run("install"); err == nil {
+		t.Fatal("install succeeded with a proxy VM that would not start")
+	}
+	h.assertOutputContains("no Keychain entry")
+	h.assertOutputContains("claude setup-token")
+}
+
+func TestAHostWithNoKeychainIsReportedBeforeProvisioning(t *testing.T) {
+	h := newHarness(t)
+	h.keychain.available = false
+	h.fake.StartFails = true
+
+	if err := h.run("install"); err == nil {
+		t.Fatal("install succeeded with a proxy VM that would not start")
+	}
+	h.assertOutputContains("no macOS Keychain")
+}
+
 // --- the allowlist -----------------------------------------------------------
 
 func TestAnExistingAllowlistIsNeverOverwrittenByInstall(t *testing.T) {
