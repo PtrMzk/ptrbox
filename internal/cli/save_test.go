@@ -202,14 +202,34 @@ func TestRmNoArchiveSkipsThePull(t *testing.T) {
 	}
 }
 
-func TestRmOfAStoppedVMSaysWhatCannotBeSaved(t *testing.T) {
+// A stopped VM is the one case where rm cannot save the session, so it must
+// not destroy it either: the advice it prints is only followable while the
+// disk still exists.
+func TestRmOfAStoppedVMRefusesRatherThanLoseTranscripts(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	h.fake.SetStatus("demo", "Stopped")
+	h.fake.Reset()
+
+	err := h.run("rm", "demo")
+	if err == nil {
+		t.Fatal("rm of a stopped VM succeeded, silently discarding its transcripts")
+	}
+	for _, want := range []string{"cannot be archived", "ptrbox start demo", "--no-archive"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	h.assertNotCalled(`delete -f demo`)
+}
+
+// ...and --no-archive is that refusal's escape hatch, on a stopped VM too.
+func TestRmNoArchiveRemovesAStoppedVM(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("new", "demo")
 	h.fake.SetStatus("demo", "Stopped")
 
-	h.mustRun("rm", "demo")
-	h.assertOutputContains("cannot be archived")
-	h.assertOutputContains("ptrbox start demo")
+	h.mustRun("rm", "--no-archive", "demo")
 	h.assertCalled(`delete -f demo`)
 }
 

@@ -120,12 +120,15 @@ func cmdStop(env *Env, args []string) error {
 
 // archiveBeforeRemoval saves what the VM can still tell us. A stopped VM
 // cannot answer, and starting one just to read it would be a surprising thing
-// for `rm` to do, so that case is reported rather than worked around.
+// for `rm` to do - so rm stops there instead. Warning and deleting anyway was
+// the earlier behaviour, and it offered a recovery ("start it, then save") that
+// the next line made impossible: the transcripts were gone with the disk before
+// the user could act on the advice. Refusing keeps both choices open, and the
+// only way to lose a session is now to ask for it.
 func archiveBeforeRemoval(env *Env, name string) error {
 	if !env.Lima.Running(name) {
-		env.Out.Warn("VM %q is not running; its Claude transcripts cannot be archived", name)
-		env.Out.Warn("to keep them: ptrbox start %s && ptrbox save %s", name, name)
-		return nil
+		return fmt.Errorf("VM %q is not running, so its Claude transcripts cannot be archived - keep them with: ptrbox start %s && ptrbox save %s && ptrbox rm %s (or discard them with: ptrbox rm --no-archive %s)",
+			name, name, name, name, name)
 	}
 	path, err := archiveTranscripts(env, name)
 	if err != nil {
