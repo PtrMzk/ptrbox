@@ -88,3 +88,16 @@
 # The squid access log, as a path INSIDE the proxy VM (read via limactl
 # shell). Defaults to Debian's standard location.
 #PTRBOX_SQUID_LOG=/var/log/squid/access.log
+
+# --- Claude Code statusline --------------------------------------------------
+# A host-side path to a statusLine script, copied into each sandbox at
+# creation and wired into the guest's ~/.claude/settings.json. Point it at your
+# own and your sandboxes look like your Mac.
+#
+# Host-side on purpose, like the package list: a statusLine is a command Claude
+# Code runs on every render, so one read from the repo mount would be arbitrary
+# code the agent could hand itself. The file is copied verbatim - keep
+# credentials out of it (ptrbox refuses the obvious shapes).
+#
+# Applies at VM creation: re-create existing VMs to pick up changes.
+#PTRBOX_STATUSLINE="$HOME/.claude/statusline-command.sh"

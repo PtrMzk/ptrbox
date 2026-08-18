@@ -31,7 +31,7 @@ var Keys = []string{
 	"PROXY_HOST", "PROXY_PORT", "PROXY_CPUS", "PROXY_MEMORY", "PROXY_DISK",
 	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE", "SQUID_LOG",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
-	"EXTRA_PACKAGES",
+	"EXTRA_PACKAGES", "STATUSLINE",
 }
 
 // Guest images, one per supported distro. Both are apt-based on purpose: the
@@ -87,6 +87,7 @@ type Config struct {
 	ImageURL        string
 	BinDir          string
 	ExtraPackages   []string
+	Statusline      string
 
 	// Warnings are non-fatal notes from loading - an unrecognised key in the
 	// config file, say. The caller prints them; nothing here writes to a
@@ -126,6 +127,11 @@ func defaults() map[string]string {
 		// `ptrbox new` time, never read from inside a VM (a repo-provided
 		// list would let an agent install into its own sandbox).
 		"EXTRA_PACKAGES": "",
+		// A host-side path to a Claude Code statusLine script, copied into
+		// each new sandbox. Host-side for the same reason as the package
+		// list: a statusline command read from the repo mount would be
+		// arbitrary code the agent could hand itself on the next boot.
+		"STATUSLINE": "",
 	}
 }
 
@@ -206,6 +212,7 @@ func Load() (*Config, error) {
 		ImageURL:      values["IMAGE_URL"],
 		BinDir:        values["BIN_DIR"],
 		ExtraPackages: strings.Fields(values["EXTRA_PACKAGES"]),
+		Statusline:    values["STATUSLINE"],
 		Warnings:      warnings,
 	}
 

@@ -36,6 +36,13 @@ func cmdNew(env *Env, args []string) error {
 		return err
 	}
 
+	// Read before anything is provisioned: a bad PTRBOX_STATUSLINE path
+	// should cost nothing, not surface after a VM has finished booting twice.
+	statusline, err := readStatusline(env)
+	if err != nil {
+		return err
+	}
+
 	// --- repo ---------------------------------------------------------------
 	repoDir, err := prepareRepoDir(env, env.Cfg.RepoDir(arg))
 	if err != nil {
@@ -132,6 +139,13 @@ func cmdNew(env *Env, args []string) error {
 
 	// --- auth ---------------------------------------------------------------
 	if err := injectToken(env, name); err != nil {
+		return err
+	}
+
+	// --- guest niceties ------------------------------------------------------
+	// After verification, for the same reason the token is: an unverified VM
+	// gets nothing from the host.
+	if err := installStatusline(env, name, statusline); err != nil {
 		return err
 	}
 
