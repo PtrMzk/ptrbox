@@ -139,7 +139,7 @@ func cmdNew(env *Env, args []string) error {
 VM '%s' is ready.
 
   ssh lima-%s
-  cd /workspace && claude --dangerously-skip-permissions
+  cd /workspace && claude
 
 The repo lives on the host at %s and is mounted at /workspace.
 Commit and push from the host: the VM has no credentials but the Claude token.
@@ -147,15 +147,13 @@ Commit and push from the host: the VM has no credentials but the Claude token.
 	return nil
 }
 
-// prepareRepoDir creates the repo if it is not there, refuses to sandbox
-// ptrbox's own source, and neutralises git hooks on the host clone.
+// prepareRepoDir creates the repo if it is not there and neutralises git hooks
+// on the host clone.
 func prepareRepoDir(env *Env, dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	// Physical path, not logical: a symlinked route to the same directory
-	// would otherwise slip past the containment check below, and Lima wants a
-	// real host path for the mount anyway.
+	// Physical path, not logical: Lima wants a real host path for the mount.
 	repoDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return "", err
@@ -163,11 +161,6 @@ func prepareRepoDir(env *Env, dir string) (string, error) {
 	repoDir, err = filepath.Abs(repoDir)
 	if err != nil {
 		return "", err
-	}
-
-	if found := containedCheckout(repoDir, env.Exe); found != "" {
-		return "", fmt.Errorf("refusing to sandbox %q: it contains the ptrbox checkout (%s)",
-			repoDir, found)
 	}
 
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {

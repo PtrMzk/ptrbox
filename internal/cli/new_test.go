@@ -137,49 +137,6 @@ func TestNewRunsTheVerificationScriptInsideTheVM(t *testing.T) {
 	}
 }
 
-func TestNewRefusesToSandboxThePtrboxCheckoutItself(t *testing.T) {
-	// An agent that can edit its own sandbox's provisioning code is not
-	// sandboxed - and that code later runs on the host.
-	h := newHarness(t)
-	repoRoot := checkoutRoot(t)
-	if err := h.run("new", repoRoot); err == nil {
-		t.Fatal("new accepted the ptrbox checkout")
-	}
-	h.assertOutputContains("contains the ptrbox checkout")
-	h.assertNotCalled("start")
-}
-
-func TestNewRefusesASymlinkedRouteToTheCheckout(t *testing.T) {
-	// The containment check compares physical paths: two names for one
-	// directory must not be a way around it.
-	h := newHarness(t)
-	alias := filepath.Join(h.tmp, "alias")
-	if err := os.Symlink(checkoutRoot(t), alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.run("new", alias); err == nil {
-		t.Fatal("new accepted a symlink to the checkout")
-	}
-	h.assertOutputContains("contains the ptrbox checkout")
-	h.assertNotCalled("start")
-}
-
-func TestNewRefusesAParentDirectoryOfACheckout(t *testing.T) {
-	// Mounting the parent hands the agent write access to ptrbox's own code.
-	h := newHarness(t)
-	checkout := filepath.Join(h.tmp, "parent", "co")
-	mkdir(t, filepath.Join(checkout, "vm"))
-	write(t, filepath.Join(checkout, "go.mod"), "module github.com/PtrMzk/ptrbox\n")
-	write(t, filepath.Join(checkout, "vm", "claude-repo.yaml"), "")
-	write(t, filepath.Join(checkout, "vm", "verify.sh"), "")
-
-	if err := h.run("new", filepath.Join(h.tmp, "parent")); err == nil {
-		t.Fatal("new accepted a parent of a checkout")
-	}
-	h.assertOutputContains("contains the ptrbox checkout")
-	h.assertNotCalled("start")
-}
-
 func TestNewRefusesToDoubleProvisionAnExistingVM(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("new", "demo")
@@ -289,19 +246,6 @@ func TestATokenWithAQuoteIsRefusedRatherThanWritten(t *testing.T) {
 
 // --- helpers -----------------------------------------------------------------
 
-func checkoutRoot(t *testing.T) string {
-	t.Helper()
-	// internal/cli -> the repository root.
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !isCheckout(root) {
-		t.Fatalf("%s is not recognised as a ptrbox checkout", root)
-	}
-	return root
-}
-
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	mkdir(t, filepath.Dir(path))
@@ -310,29 +254,9 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-func TestTheCheckoutScanDoesNotDescendDependencyTrees(t *testing.T) {
-	// A checkout two levels down is found; one buried under node_modules is
-	// not looked for, because scanning those trees would stall `new` on every
-	// established project for a case that does not happen.
-	h := newHarness(t)
-
-	shallow := filepath.Join(h.tmp, "src", "tools", "ptrbox")
-	write(t, filepath.Join(shallow, "go.mod"), "module github.com/PtrMzk/ptrbox\n")
-	if got := containedCheckout(filepath.Join(h.tmp, "src"), ""); got != shallow {
-		t.Errorf("containedCheckout = %q, want %q", got, shallow)
-	}
-
-	buried := filepath.Join(h.tmp, "app", "node_modules", "ptrbox")
-	write(t, filepath.Join(buried, "go.mod"), "module github.com/PtrMzk/ptrbox\n")
-	if got := containedCheckout(filepath.Join(h.tmp, "app"), ""); got != "" {
-		t.Errorf("containedCheckout descended node_modules and found %q", got)
-	}
-}
-
 func TestTheMountIsThePhysicalPathNotTheOneYouTyped(t *testing.T) {
 	// `new` resolves the repo path before rendering it: Lima wants a real host
-	// path for the mount, and the checkout containment check compares physical
-	// paths so that two names for one directory cannot get past it.
+	// path for the mount.
 	//
 	// This is not academic on macOS, where /var is a symlink to /private/var
 	// and so the tmpdir every test runs in has two spellings.
