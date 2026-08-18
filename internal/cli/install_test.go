@@ -251,8 +251,8 @@ func TestAnExistingCorrectSymlinkIsLeftAloneSilently(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("install", "--yes")
 	h.mustRun("install", "--yes")
-	if strings.Contains(h.output(), "linked") {
-		t.Errorf("the second install re-reported the link:\n%s", h.output())
+	if n := h.manifestLinks(); n != 1 {
+		t.Errorf("the symlink was recorded %d times, want 1 - the second install re-did it", n)
 	}
 }
 
@@ -301,8 +301,18 @@ func TestAnAlreadyInstalledBinaryIsNotLinkedToItself(t *testing.T) {
 	h := newHarness(t)
 	t.Setenv("PTRBOX_BIN_DIR", filepath.Dir(h.exe))
 	h.mustRun("install", "--yes")
-	if strings.Contains(h.output(), "linked") {
-		t.Errorf("ptrbox offered to link itself to itself:\n%s", h.output())
+
+	// The harm this prevents is concrete: linking the target to itself means
+	// removing the binary and leaving a symlink pointing at nothing.
+	info, err := os.Lstat(h.exe)
+	if err != nil {
+		t.Fatalf("the binary is gone: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Error("ptrbox replaced itself with a symlink to itself")
+	}
+	if n := h.manifestLinks(); n != 0 {
+		t.Errorf("ptrbox recorded %d links, want 0", n)
 	}
 }
 

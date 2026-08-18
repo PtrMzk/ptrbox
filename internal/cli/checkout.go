@@ -110,7 +110,16 @@ func containedCheckout(repoDir, exe string) string {
 	}
 	for _, start := range starts {
 		root := findCheckoutAbove(start)
-		if root != "" && isInside(repoDir, root) {
+		if root == "" {
+			continue
+		}
+		// Resolved before comparing: repoDir is physical, and on macOS /var,
+		// /tmp and /etc are symlinks, so the same directory has two spellings
+		// and only one of them would match.
+		if physical, err := filepath.EvalSymlinks(root); err == nil {
+			root = physical
+		}
+		if isInside(repoDir, root) {
 			return root
 		}
 	}

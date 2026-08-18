@@ -328,3 +328,41 @@ func TestTheCheckoutScanDoesNotDescendDependencyTrees(t *testing.T) {
 		t.Errorf("containedCheckout descended node_modules and found %q", got)
 	}
 }
+
+func TestTheMountIsThePhysicalPathNotTheOneYouTyped(t *testing.T) {
+	// `new` resolves the repo path before rendering it: Lima wants a real host
+	// path for the mount, and the checkout containment check compares physical
+	// paths so that two names for one directory cannot get past it.
+	//
+	// This is not academic on macOS, where /var is a symlink to /private/var
+	// and so the tmpdir every test runs in has two spellings.
+	h := newHarness(t)
+	real := filepath.Join(h.tmp, "real-repo")
+	mkdir(t, real)
+	alias := filepath.Join(h.tmp, "aliased")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	h.mustRun("new", alias)
+
+	body := h.generated("real-repo")
+	if !strings.Contains(body, `location: "`+real+`"`) {
+		t.Errorf("the mount is not the physical path; wanted %q in:\n%s", real, mountLines(body))
+	}
+	if strings.Contains(body, alias) {
+		t.Error("the mount kept the symlinked spelling")
+	}
+}
+
+// mountLines is just the location lines, so a failure prints something a
+// person can read rather than the whole config.
+func mountLines(body string) string {
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, "location:") {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}

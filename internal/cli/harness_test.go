@@ -56,7 +56,15 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	tmp := t.TempDir()
+	// Physically resolved, because `new` resolves the repo path it is given
+	// and the assertions compare against it. On macOS t.TempDir() lands under
+	// /var/folders, and /var is a symlink to /private/var - so an unresolved
+	// tmp here means every path comparison fails on a Mac and passes on
+	// Linux, which is the worst of both.
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	home := filepath.Join(tmp, "home")
 	mkdir(t, home)
 
@@ -278,3 +286,22 @@ func gitConfig(t *testing.T, dir, key string) string {
 
 // printer is a discard-free Printer for helpers tested outside a full run.
 func (h *harness) printer() ui.Printer { return ui.Printer{W: &bytes.Buffer{}} }
+
+// manifestLinks counts the symlinks install recorded. Asserting on the
+// manifest rather than on the printed prose keeps the check independent of
+// what the temp directory happens to be called - a path containing the word
+// "linked" fooled the substring version of this.
+func (h *harness) manifestLinks() int {
+	h.t.Helper()
+	body, err := os.ReadFile(filepath.Join(config.Dir(), "install-manifest"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(line, "linked ") {
+			n++
+		}
+	}
+	return n
+}
