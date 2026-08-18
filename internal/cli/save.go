@@ -131,8 +131,23 @@ func archiveTranscripts(env *Env, name string) (string, error) {
 		return "", nil
 	}
 
-	env.Out.Say("archived %d bytes of transcripts to %s", capped.Written, path)
+	env.Out.Say("archived transcripts to %s (%s)", path, humanBytes(capped.Written))
 	return path, nil
+}
+
+// humanBytes keeps the size readable: a real transcript archive is megabytes,
+// and a nine-digit number is not something anyone reads.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for n/div >= unit && exp < 3 {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 // capWriter refuses to write more than Remaining bytes. The bytes come from a

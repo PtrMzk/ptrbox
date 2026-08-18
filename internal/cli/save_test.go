@@ -165,6 +165,27 @@ func TestRmArchivesBeforeDestroyingAnything(t *testing.T) {
 	if len(h.archives()) != 1 {
 		t.Errorf("archives = %v, want one", h.archives())
 	}
+
+	// And it has to SAY so, with the path. An archive nobody is told about is
+	// barely better than no archive - rm is the moment you would go looking.
+	h.assertOutputContains("archived transcripts to")
+	h.assertOutputContains(filepath.Join(config.TranscriptDir(), h.archives()[0]))
+}
+
+func TestHumanBytes(t *testing.T) {
+	for _, tc := range []struct {
+		in   int64
+		want string
+	}{
+		{40, "40 B"},
+		{2048, "2.0 KiB"},
+		{5 << 20, "5.0 MiB"},
+		{3 << 30, "3.0 GiB"},
+	} {
+		if got := humanBytes(tc.in); got != tc.want {
+			t.Errorf("humanBytes(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }
 
 func TestRmNoArchiveSkipsThePull(t *testing.T) {
