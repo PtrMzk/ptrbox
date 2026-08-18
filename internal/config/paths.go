@@ -63,3 +63,18 @@ func RecordManifest(line string) error {
 	}
 	return f.Close()
 }
+
+// StateDir is where ptrbox keeps things it produced rather than things you
+// configured: $XDG_STATE_HOME/ptrbox, else ~/.local/state/ptrbox.
+func StateDir() string {
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		base = filepath.Join(os.Getenv("HOME"), ".local", "state")
+	}
+	return filepath.Join(base, "ptrbox")
+}
+
+// TranscriptDir holds Claude transcripts pulled out of VMs before they are
+// destroyed. Mode 0700 throughout: a transcript records everything the agent
+// was shown, which is a superset of what is in the repo.
+func TranscriptDir() string { return filepath.Join(StateDir(), "transcripts") }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"time"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
@@ -48,15 +49,29 @@ type Env struct {
 	// without needing a real editor on the machine.
 	Editor func(path string) error
 
+	// Now is the clock, a field so an archive filename is reproducible in
+	// tests.
+	Now func() time.Time
+
 	// Load resolves the configuration and everything derived from it. It is
 	// called only for commands that need it, so `ptrbox help` and
 	// `ptrbox version` still work on a host whose config file does not parse.
 	Load func(*Env) error
 }
 
+// now is the clock, defaulting to the real one. A method rather than a bare
+// field read: a nil Now in some future entry point should not be a panic three
+// layers down.
+func (e *Env) now() time.Time {
+	if e.Now == nil {
+		return time.Now()
+	}
+	return e.Now()
+}
+
 // needsConfig lists the commands that cannot run without a resolved config.
 var needsConfig = map[string]bool{
-	"install": true, "new": true, "rm": true,
+	"install": true, "new": true, "rm": true, "save": true,
 	"start": true, "stop": true, "logs": true, "allow": true,
 }
 
@@ -99,6 +114,8 @@ func Run(env *Env, args []string) error {
 		return cmdLogs(env, args)
 	case "allow":
 		return cmdAllow(env, args)
+	case "save":
+		return cmdSave(env, args)
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 		return nil
@@ -127,6 +144,8 @@ COMMANDS
   logs [--denied]    tail the proxy log; --denied shows blocked requests only
   allow [domain...]  add domains to the egress allowlist, or open it in
                      $EDITOR with no arguments; reloads squid afterwards
+  save <repo|vm>     archive the VM's Claude transcripts onto the host
+                     (rm does this for you before destroying anything)
 
   help               this text
   version            print the ptrbox version

@@ -22,6 +22,18 @@ import (
 )
 
 func cmdRm(env *Env, args []string) error {
+	archive := true
+	var rest []string
+	for _, arg := range args {
+		switch arg {
+		case "--no-archive":
+			archive = false
+		default:
+			rest = append(rest, arg)
+		}
+	}
+	args = rest
+
 	name, err := sandboxTarget(env, args, "rm",
 		fmt.Sprintf("%q is the shared egress proxy, not a sandbox - it stops by itself when the last sandbox does (limactl delete %s if you really mean to destroy it)",
 			config.ProxyVM, config.ProxyVM))
@@ -31,6 +43,15 @@ func cmdRm(env *Env, args []string) error {
 
 	if !env.Lima.Exists(name) {
 		return unknownVM(env, name)
+	}
+
+	// Transcripts first: after Delete they are gone with the disk. A failure
+	// here stops the removal rather than quietly losing the session - pass
+	// --no-archive if you meant to throw it away.
+	if archive {
+		if err := archiveBeforeRemoval(env, name); err != nil {
+			return err
+		}
 	}
 
 	if err := env.Lima.Delete(name); err != nil {
@@ -95,6 +116,25 @@ func cmdStop(env *Env, args []string) error {
 	// Even a no-op stop re-checks: a proxy left over from a crash gets cleaned
 	// up on the next explicit stop rather than lingering forever.
 	return env.Proxy.StopIfIdle()
+}
+
+// archiveBeforeRemoval saves what the VM can still tell us. A stopped VM
+// cannot answer, and starting one just to read it would be a surprising thing
+// for `rm` to do, so that case is reported rather than worked around.
+func archiveBeforeRemoval(env *Env, name string) error {
+	if !env.Lima.Running(name) {
+		env.Out.Warn("VM %q is not running; its Claude transcripts cannot be archived", name)
+		env.Out.Warn("to keep them: ptrbox start %s && ptrbox save %s", name, name)
+		return nil
+	}
+	path, err := archiveTranscripts(env, name)
+	if err != nil {
+		return fmt.Errorf("%w (pass --no-archive to remove the VM anyway)", err)
+	}
+	if path == "" {
+		env.Out.Say("no Claude transcripts to archive")
+	}
+	return nil
 }
 
 // sandboxTarget does the argument handling the three commands share. Their

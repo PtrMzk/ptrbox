@@ -42,6 +42,10 @@ type Fake struct {
 	// Stdins is everything the fake was sent on stdin, in order.
 	Stdins []string
 
+	// Transcripts is what a Claude transcript pull returns for a VM. Absent
+	// means the VM has none, which is the state of one nobody has worked in.
+	Transcripts map[string][]byte
+
 	// Canned failures.
 	VerifyFails     bool // `bash -lc <verify.sh>` reports a failed sandbox
 	SquidParseFails bool // in-VM `squid -k parse` rejects the config
@@ -171,6 +175,14 @@ func (f *Fake) shell(c lima.Cmd) error {
 	switch {
 	case len(rest) > 0 && rest[0] == "sudo":
 		return f.sudo(c, vm, rest[1:])
+	case len(rest) > 2 && rest[1] == "-c" && strings.Contains(rest[2], ".claude/projects"):
+		// The transcript pull: a tar streamed out on stdout. No output at all
+		// is how a VM says it has nothing to archive.
+		if body := f.Transcripts[vm]; len(body) > 0 {
+			c.Stdout.Write(body)
+		}
+		return nil
+
 	case len(rest) > 1 && rest[1] == "-c":
 		// Token injection: the payload arrives on stdin and must never be in
 		// argv, which is exactly what these tests exist to prove.

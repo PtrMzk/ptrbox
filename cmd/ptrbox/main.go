@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	ptrbox "github.com/PtrMzk/ptrbox"
 	"github.com/PtrMzk/ptrbox/internal/cli"
@@ -31,6 +32,7 @@ func main() {
 		Exe:         executable(),
 		Interactive: interactive(),
 		Editor:      cli.DefaultEditor,
+		Now:         time.Now,
 		Lima:        &lima.Client{Runner: lima.Exec{}, Stdout: os.Stdout, Stderr: os.Stderr},
 		Load:        load,
 	}

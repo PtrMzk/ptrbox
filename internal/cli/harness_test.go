@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	ptrbox "github.com/PtrMzk/ptrbox"
 	"github.com/PtrMzk/ptrbox/internal/config"
@@ -134,7 +135,9 @@ func (h *harness) run(args ...string) error {
 		Exe:         h.exe,
 		Interactive: h.tty,
 		Editor:      func(path string) error { return h.editor(path) },
-		Lima:        &lima.Client{Runner: h.fake, Stdout: stdout, Stderr: stderr},
+		// A fixed clock, so an archive filename is the same on every run.
+		Now:  func() time.Time { return time.Date(2026, 8, 17, 20, 45, 0, 0, time.UTC) },
+		Lima: &lima.Client{Runner: h.fake, Stdout: stdout, Stderr: stderr},
 	}
 	if h.missing["limactl"] {
 		env.Lima = &lima.Client{Runner: unavailableRunner{h.fake}, Stdout: stdout, Stderr: stderr}
