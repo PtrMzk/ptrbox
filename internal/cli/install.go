@@ -142,8 +142,13 @@ func installSSHInclude(env *Env) error {
 // installSymlink offers to symlink the running binary somewhere on PATH.
 // Asked rather than assumed: writing into a directory outside the checkout is
 // the user's call, and the default when there is no tty is to decline.
+//
+// Every path out of here says what it decided. A step that announces itself
+// and then goes quiet reads as "done" when it means "skipped", and this is
+// the step people re-run precisely because `which ptrbox` came up empty.
 func installSymlink(env *Env) error {
 	if env.Exe == "" {
+		env.Out.Warn("cannot tell where this binary is; skipping the PATH link")
 		return nil
 	}
 	target := filepath.Join(env.Cfg.BinDir, "ptrbox")
@@ -151,10 +156,14 @@ func installSymlink(env *Env) error {
 	// Already installed here - by `go install`, say. Linking a file to itself
 	// is not a favour.
 	if target == env.Exe {
+		env.Out.Say("ptrbox is already installed at %s", env.Exe)
+		warnIfNotSearched(env)
 		return nil
 	}
 	if existing, err := os.Readlink(target); err == nil && existing == env.Exe {
-		return nil // already ours; nothing to say
+		env.Out.Say("%s already links to this ptrbox", target)
+		warnIfNotSearched(env)
+		return nil
 	}
 
 	if _, err := os.Lstat(target); err == nil {
@@ -180,12 +189,25 @@ func installSymlink(env *Env) error {
 		return err
 	}
 	env.Out.Say("linked %s -> %s", target, env.Exe)
-
-	// A symlink in a directory nobody searches is a silent no-op, so check.
-	if !onPath(env.Cfg.BinDir) {
-		env.Out.Warn("%s is not on your PATH - add it to ~/.zshrc", env.Cfg.BinDir)
-	}
+	warnIfNotSearched(env)
 	return nil
+}
+
+// warnIfNotSearched reports a bin directory nothing looks in.
+//
+// Called from every outcome where a usable ptrbox now exists in BinDir, not
+// just from the run that created it. The link and the PATH entry are two
+// separate facts, and only one of them is ptrbox's to arrange: a link in a
+// directory nobody searches is a silent no-op, so re-running install and
+// hearing nothing is exactly the wrong answer to "why is `which ptrbox`
+// empty?". This used to be said once, on the run where everything looked
+// fine, and never again.
+func warnIfNotSearched(env *Env) {
+	if onPath(env.Cfg.BinDir) {
+		return
+	}
+	env.Out.Warn("%s is not on your PATH, so that link does nothing yet. Add it with:", env.Cfg.BinDir)
+	env.Out.Detail(`echo 'export PATH="%s:$PATH"' >> ~/.zshrc && exec zsh`, env.Cfg.BinDir)
 }
 
 func onPath(dir string) bool {

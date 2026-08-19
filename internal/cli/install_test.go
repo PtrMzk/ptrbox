@@ -402,13 +402,58 @@ func TestTheSymlinkIsNotCreatedWithoutConsent(t *testing.T) {
 	h.assertOutputContains("symlink ptrbox into")
 }
 
-func TestAnExistingCorrectSymlinkIsLeftAloneSilently(t *testing.T) {
+func TestAnExistingCorrectSymlinkIsNotRelinked(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("install", "--yes")
 	h.mustRun("install", "--yes")
 	if n := h.manifestLinks(); n != 1 {
 		t.Errorf("the symlink was recorded %d times, want 1 - the second install re-did it", n)
 	}
+	// Not re-done is not the same as not reported: the step still says what
+	// it found, so it cannot read as a step that was skipped.
+	h.assertOutputContains("already links to this ptrbox")
+}
+
+func TestARerunStillWarnsThatTheBinDirIsNotSearched(t *testing.T) {
+	// The bug this closes: the PATH warning was printed only by the run that
+	// created the link - the run on which everything looked fine - and never
+	// by the re-run you make because `which ptrbox` came up empty. The link
+	// and the PATH entry are two separate facts, and ptrbox only arranges one
+	// of them.
+	h := newHarness(t)
+	h.mustRun("install", "--yes")
+	h.assertOutputContains("is not on your PATH")
+
+	h.mustRun("install", "--yes")
+	h.assertOutputContains("is not on your PATH")
+	// ...and names the line to paste, rather than "add it to ~/.zshrc".
+	h.assertOutputContains(`export PATH="` + filepath.Join(h.home, "bin") + `:$PATH"`)
+}
+
+func TestABinDirOnPathIsNotNaggedAbout(t *testing.T) {
+	// The warning has to stay silent when there is nothing wrong, or the run
+	// where something IS wrong says nothing new.
+	h := newHarness(t)
+	binDir := filepath.Join(h.tmp, "on-path")
+	t.Setenv("PTRBOX_BIN_DIR", binDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	h.mustRun("install", "--yes")
+	h.mustRun("install", "--yes")
+	if strings.Contains(h.output(), "not on your PATH") {
+		t.Errorf("install complained about a directory that is on PATH:\n%s", h.output())
+	}
+}
+
+func TestAnAlreadyInstalledBinaryStillReportsItsPathStatus(t *testing.T) {
+	// `go install` puts ptrbox in a bin dir already, so there is nothing to
+	// link - but whether that dir is searched is the same open question.
+	h := newHarness(t)
+	t.Setenv("PTRBOX_BIN_DIR", filepath.Dir(h.exe))
+
+	h.mustRun("install", "--yes")
+	h.assertOutputContains("already installed at")
+	h.assertOutputContains("is not on your PATH")
 }
 
 func TestAForeignFileAtTheTargetIsNotClobberedWithoutConsent(t *testing.T) {
