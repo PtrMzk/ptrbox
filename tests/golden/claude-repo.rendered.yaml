@@ -504,7 +504,16 @@ provision:
       # Claude Code defaults, pre-seeded so fresh VMs go straight to work:
       # - statusline-command.sh + settings.json: the model to default to ("opus" is
       #   an alias tracking the latest Opus-class model, so no updates needed on
-      #   releases) and the statusline that renders above the prompt
+      #   releases), the statusline that renders above the prompt, and the
+      #   permission mode a session starts in
+      # - permissions.defaultMode "auto": Claude Code's own default, which classifies
+      #   each tool call and asks only about the ones it will not auto-approve. It is
+      #   a user-level setting on purpose - repo-level settings cannot grant it, and
+      #   a repo that could would be choosing its own leash. Approvals are a
+      #   convenience layer here, not the containment: the VM holds under any mode,
+      #   which is why this can be a default rather than a decision per sandbox. A
+      #   plan or a model that does not offer auto mode falls back on its own; to opt
+      #   out, edit this line and re-create.
       # - .claude.json: skip the first-run onboarding wizard AND the per-project
       #   trust dialog. Auto-trust is a deliberate call: the dialog gates loading
       #   repo-provided config (CLAUDE.md, hooks), and in this design the VM itself
@@ -606,7 +615,7 @@ provision:
 
       # $HOME rather than a literal path: Lima's guest home carries a
       # version-dependent suffix and must never be hardcoded.
-      printf '{"model": "opus", "statusLine": {"type": "command", "command": "%s/.claude/statusline-command.sh"}}\n' \
+      printf '{"model": "opus", "permissions": {"defaultMode": "auto"}, "statusLine": {"type": "command", "command": "%s/.claude/statusline-command.sh"}}\n' \
         "$HOME" >"$HOME/.claude/settings.json"
 
       cat >"$HOME/.claude.json" <<'JSON'

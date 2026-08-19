@@ -7,6 +7,7 @@
 package invariants
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -544,6 +545,46 @@ func TestTheStatuslineIsWiredIntoClaudeSettings(t *testing.T) {
 	// Lima's guest home carries a version-dependent suffix, so the path is
 	// built from $HOME rather than written out.
 	mustNotMatch(t, rendered, `command": "/home/`, "the guest home path is hardcoded")
+}
+
+func TestClaudeSettingsPreSeedIsValidJSON(t *testing.T) {
+	rendered, _ := sandbox(t)
+
+	// The pre-seed is one printf format string, which is the whole file: a
+	// comma slip in it produces a settings.json Claude Code discards without
+	// saying so, and the VM comes up with none of these defaults. Parse what
+	// the guest will actually write.
+	m := regexp.MustCompile(`(?m)^\s*printf '(\{.*\})\\n' \\$`).FindStringSubmatch(rendered)
+	if m == nil {
+		t.Fatal("no settings.json printf in the rendered config")
+	}
+	var settings struct {
+		Model       string `json:"model"`
+		Permissions struct {
+			DefaultMode string `json:"defaultMode"`
+		} `json:"permissions"`
+		StatusLine struct {
+			Type    string `json:"type"`
+			Command string `json:"command"`
+		} `json:"statusLine"`
+	}
+	// %s is $HOME, filled in by the guest's shell.
+	body := strings.ReplaceAll(m[1], "%s", "/home/agent")
+	if err := json.Unmarshal([]byte(body), &settings); err != nil {
+		t.Fatalf("settings.json pre-seed is not valid JSON: %v\n%s", err, body)
+	}
+	if settings.Model == "" {
+		t.Error("no model in the settings.json pre-seed")
+	}
+	// Approvals are a convenience layer in a ptrbox VM - the containment is
+	// the VM, under any mode - so sessions start in Claude Code's own auto
+	// mode rather than asking about every call.
+	if got := settings.Permissions.DefaultMode; got != "auto" {
+		t.Errorf("permission mode is %q, want auto", got)
+	}
+	if settings.StatusLine.Command != "/home/agent/.claude/statusline-command.sh" {
+		t.Errorf("statusline command is %q", settings.StatusLine.Command)
+	}
 }
 
 func TestOnlyPtrboxSpeaksAtLogin(t *testing.T) {
