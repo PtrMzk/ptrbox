@@ -266,7 +266,19 @@ func (s *Stream) translate(line string, e entry) {
 		s.Out.Say("%s (%s/%s): %s%s", phase(m[1]), m[2], m[3], unquote(m[4]), s.elapsed(e))
 
 	case requirementDone.MatchString(message):
-		s.Out.Detail("ok%s", s.took(e))
+		m := requirementDone.FindStringSubmatch(message)
+		if s.hasWaiting {
+			s.Out.Detail("ok%s", s.took(e))
+		} else {
+			// Satisfied with no "waiting" ahead of it in this invocation -
+			// lima logs one while shutting down, so `ptrbox new`'s reboot
+			// printed a bare "ok" directly under limactl's "waiting for the
+			// host agent to shut down". An unattached "ok" reads as ptrbox
+			// confirming whatever was said last, which is a sentence nobody
+			// wrote; name what was satisfied instead.
+			s.Out.Detail("%s (%s/%s) ok", phase(m[1]), m[2], m[3])
+		}
+		s.hasWaiting = false
 
 	case guestAgentWait.MatchString(message):
 		s.Out.Detail("waiting for the guest agent%s", s.elapsed(e))

@@ -374,6 +374,19 @@ func TestAnAttemptToDownloadIsNotADownload(t *testing.T) {
 	}
 }
 
+func TestASatisfiedRequirementWithNothingToAttachToNamesItself(t *testing.T) {
+	// lima logs a satisfied requirement while shutting down, so `ptrbox new`'s
+	// reboot printed a bare dim "ok" directly under limactl's "waiting for the
+	// host agent to shut down" - which reads as ptrbox confirming a sentence
+	// it did not write.
+	s, buf := newStream(t)
+	feed(s, transcriptLine(t, "The final requirement 1 of 1 is satisfied")+"\n", nil)
+
+	if got := buf.String(); got != "    finishing (1/1) ok\n" {
+		t.Errorf("an unattached completion reads %q", got)
+	}
+}
+
 func TestOnlyTheVMImageDownloadIsCalledTheVMImageDownload(t *testing.T) {
 	// lima downloads other things. Claiming one of them is the guest image
 	// would be the wrong step rather than a missing one, which is the failure
