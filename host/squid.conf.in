@@ -50,6 +50,17 @@ http_access allow from_forward CONNECT allowed_domains
 # 3) Default-deny. Everything else -> 403, logged as TCP_DENIED. KEEP LAST.
 http_access deny all
 
+# Memory. Left unset, cache_mem defaults to 256 MB - half of this VM's 512 MiB
+# and, until this line, the one allocation in the proxy with no stated bound.
+# It should stay near-empty either way: the rules above permit only CONNECT,
+# and a tunnel is never cached. So this is a ceiling on a leak rather than a
+# working set, and the failure it forecloses is real - the proxy VM has no
+# swap, so an OOM kill of squid takes the network away from every running
+# sandbox at once. (Measured idle on 2026-08-19: 133 MiB used of a 470 MiB
+# ceiling.) Note squid treats this as a target, not a hard cap: in-transit
+# objects have priority and can push past it.
+cache_mem 16 MB
+
 # Restarts: don't linger 30s (the default) draining old connections - the VMs'
 # tunnels are all retry-safe clients; drop them and come back fast. (Config
 # changes restart; allowlist changes go through `squid -k reconfigure`, which

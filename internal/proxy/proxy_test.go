@@ -122,6 +122,26 @@ func TestEnsurePushesTheRenderedSquidConfig(t *testing.T) {
 	}
 }
 
+func TestThePushedConfigPinsSquidsMemory(t *testing.T) {
+	// cache_mem left unset is squid's 256 MB default against a 512 MiB VM with
+	// no swap. The OOM kill at the end of that is not squid's problem but every
+	// running sandbox's - the proxy is their only route out. The number is a
+	// judgement call and may change; leaving the decision to squid may not.
+	h := newHarness(t)
+	h.mustEnsure(t)
+
+	conf := h.vmFile(t, proxy.ConfPath)
+	pinned := false
+	for _, line := range strings.Split(conf, "\n") {
+		if strings.HasPrefix(line, "cache_mem ") {
+			pinned = true
+		}
+	}
+	if !pinned {
+		t.Errorf("the pushed config does not pin cache_mem:\n%s", conf)
+	}
+}
+
 func TestEnsurePushesTheHostAllowlist(t *testing.T) {
 	h := newHarness(t)
 	h.mustEnsure(t)
