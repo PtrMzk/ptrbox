@@ -98,6 +98,9 @@ func newHarness(t *testing.T) *harness {
 	t.Setenv("PTRBOX_GIT_USER_EMAIL", "test@example.com")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// install writes a PATH line into the user's shell startup file, so the
+	// shell has to be the test's decision rather than the developer's.
+	t.Setenv("SHELL", "/bin/zsh")
 
 	// A stand-in for the installed binary, so the PATH symlink offer has
 	// something real to point at.

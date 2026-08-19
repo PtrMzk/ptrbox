@@ -157,13 +157,11 @@ func installSymlink(env *Env) error {
 	// is not a favour.
 	if target == env.Exe {
 		env.Out.Say("ptrbox is already installed at %s", env.Exe)
-		warnIfNotSearched(env)
-		return nil
+		return installPathEntry(env)
 	}
 	if existing, err := os.Readlink(target); err == nil && existing == env.Exe {
 		env.Out.Say("%s already links to this ptrbox", target)
-		warnIfNotSearched(env)
-		return nil
+		return installPathEntry(env)
 	}
 
 	if _, err := os.Lstat(target); err == nil {
@@ -189,25 +187,129 @@ func installSymlink(env *Env) error {
 		return err
 	}
 	env.Out.Say("linked %s -> %s", target, env.Exe)
-	warnIfNotSearched(env)
+	return installPathEntry(env)
+}
+
+// installPathEntry gets BinDir searched, or explains how.
+//
+// Called from every outcome that leaves a usable ptrbox in BinDir, not just
+// from the run that created it. The link and the PATH entry are two separate
+// facts: a link in a directory nothing searches is a silent no-op, so
+// re-running install and hearing nothing is the wrong answer to "why is
+// `which ptrbox` empty?".
+//
+// Offered rather than assumed, like the symlink - a shell startup file is
+// somewhere a bad edit costs you every new terminal. But offered, not
+// refused: install already prepends an Include to ~/.ssh/config, and printing
+// a line for you to paste while editing that one unprompted was an
+// inconsistency, not a boundary.
+func installPathEntry(env *Env) error {
+	if onPath(env.Cfg.BinDir) {
+		return nil
+	}
+	rcFile, line := pathAdvice(env.Cfg.BinDir)
+
+	// A shell ptrbox does not know how to edit, or one with its own way of
+	// doing this. Say the line and stop.
+	if rcFile == "" {
+		env.Out.Warn("%s is not on your PATH, so that link does nothing yet. Add it with:", env.Cfg.BinDir)
+		env.Out.Detail("%s", line)
+		return nil
+	}
+
+	body, err := os.ReadFile(rcFile)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	// Already written, but not in this process's environment: the file is
+	// only read by shells that started after it was. Nothing to add, and the
+	// missing step is one nobody can take on the user's behalf.
+	if hasLine(body, line) {
+		env.Out.Warn("%s is in %s but not in this shell - start a new terminal, or:", env.Cfg.BinDir, rcFile)
+		env.Out.Detail("%s", reloadCommand())
+		return nil
+	}
+
+	env.Out.Say("%s is not on your PATH, so that link does nothing yet", env.Cfg.BinDir)
+	if !confirm(env, fmt.Sprintf("add it to %s?", rcFile)) {
+		env.Out.Detail("%s", line)
+		return nil
+	}
+
+	// A leading newline when the file does not end in one, so the export
+	// cannot land on the end of somebody's last line.
+	addition := "\n# added by ptrbox\n" + line + "\n"
+	if len(body) == 0 || bytes.HasSuffix(body, []byte("\n")) {
+		addition = addition[1:]
+	}
+	f, err := os.OpenFile(rcFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(addition); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := config.RecordManifest("appended a PATH line to " + rcFile); err != nil {
+		return err
+	}
+	env.Out.Say("added %s to %s", env.Cfg.BinDir, rcFile)
+
+	// A child process cannot change its parent shell's environment, so this
+	// last step is genuinely the user's however much of the rest is not.
+	env.Out.Detail("%s", reloadCommand())
 	return nil
 }
 
-// warnIfNotSearched reports a bin directory nothing looks in.
-//
-// Called from every outcome where a usable ptrbox now exists in BinDir, not
-// just from the run that created it. The link and the PATH entry are two
-// separate facts, and only one of them is ptrbox's to arrange: a link in a
-// directory nobody searches is a silent no-op, so re-running install and
-// hearing nothing is exactly the wrong answer to "why is `which ptrbox`
-// empty?". This used to be said once, on the run where everything looked
-// fine, and never again.
-func warnIfNotSearched(env *Env) {
-	if onPath(env.Cfg.BinDir) {
-		return
+// pathAdvice is how the user's shell puts a directory on PATH: the startup
+// file to append to - empty when ptrbox should not guess - and the line that
+// does it.
+func pathAdvice(dir string) (rcFile, line string) {
+	export := fmt.Sprintf(`export PATH="%s:$PATH"`, dir)
+	home := os.Getenv("HOME")
+
+	switch shellName() {
+	case "zsh":
+		return filepath.Join(home, ".zshrc"), export
+	case "bash":
+		// Terminal.app and iTerm start login shells, which read
+		// .bash_profile and never .bashrc.
+		return filepath.Join(home, ".bash_profile"), export
+	case "fish":
+		// fish has a command for this, and would not even parse an export
+		// line. Nothing here to append to.
+		return "", fmt.Sprintf("fish_add_path %s", dir)
 	}
-	env.Out.Warn("%s is not on your PATH, so that link does nothing yet. Add it with:", env.Cfg.BinDir)
-	env.Out.Detail(`echo 'export PATH="%s:$PATH"' >> ~/.zshrc && exec zsh`, env.Cfg.BinDir)
+	return "", export
+}
+
+// shellName is the user's shell, by the name of its binary.
+func shellName() string { return filepath.Base(os.Getenv("SHELL")) }
+
+// reloadCommand re-execs the user's shell so it re-reads what was just
+// written.
+func reloadCommand() string {
+	switch name := shellName(); name {
+	case "zsh", "bash":
+		return "exec " + name
+	}
+	return "open a new terminal"
+}
+
+// hasLine reports whether body already contains want as a line of its own,
+// ignoring surrounding space. The idempotence check: a second install must
+// not append a second copy.
+func hasLine(body []byte, want string) bool {
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func onPath(dir string) bool {

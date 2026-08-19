@@ -414,24 +414,113 @@ func TestAnExistingCorrectSymlinkIsNotRelinked(t *testing.T) {
 	h.assertOutputContains("already links to this ptrbox")
 }
 
-func TestARerunStillWarnsThatTheBinDirIsNotSearched(t *testing.T) {
-	// The bug this closes: the PATH warning was printed only by the run that
-	// created the link - the run on which everything looked fine - and never
-	// by the re-run you make because `which ptrbox` came up empty. The link
-	// and the PATH entry are two separate facts, and ptrbox only arranges one
-	// of them.
+// --- the PATH entry ----------------------------------------------------------
+//
+// The link and the PATH entry are two separate facts. ptrbox arranges both -
+// it already prepends an Include to ~/.ssh/config unprompted, so printing a
+// line for the user to paste into the other dotfile was an inconsistency
+// rather than a boundary - but the second one is asked for first, and the
+// re-exec at the end is nobody's to do but the user's.
+
+func (h *harness) zshrc() string {
+	h.t.Helper()
+	body, err := os.ReadFile(filepath.Join(h.home, ".zshrc"))
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+func TestYesPutsTheBinDirOnPathForRealNotAsAdvice(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("install", "--yes")
-	h.assertOutputContains("is not on your PATH")
 
+	want := `export PATH="` + filepath.Join(h.home, "bin") + `:$PATH"`
+	if !containsLine(h.zshrc(), want) {
+		t.Errorf("~/.zshrc does not contain %q:\n%s", want, h.zshrc())
+	}
+	// The one step a child process genuinely cannot take for you.
+	h.assertOutputContains("exec zsh")
+}
+
+func TestThePathLineIsAddedExactlyOnce(t *testing.T) {
+	// Idempotent like the ssh Include: a second install must not append a
+	// second copy. And because the file is only read by shells started after
+	// it was written, the re-run's news is "restart your shell", not "added".
+	h := newHarness(t)
 	h.mustRun("install", "--yes")
-	h.assertOutputContains("is not on your PATH")
-	// ...and names the line to paste, rather than "add it to ~/.zshrc".
+	h.mustRun("install", "--yes")
+
+	want := `export PATH="` + filepath.Join(h.home, "bin") + `:$PATH"`
+	if n := strings.Count(h.zshrc(), want); n != 1 {
+		t.Errorf("the PATH line appears %d times, want 1:\n%s", n, h.zshrc())
+	}
+	h.assertOutputContains("but not in this shell")
+}
+
+func TestTheAppendDoesNotLandOnSomebodysLastLine(t *testing.T) {
+	h := newHarness(t)
+	write(t, filepath.Join(h.home, ".zshrc"), "alias ll='ls -l'") // no trailing newline
+	h.mustRun("install", "--yes")
+
+	if !containsLine(h.zshrc(), "alias ll='ls -l'") {
+		t.Errorf("the existing last line was damaged:\n%q", h.zshrc())
+	}
+	if !containsLine(h.zshrc(), `export PATH="`+filepath.Join(h.home, "bin")+`:$PATH"`) {
+		t.Errorf("no PATH line:\n%q", h.zshrc())
+	}
+}
+
+func TestAStartupFileIsNotTouchedWithoutConsent(t *testing.T) {
+	// The link already exists, so the PATH offer is the only question left -
+	// and with no tty it declines, printing the line for the user to place
+	// themselves. A shell startup file is somewhere a bad edit costs you
+	// every new terminal, so it is asked for like the symlink is.
+	h := newHarness(t)
+	link := filepath.Join(h.home, "bin", "ptrbox")
+	mkdir(t, filepath.Dir(link))
+	if err := os.Symlink(h.exe, link); err != nil {
+		t.Fatal(err)
+	}
+
+	h.mustRun("install")
+	if h.exists(filepath.Join(h.home, ".zshrc")) {
+		t.Error("install wrote to ~/.zshrc without consent")
+	}
 	h.assertOutputContains(`export PATH="` + filepath.Join(h.home, "bin") + `:$PATH"`)
 }
 
+func TestAShellPtrboxCannotEditGetsToldRatherThanEdited(t *testing.T) {
+	// fish would not even parse an export line, and has its own command for
+	// this. Guessing at a file for a shell ptrbox does not know is how you
+	// leave inert cruft in somebody's config.
+	h := newHarness(t)
+	t.Setenv("SHELL", "/opt/homebrew/bin/fish")
+
+	h.mustRun("install", "--yes")
+	h.assertOutputContains("fish_add_path " + filepath.Join(h.home, "bin"))
+	if h.exists(filepath.Join(h.home, ".zshrc")) {
+		t.Error("install wrote a zsh file for a fish user")
+	}
+}
+
+func TestBashGetsBashProfile(t *testing.T) {
+	// macOS terminals start login shells, which read .bash_profile and never
+	// .bashrc - a line in the wrong one is inert and looks done.
+	h := newHarness(t)
+	t.Setenv("SHELL", "/bin/bash")
+
+	h.mustRun("install", "--yes")
+	if !strings.Contains(readFile(t, filepath.Join(h.home, ".bash_profile")), "export PATH=") {
+		t.Error("no PATH line in ~/.bash_profile")
+	}
+	if h.exists(filepath.Join(h.home, ".bashrc")) {
+		t.Error("install wrote .bashrc, which a login shell never reads")
+	}
+}
+
 func TestABinDirOnPathIsNotNaggedAbout(t *testing.T) {
-	// The warning has to stay silent when there is nothing wrong, or the run
+	// The offer has to stay silent when there is nothing wrong, or the run
 	// where something IS wrong says nothing new.
 	h := newHarness(t)
 	binDir := filepath.Join(h.tmp, "on-path")
@@ -443,9 +532,12 @@ func TestABinDirOnPathIsNotNaggedAbout(t *testing.T) {
 	if strings.Contains(h.output(), "not on your PATH") {
 		t.Errorf("install complained about a directory that is on PATH:\n%s", h.output())
 	}
+	if h.exists(filepath.Join(h.home, ".zshrc")) {
+		t.Error("install edited a startup file it had no reason to")
+	}
 }
 
-func TestAnAlreadyInstalledBinaryStillReportsItsPathStatus(t *testing.T) {
+func TestAnAlreadyInstalledBinaryStillGetsItsDirectoryOnPath(t *testing.T) {
 	// `go install` puts ptrbox in a bin dir already, so there is nothing to
 	// link - but whether that dir is searched is the same open question.
 	h := newHarness(t)
@@ -453,7 +545,21 @@ func TestAnAlreadyInstalledBinaryStillReportsItsPathStatus(t *testing.T) {
 
 	h.mustRun("install", "--yes")
 	h.assertOutputContains("already installed at")
-	h.assertOutputContains("is not on your PATH")
+	if !containsLine(h.zshrc(), `export PATH="`+filepath.Dir(h.exe)+`:$PATH"`) {
+		t.Errorf("the installed binary's directory was not put on PATH:\n%s", h.zshrc())
+	}
+}
+
+func TestTheStartupFileEditIsRecordedInTheManifest(t *testing.T) {
+	// Everything ptrbox writes outside its own directories goes in the
+	// manifest, so a future uninstall does not have to guess.
+	h := newHarness(t)
+	h.mustRun("install", "--yes")
+
+	manifest := readFile(t, filepath.Join(config.Dir(), "install-manifest"))
+	if !strings.Contains(manifest, filepath.Join(h.home, ".zshrc")) {
+		t.Errorf("the startup file edit is not in the manifest:\n%s", manifest)
+	}
 }
 
 func TestAForeignFileAtTheTargetIsNotClobberedWithoutConsent(t *testing.T) {
