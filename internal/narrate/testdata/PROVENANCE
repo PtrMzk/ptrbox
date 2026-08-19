@@ -5,21 +5,59 @@ The transcript internal/narrate is tested against. Its whole value is
 provenance: patterns written from memory, tested against lines written from
 the same memory, prove nothing about what lima actually prints.
 
-THIS COPY IS RECONSTRUCTED, NOT CAPTURED. It was written from lima's message
-shapes while ptrbox was being built on Linux against a faked limactl, because
-no Mac was available to run a real `limactl start` on. Replace it at the first
-`make smoke`:
+THIS COPY IS CAPTURED.
 
-    limactl start --name scratch ~/.lima/_generated/scratch.yaml 2>&1 \
+    captured   2026-08-19
+    lima       limactl version 2.2.0
+    host       macOS, Apple Silicon
+    command    limactl start --name=sandbox-test <rendered claude-repo.yaml>
+    state      instance deleted first, so this is a create, not a re-start;
+               ~/Library/Caches/lima/download removed first, so the image
+               download lines are real rather than a cache hit
+
+The only edit is $HOME replaced by /Users/you. Nothing else is touched: the
+SSH local port, the digest, the timestamps and their spacing, the instance
+name, the line ordering, and the four benign "address already in use"
+warnings for port 5355 are all as lima emitted them. Each further edit would
+weaken the only claim this file makes.
+
+WHAT IT REPLACED, AND WHY THAT IS THE POINT
+
+The previous copy was reconstructed from lima's message shapes while ptrbox
+was built on Linux against a faked limactl. It used logrus's INFO[0049]
+default text format, which lima did emit historically. Lima 2.2.0 emits
+time="..." level=info msg="...", so zero of the 65 real lines matched
+narrate.go's entry pattern, and the whole translator had been a no-op in
+production while its suite stayed green. The fixture and the patterns were two
+expressions of one wrong recollection, written in the same sitting. See TODO
+24 in CLAUDE.md for the full inventory.
+
+narrate.go was rewritten against THIS copy (TODO 24), and the tests now quote
+it rather than paraphrase it: the elapsed times in narrate_test.go are
+differences between timestamps below, "ok after 1m16s" is this file's optional
+requirement, and the line counts are its counts. So a re-capture whose shape
+differs fails the suite loudly instead of passing it silently, which is the
+one thing the previous copy could not do.
+
+The lima version above is load-bearing. A future release can change this
+format again; when it does, the symptom is once more a silent degradation to
+"everything shown dimmed and verbatim", because that is the designed failure
+path. Green tests will not tell you. Re-capturing will.
+
+RE-CAPTURING
+
+    limactl delete -f sandbox-test
+    rm -rf ~/Library/Caches/lima/download
+    limactl start --name=sandbox-test ~/.lima/_generated/sandbox-test.yaml 2>&1 \
       | tee internal/narrate/testdata/limactl-start.log
+    sed -i '' "s|$HOME|/Users/you|g" internal/narrate/testdata/limactl-start.log
 
-Then run `make test` and read what changed. Lines the translator does not
-recognise are shown verbatim rather than dropped, so a mismatch surfaces as
-untranslated output rather than as a missing step - but untranslated output is
-exactly what this file exists to prevent.
+Then run `make test` and read what changed. Add a pattern to narrate.go by
+adding a line to this file first, never the other way round.
 
 Not a .md file on purpose: this repo gitignores *.md, and a note about a
 fixture's trustworthiness is worth less than nothing if it is untracked.
 
-limafake replays this file when a test asks it to, so the command-level tests
-and the translator's own tests run on identical bytes.
+limafake replays this file when a test asks it to (internal/cli/voice_test.go
+sets it as StartOutput), so the command-level tests and the translator's own
+tests run on identical bytes.

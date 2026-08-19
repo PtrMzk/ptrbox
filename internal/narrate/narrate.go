@@ -6,11 +6,11 @@
 // genuinely wanted - during a first boot that downloads an image, it is the
 // only real progress signal there is - but it is phrased for lima's authors:
 //
-//	INFO[0049] [hostagent] Waiting for the essential requirement 2 of 5: "user session is ready for ssh"
+//	time="2026-08-19T12:51:10-04:00" level=info msg="[hostagent] Waiting for the final requirement 1 of 1: `boot scripts must have finished`"
 //
 // becomes
 //
-//	ptrbox: booting (2/5): user session is ready for ssh [49s]
+//	ptrbox: finishing (1/1): boot scripts must have finished [1m50s]
 //
 // The rule this package is built on: it narrows what is LOUD, never what is
 // VISIBLE. A line that matches no pattern is still printed, dimmed and
@@ -21,6 +21,25 @@
 //
 // vm/verify.sh output is ptrbox's own and already reads as assertions, so it
 // is rendered as check items rather than translated.
+//
+// # The format, and why it is pinned
+//
+// The first version of this package was written on Linux against a faked
+// limactl, from a recollection of logrus's INFO[0049] default text format.
+// Lima 2.2.0 does not emit that: every line is logrus in key=value form, msg
+// is a Go-quoted string, quoting inside a message is backticks, and there is
+// no elapsed counter at all - so not one line matched, every line fell
+// through to "shown verbatim", and the suite stayed green because the fixture
+// had been invented in the same sitting as the patterns. Hence the rule that
+// outlived it: a pattern is added by adding a line to
+// testdata/limactl-start.log first, and that file is a capture. Shapes lima
+// might emit but did not emit there - "Using the existing instance", say -
+// are deliberately absent below; guessing at them is what produced a
+// translator that never ran.
+//
+// Elapsed times are differences between lima's own timestamps rather than a
+// clock this package starts. That keeps them honest across a slow start, and
+// it keeps the tests deterministic: the numbers come out of the fixture.
 package narrate
 
 import (
@@ -29,6 +48,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
@@ -55,12 +75,27 @@ type Stream struct {
 	raw      []string        // this invocation's lines, for a failure replay
 	overflow bool
 	failed   bool
+
+	// began is the timestamp of the first line of this invocation - the
+	// origin every "[1m50s]" is measured from, since lima 2.2.0 prints wall
+	// clock rather than an elapsed counter.
+	began    time.Time
+	hasBegan bool
+
+	// waiting is when the requirement now in progress started, so that
+	// "satisfied" can report how long it actually took. This is the number
+	// that matters: the three essential requirements land in about a second,
+	// while the toolchain probe and the boot scripts are minutes.
+	waiting    time.Time
+	hasWaiting bool
 }
 
 // Begin starts a new invocation: whatever the last one printed stops being
-// relevant to a failure.
+// relevant to a failure, and its clock stops being the one to measure from.
 func (s *Stream) Begin([]string) {
 	s.raw, s.overflow, s.failed = nil, false, false
+	s.began, s.hasBegan = time.Time{}, false
+	s.waiting, s.hasWaiting = time.Time{}, false
 }
 
 // End closes the invocation off, flushing a line limactl left unterminated
@@ -123,30 +158,41 @@ func (s *Stream) keep(line string) {
 
 // --- the patterns ------------------------------------------------------------
 //
-// Every one of these is lima's wording, not ptrbox's, which is why they are
-// pinned by a recorded transcript in testdata rather than by anything written
-// from memory. Add a pattern by adding a line to that transcript first.
+// Every one of these is lima's wording, taken from the recorded transcript in
+// testdata. Add a pattern by adding a line to that transcript first.
 
 var (
-	// logrus's default text format: LEVEL[seconds] message.
-	limaLine = regexp.MustCompile(`^([A-Z]{4})\[(\d+)\]\s+(.*)$`)
+	// "[hostagent] ", "[limactl] " and friends prefix the message inside msg.
+	limaComponent = regexp.MustCompile(`^\[[A-Za-z]+\]\s+`)
 
-	// "[hostagent] ", "[limactl] " and friends prefix the message.
-	limaComponent = regexp.MustCompile(`^\[[a-z]+\]\s+`)
-
+	// The requirement name is backtick-quoted in lima 2.2.0 and was
+	// double-quoted before it, so the name is taken as "the rest of the line"
+	// and unwrapped afterwards rather than matched inside a quote character
+	// that keeps changing.
 	requirementWait = regexp.MustCompile(
-		`^Waiting for the (essential|optional|final) requirement (\d+) of (\d+):\s*"?([^"]*)"?`)
+		`^Waiting for the (essential|optional|final) requirement (\d+) of (\d+):\s*(.*)$`)
 	requirementDone = regexp.MustCompile(
 		`^The (essential|optional|final) requirement (\d+) of (\d+) is satisfied`)
 
+	// This one carries no "N of M" - it is not one of the numbered
+	// requirements, which is why it needs its own pattern rather than a
+	// looser version of the one above.
+	guestAgentWait = regexp.MustCompile(`^Waiting for the guest agent\b`)
+
+	// The image download is three lines: an "Attempting" log entry carrying
+	// the URL, a bare progress line that is not logrus at all, and a
+	// "Downloaded" entry when it lands. Only the first announces a step, so
+	// that one download is one heading.
+	//
 	// Narrow on purpose. lima downloads other things - the nerdctl archive,
 	// for one - and "downloading the debian13 image" said about the wrong
 	// download is exactly the wrong step this design is meant not to produce.
-	// Anything else that starts with "Download" falls through and is shown.
-	downloading = regexp.MustCompile(`^Download(ing|ed) (the )?image\b`)
-	usingCache  = regexp.MustCompile(`^Using cache|^Using the existing instance`)
-	starting    = regexp.MustCompile(`^Starting \w+`)
-	ready       = regexp.MustCompile(`^READY\b`)
+	attemptDownload = regexp.MustCompile(`^Attempting to download the image\b`)
+	downloadedImage = regexp.MustCompile(`^Downloaded the image\b`)
+	imageProgress   = regexp.MustCompile(`^Downloading the image \((.+)\)\s*$`)
+
+	startingInstance = regexp.MustCompile(`^Starting the instance\b`)
+	ready            = regexp.MustCompile(`^READY\b`)
 
 	// vm/verify.sh's own output: two leading spaces, a padded name, then the
 	// verdict. Ours already, so it is re-rendered rather than translated.
@@ -169,43 +215,73 @@ func (s *Stream) render(line string) {
 		return
 	}
 
-	fields := limaLine.FindStringSubmatch(line)
-	if fields == nil {
+	e, ok := parseEntry(line)
+	if !ok {
+		// Not a log entry. The image download's progress line arrives this
+		// way; anything else is shown as it came.
+		if m := imageProgress.FindStringSubmatch(line); m != nil {
+			s.Out.Detail("%s", m[1])
+			return
+		}
 		s.Out.Dim(line)
 		return
 	}
-	level, elapsed, message := fields[1], fields[2], limaComponent.ReplaceAllString(fields[3], "")
-
-	// Anything lima considers a problem is shown as lima wrote it and is not
-	// dimmed: a translation of an error is a worse error message.
-	if level != "INFO" && level != "DEBU" && level != "TRAC" {
-		s.Out.Raw(line)
-		return
+	if e.hasWhen && !s.hasBegan {
+		s.began, s.hasBegan = e.when, true
 	}
+
+	switch e.level {
+	case "info", "debug", "trace":
+		s.translate(line, e)
+	case "warning", "warn":
+		// A healthy boot logs four of these: the host already has something
+		// on port 5355, so lima cannot forward it. Shown, because a warning
+		// is information, and quiet, because a warning ptrbox cannot act on
+		// must not read like the run went wrong.
+		s.Out.Dim(line)
+	default:
+		// error, fatal, panic - and any level a future lima invents. A
+		// translation of an error is a worse error message, and an unknown
+		// level errs towards loud.
+		s.Out.Raw(line)
+	}
+}
+
+// translate renders one info-level entry. line is passed alongside the parsed
+// entry because the fallback is the line exactly as lima wrote it, structured
+// fields and all - reprinting a reconstruction would quietly drop whatever
+// lima had put in a field this package does not know about.
+func (s *Stream) translate(line string, e entry) {
+	message := limaComponent.ReplaceAllString(e.msg, "")
 
 	switch {
 	case requirementWait.MatchString(message):
 		m := requirementWait.FindStringSubmatch(message)
-		s.Out.Say("%s (%s/%s): %s [%s]", phase(m[1]), m[2], m[3], m[4], seconds(elapsed))
+		s.waiting, s.hasWaiting = e.when, e.hasWhen
+		s.Out.Say("%s (%s/%s): %s%s", phase(m[1]), m[2], m[3], unquote(m[4]), s.elapsed(e))
 
 	case requirementDone.MatchString(message):
-		s.Out.Detail("ok at %s", seconds(elapsed))
+		s.Out.Detail("ok%s", s.took(e))
 
-	case downloading.MatchString(message):
-		if strings.HasPrefix(message, "Downloaded") {
-			s.Out.Detail("image downloaded at %s", seconds(elapsed))
-			return
-		}
+	case guestAgentWait.MatchString(message):
+		s.Out.Detail("waiting for the guest agent%s", s.elapsed(e))
+
+	case attemptDownload.MatchString(message):
 		s.Out.Say("downloading the %s image (first boot only)", s.image())
+		// The URL is the only place this line's information lives; a
+		// translation that dropped it would be hiding something.
+		if location := e.fields["location"]; location != "" {
+			s.Out.Detail("%s", location)
+		}
 
-	case usingCache.MatchString(message):
-		s.Out.Detail("%s", lowerFirst(message))
+	case downloadedImage.MatchString(message):
+		s.Out.Detail("image downloaded%s", s.elapsed(e))
 
-	case starting.MatchString(message):
+	case startingInstance.MatchString(message):
 		s.Out.Say("booting the virtual machine")
 
 	case ready.MatchString(message):
-		s.Out.Detail("lima reports the instance ready at %s", seconds(elapsed))
+		s.Out.Detail("lima reports the instance ready%s", s.elapsed(e))
 
 	default:
 		s.Out.Dim(line)
@@ -219,38 +295,173 @@ func (s *Stream) image() string {
 	return s.Image
 }
 
-// phase is ptrbox's word for lima's requirement classes. "essential" and
-// "final" are stages of the same wait as far as anyone watching is concerned;
-// what differs is which end of the boot they are.
+// elapsed is how far into the invocation a line arrived, as " [1m50s]", or
+// "" when there is nothing to measure from.
+func (s *Stream) elapsed(e entry) string {
+	if !s.hasBegan || !e.hasWhen {
+		return ""
+	}
+	return " [" + duration(e.when.Sub(s.began)) + "]"
+}
+
+// took is how long the requirement that just finished took, as " after
+// 1m16s". Empty for anything under a second, which is where the three
+// essential requirements live: "ok" says everything there is to say about a
+// wait nobody noticed.
+func (s *Stream) took(e entry) string {
+	if !s.hasWaiting || !e.hasWhen {
+		return ""
+	}
+	d := e.when.Sub(s.waiting)
+	if d < time.Second {
+		return ""
+	}
+	return " after " + duration(d)
+}
+
+// phase is ptrbox's word for lima's requirement classes. The names matter
+// more than they look: the essential three are the ssh handshake and land in
+// about a second, while lima's "optional" is where ptrbox's own toolchain
+// probe waits out the package install, and "final" is cloud-init's boot
+// scripts. Those last two are the minutes, so they are named for what is
+// happening rather than for how lima classifies them.
 func phase(class string) string {
 	switch class {
+	case "essential":
+		return "connecting"
+	case "optional":
+		return "provisioning"
 	case "final":
 		return "finishing"
-	case "optional":
-		return "checking"
 	default:
-		return "booting"
+		return "waiting"
 	}
 }
 
-// seconds renders lima's own elapsed counter, which is more honest than a
-// clock ptrbox starts: it is measured from when limactl began.
-func seconds(field string) string {
-	n, err := strconv.Atoi(field)
-	if err != nil {
-		return field + "s"
+// duration renders a wait the way a person waiting would say it.
+func duration(d time.Duration) string {
+	total := int(d.Seconds())
+	if total < 0 {
+		total = 0
 	}
-	if n < 60 {
-		return fmt.Sprintf("%ds", n)
+	if total < 60 {
+		return fmt.Sprintf("%ds", total)
 	}
-	return fmt.Sprintf("%dm%02ds", n/60, n%60)
+	return fmt.Sprintf("%dm%02ds", total/60, total%60)
 }
 
-func lowerFirst(s string) string {
-	if s == "" {
-		return s
+// unquote strips one layer of lima's quoting from a requirement name.
+// 2.2.0 uses backticks; earlier releases used double quotes.
+func unquote(s string) string {
+	s = strings.TrimSpace(s)
+	for _, quote := range []string{"`", `"`} {
+		if len(s) >= 2 && strings.HasPrefix(s, quote) && strings.HasSuffix(s, quote) {
+			return s[1 : len(s)-1]
+		}
 	}
-	return strings.ToLower(s[:1]) + s[1:]
+	return s
+}
+
+// --- lima's log format -------------------------------------------------------
+//
+// logrus's key=value text format, which is what lima 2.2.0 writes when its
+// output is not a terminal - and ptrbox always pipes it, so this is the only
+// shape that reaches here:
+//
+//	time="2026-08-19T12:49:20-04:00" level=info msg="Attempting to download the image" arch=aarch64 digest= location="https://..."
+//
+// Values are either bare or Go-quoted, and messages really do carry escaped
+// quotes, so the quoted form is unquoted with strconv rather than read to the
+// next double quote.
+
+// entry is one parsed log line.
+type entry struct {
+	level   string
+	msg     string
+	when    time.Time
+	hasWhen bool
+	fields  map[string]string
+}
+
+// parseEntry reports whether the line is a log entry at all. Parsing is
+// all-or-nothing: half a line understood would be a translation of something
+// other than what lima said, and the fallback - shown verbatim - is a good
+// outcome.
+func parseEntry(line string) (entry, bool) {
+	fields := parseFields(line)
+	if fields == nil {
+		return entry{}, false
+	}
+	level, hasLevel := fields["level"]
+	msg, hasMsg := fields["msg"]
+	if !hasLevel || !hasMsg {
+		return entry{}, false
+	}
+	e := entry{level: level, msg: msg, fields: fields}
+	if when, err := time.Parse(time.RFC3339, fields["time"]); err == nil {
+		e.when, e.hasWhen = when, true
+	}
+	return e, true
+}
+
+// parseFields splits a logrus line into its key=value pairs, or returns nil
+// if any part of it is not one.
+func parseFields(line string) map[string]string {
+	fields := map[string]string{}
+	for i := 0; i < len(line); {
+		for i < len(line) && line[i] == ' ' {
+			i++
+		}
+		if i >= len(line) {
+			break
+		}
+		start := i
+		for i < len(line) && line[i] != '=' && line[i] != ' ' {
+			i++
+		}
+		if i >= len(line) || line[i] != '=' || i == start {
+			return nil
+		}
+		key := line[start:i]
+		value, next, ok := parseValue(line, i+1)
+		if !ok {
+			return nil
+		}
+		fields[key] = value
+		i = next
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+// parseValue reads one value starting at i, returning it and the index just
+// past it. A quoted value is a Go string literal - lima's messages contain
+// escaped quotes, so scanning to the next double quote would cut them short.
+func parseValue(line string, i int) (string, int, bool) {
+	if i < len(line) && line[i] == '"' {
+		end := i + 1
+		for end < len(line) && line[end] != '"' {
+			if line[end] == '\\' {
+				end++
+			}
+			end++
+		}
+		if end >= len(line) {
+			return "", 0, false
+		}
+		value, err := strconv.Unquote(line[i : end+1])
+		if err != nil {
+			return "", 0, false
+		}
+		return value, end + 1, true
+	}
+	end := i
+	for end < len(line) && line[end] != ' ' {
+		end++
+	}
+	return line[i:end], end, true
 }
 
 var _ io.Writer = (*Stream)(nil)

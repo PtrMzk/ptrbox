@@ -122,7 +122,8 @@ func TestNewTranslatesTheBootIntoPtrboxsVoice(t *testing.T) {
 	h.mustRun("new", "demo")
 	for _, want := range []string{
 		"downloading the debian13 image (first boot only)",
-		"booting (1/5): ssh",
+		"connecting (1/3): ssh",
+		"provisioning (1/1): toolchain ready",
 		"finishing (1/1): boot scripts must have finished",
 	} {
 		h.assertOutputContains(want)
@@ -139,7 +140,8 @@ func TestVerboseShowsTheStreamAsLimaWroteIt(t *testing.T) {
 	h.fake.StartOutput = limaTranscript(t)
 
 	h.mustRun("new", "demo")
-	if !strings.Contains(h.output(), "INFO[0032] [hostagent] Waiting for the essential requirement 1 of 5") {
+	want := "level=info msg=\"[hostagent] Waiting for the essential requirement 1 of 3: `ssh`\""
+	if !strings.Contains(h.output(), want) {
 		t.Errorf("--verbose did not show the raw stream:\n%s", h.output())
 	}
 }
@@ -158,7 +160,7 @@ func TestAFailedStartReprintsWhatLimactlSaid(t *testing.T) {
 	replayed := &bytes.Buffer{}
 	h.narrator.Out = ui.Printer{W: replayed}
 	h.narrator.Replay()
-	if !strings.Contains(replayed.String(), "Waiting for the essential requirement 1 of 5") {
+	if !strings.Contains(replayed.String(), "Waiting for the essential requirement 1 of 3") {
 		t.Errorf("the raw stream was not kept for the failure:\n%s", replayed.String())
 	}
 }
