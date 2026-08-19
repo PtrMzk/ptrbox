@@ -320,6 +320,43 @@ func TestTheExtraPackageListIsFixedAtRenderTime(t *testing.T) {
 		"the package list is computed inside the guest")
 }
 
+func TestTheFailedPackageMarkerIsSpelledTheSameInBothScripts(t *testing.T) {
+	// 15-extra-packages.sh writes the marker and vm/verify.sh reads it, and
+	// nothing connects the two but the file name. A typo on either side is
+	// invisible - the writer still fails the boot script, the reader still
+	// prints OK - and puts the VM back to where an unavailable package is
+	// found days later by whatever needed it.
+	const marker = "extra-packages.failed"
+	for _, name := range []string{"vm/provision/15-extra-packages.sh", "vm/verify.sh"} {
+		if !strings.Contains(asset(t, name), marker) {
+			t.Errorf("%s does not mention %s", name, marker)
+		}
+	}
+	// Same directory, too: the marker is only useful where the reader looks.
+	writer := regexp.MustCompile(`fail_marker="([^"]+)"`).FindStringSubmatch(
+		asset(t, "vm/provision/15-extra-packages.sh"))
+	reader := regexp.MustCompile(`\[ -e "([^"]+)" \]`).FindStringSubmatch(asset(t, "vm/verify.sh"))
+	if writer == nil || reader == nil {
+		t.Fatal("the marker is no longer written or read the way this test reads it")
+	}
+	if writer[1] != reader[1] {
+		t.Errorf("15-extra-packages.sh writes %s, verify.sh reads %s", writer[1], reader[1])
+	}
+}
+
+func TestTheExtraPackageCheckNeedsNoNetwork(t *testing.T) {
+	// It re-runs on the reboot that raises the firewall, where an apt-get that
+	// reaches for a mirror hangs until cloud-init gives up. --simulate and
+	// dpkg-query both work off the lists already on disk; an `apt-get update`
+	// or a download here would turn a wrong package name into a hung boot.
+	script := asset(t, "vm/provision/15-extra-packages.sh")
+	for _, forbidden := range []string{"apt-get update", "curl", "wget"} {
+		if strings.Contains(stripComments(script), forbidden) {
+			t.Errorf("15-extra-packages.sh runs %q, which the post-firewall re-run cannot do", forbidden)
+		}
+	}
+}
+
 func TestProvisionScriptsNeverReadTheRepoMount(t *testing.T) {
 	// Nothing inside /workspace may influence provisioning. 40-userenv.sh gets
 	// a pass: it WRITES the string "/workspace" into Claude Code's settings
@@ -393,7 +430,8 @@ func TestTheVerificationScriptChecksWhatMatters(t *testing.T) {
 	// A verify.sh that quietly stopped testing the wall would be worse than
 	// none.
 	verify := asset(t, "vm/verify.sh")
-	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs", "exit 1"} {
+	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs",
+		"extra-packages.failed", "exit 1"} {
 		if !strings.Contains(verify, want) {
 			t.Errorf("vm/verify.sh no longer checks %q", want)
 		}

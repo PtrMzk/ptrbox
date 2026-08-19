@@ -14,6 +14,10 @@
 # =============================================================================
 set -u
 
+# An argument with the real path as its default, purely so the test suite can
+# run this against a state directory it controls - ptrbox passes nothing.
+state="${1:-/var/lib/ptrbox}"
+
 fails=0
 
 ok() { printf '  %-22s OK\n' "$1"; }
@@ -90,6 +94,17 @@ if [ -z "$missing" ]; then
   ok "toolchain"
 else
   bad "toolchain" "missing:$missing"
+fi
+
+# The packages a user asked for by name. 15-extra-packages.sh writes this
+# marker when one of them does not resolve or does not end up installed; its
+# own exit status is lost inside cloud-init, so the marker is how a failure on
+# boot 1 reaches anyone. Without this check the VM comes up "ready" and the
+# missing tool is found days later by whatever needed it.
+if [ -e "$state/extra-packages.failed" ]; then
+  bad "extra packages" "$(cat "$state/extra-packages.failed")"
+else
+  ok "extra packages"
 fi
 
 if [ "$fails" -ne 0 ]; then
