@@ -179,17 +179,22 @@ var (
 	// looser version of the one above.
 	guestAgentWait = regexp.MustCompile(`^Waiting for the guest agent\b`)
 
-	// The image download is three lines: an "Attempting" log entry carrying
-	// the URL, a bare progress line that is not logrus at all, and a
-	// "Downloaded" entry when it lands. Only the first announces a step, so
-	// that one download is one heading.
+	// The download is announced from the bare progress line - which is not
+	// logrus at all - because that is the only one of lima's download
+	// messages that means a download is happening. "Attempting to download
+	// the image" is logged before the cache is consulted, so on the common
+	// path (an image already in ~/Library/Caches) it is followed by "Using
+	// cache" and nothing is fetched. Announcing on the attempt claimed a
+	// several-minute download that never ran, seen in the first smoke run
+	// against a warm cache; that is a wrong step rather than a missing one,
+	// which is the failure this whole design is arranged against. The
+	// attempt line still shows, dimmed, and it is what carries the URL.
 	//
-	// Narrow on purpose. lima downloads other things - the nerdctl archive,
-	// for one - and "downloading the debian13 image" said about the wrong
-	// download is exactly the wrong step this design is meant not to produce.
-	attemptDownload = regexp.MustCompile(`^Attempting to download the image\b`)
+	// Narrow for the same reason: lima downloads other things, and
+	// "downloading the debian13 image" said about the nerdctl archive would
+	// be the same kind of wrong.
+	imageProgress   = regexp.MustCompile(`^Downloading the image \(`)
 	downloadedImage = regexp.MustCompile(`^Downloaded the image\b`)
-	imageProgress   = regexp.MustCompile(`^Downloading the image \((.+)\)\s*$`)
 
 	startingInstance = regexp.MustCompile(`^Starting the instance\b`)
 	ready            = regexp.MustCompile(`^READY\b`)
@@ -219,8 +224,8 @@ func (s *Stream) render(line string) {
 	if !ok {
 		// Not a log entry. The image download's progress line arrives this
 		// way; anything else is shown as it came.
-		if m := imageProgress.FindStringSubmatch(line); m != nil {
-			s.Out.Detail("%s", m[1])
+		if imageProgress.MatchString(line) {
+			s.Out.Say("downloading the %s image (first boot only)", s.image())
 			return
 		}
 		s.Out.Dim(line)
@@ -265,14 +270,6 @@ func (s *Stream) translate(line string, e entry) {
 
 	case guestAgentWait.MatchString(message):
 		s.Out.Detail("waiting for the guest agent%s", s.elapsed(e))
-
-	case attemptDownload.MatchString(message):
-		s.Out.Say("downloading the %s image (first boot only)", s.image())
-		// The URL is the only place this line's information lives; a
-		// translation that dropped it would be hiding something.
-		if location := e.fields["location"]; location != "" {
-			s.Out.Detail("%s", location)
-		}
 
 	case downloadedImage.MatchString(message):
 		s.Out.Detail("image downloaded%s", s.elapsed(e))
@@ -374,13 +371,15 @@ func unquote(s string) string {
 // quotes, so the quoted form is unquoted with strconv rather than read to the
 // next double quote.
 
-// entry is one parsed log line.
+// entry is one parsed log line. Only the three fields anything renders from
+// are kept: the rest of the line is still parsed - all-or-nothing is the
+// point - but a line ptrbox has no pattern for is shown as lima wrote it,
+// fields and all, so there is nothing for a translation to carry.
 type entry struct {
 	level   string
 	msg     string
 	when    time.Time
 	hasWhen bool
-	fields  map[string]string
 }
 
 // parseEntry reports whether the line is a log entry at all. Parsing is
@@ -397,7 +396,7 @@ func parseEntry(line string) (entry, bool) {
 	if !hasLevel || !hasMsg {
 		return entry{}, false
 	}
-	e := entry{level: level, msg: msg, fields: fields}
+	e := entry{level: level, msg: msg}
 	if when, err := time.Parse(time.RFC3339, fields["time"]); err == nil {
 		e.when, e.hasWhen = when, true
 	}

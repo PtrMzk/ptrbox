@@ -316,7 +316,7 @@ func TestAnUnterminatedLastLineIsStillPrinted(t *testing.T) {
 func TestTheImageNameFallsBackToSomethingTrue(t *testing.T) {
 	buf := &bytes.Buffer{}
 	s := &Stream{Out: ui.Printer{W: buf}}
-	feed(s, transcriptLine(t, "Attempting to download the image")+"\n", nil)
+	feed(s, transcriptLine(t, "Downloading the image (")+"\n", nil)
 	if !strings.Contains(buf.String(), "downloading the VM image") {
 		t.Errorf("no usable download line without a distro:\n%s", buf.String())
 	}
@@ -339,9 +339,8 @@ func TestTheReplayIsBoundedButSaysSo(t *testing.T) {
 
 func TestTheImageDownloadIsOneHeadingAndKeepsItsURL(t *testing.T) {
 	// lima logs the download three times over: an attempt carrying the URL, a
-	// bare progress line carrying the filename, and a completion. One of them
-	// is a step; the URL is information that exists nowhere else, so the
-	// translation has to carry it.
+	// bare progress line, and a completion. One of them is the step; the
+	// attempt is shown as it came, which is what keeps the URL.
 	s, buf := newStream(t)
 	feed(s, transcript(t), nil)
 	out := buf.String()
@@ -349,14 +348,29 @@ func TestTheImageDownloadIsOneHeadingAndKeepsItsURL(t *testing.T) {
 	if got := strings.Count(out, "downloading the debian13 image"); got != 1 {
 		t.Errorf("the download was announced %d times, want once:\n%s", got, out)
 	}
-	for _, want := range []string{
-		"    https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2\n",
-		"    debian-13-genericcloud-arm64.qcow2\n",
-		"    image downloaded [26s]\n",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("no %q in the translation:\n%s", want, out)
-		}
+	if !strings.Contains(out, transcriptLine(t, "Attempting to download the image")+"\n") {
+		t.Errorf("the attempt line, which is where the URL is, was not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "    image downloaded [26s]\n") {
+		t.Errorf("the download was not closed off:\n%s", out)
+	}
+}
+
+func TestAnAttemptToDownloadIsNotADownload(t *testing.T) {
+	// The one the first smoke run caught. lima logs "Attempting to download
+	// the image" BEFORE it consults the cache, so on the common path it is
+	// followed by "Using cache" and nothing is fetched - and ptrbox announced
+	// a several-minute download that never happened. Only the bare progress
+	// line means bytes are moving.
+	line := transcriptLine(t, "Attempting to download the image")
+	s, buf := newStream(t)
+	feed(s, line+"\n", nil)
+
+	if strings.Contains(buf.String(), "downloading the") {
+		t.Errorf("an attempt was announced as a download:\n%s", buf.String())
+	}
+	if buf.String() != line+"\n" {
+		t.Errorf("the attempt line was not shown as it came:\n%q", buf.String())
 	}
 }
 
@@ -414,11 +428,14 @@ func TestAMessageIsAGoQuotedStringNotJustAQuotedOne(t *testing.T) {
 }
 
 func TestTheStructuredFieldsOfALineAreRead(t *testing.T) {
-	// Bare values, an empty one and a quoted one, all on the line whose URL
-	// the download step reprints.
-	e, ok := parseEntry(transcriptLine(t, "Attempting to download the image"))
-	if !ok {
-		t.Fatal("the download line did not parse as a log entry")
+	// Bare values, an empty one and a quoted one. Nothing renders from these
+	// today, but parsing is all-or-nothing: if `digest=` defeated the parser,
+	// the whole line would drop to verbatim - a silent loss of exactly the
+	// kind this package exists to notice.
+	line := transcriptLine(t, "Attempting to download the image")
+	fields := parseFields(line)
+	if fields == nil {
+		t.Fatalf("the download line did not parse:\n%s", line)
 	}
 	for key, want := range map[string]string{
 		"level":    "info",
@@ -426,11 +443,11 @@ func TestTheStructuredFieldsOfALineAreRead(t *testing.T) {
 		"digest":   "",
 		"location": "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2",
 	} {
-		if got, ok := e.fields[key]; !ok || got != want {
+		if got, ok := fields[key]; !ok || got != want {
 			t.Errorf("field %q is %q (present: %v), want %q", key, got, ok, want)
 		}
 	}
-	if !e.hasWhen {
+	if e, ok := parseEntry(line); !ok || !e.hasWhen {
 		t.Error("the timestamp did not parse")
 	}
 }
