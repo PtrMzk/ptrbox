@@ -546,6 +546,24 @@ func TestTheStatuslineIsWiredIntoClaudeSettings(t *testing.T) {
 	mustNotMatch(t, rendered, `command": "/home/`, "the guest home path is hardcoded")
 }
 
+func TestOnlyPtrboxSpeaksAtLogin(t *testing.T) {
+	rendered, _ := sandbox(t)
+
+	// sshd's "Last login: ... from UNKNOWN" and Debian's motd are suppressed
+	// by ~/.hushlogin, leaving the sandbox banner as the only line an ssh
+	// login prints.
+	mustMatch(t, rendered, `touch "\$HOME/\.hushlogin"`,
+		"the stock login banner is not suppressed")
+	// The banner itself is ours, printed from .bashrc, and unaffected by
+	// hushlogin - if it went away the login would say nothing at all.
+	mustMatch(t, rendered, `ptrbox sandbox - repo: /workspace`,
+		"the sandbox banner is gone")
+	// Interactive-only, still: hushlogin must not have moved it above the
+	// stock .bashrc guard, where it would land in `bash -lc` output.
+	mustMatch(t, rendered, `if shopt -q login_shell; then`,
+		"the banner is no longer behind the login-shell guard")
+}
+
 // heredoc returns the body of a <<'MARKER' block, or "".
 func heredoc(t *testing.T, body, marker string) string {
 	t.Helper()

@@ -71,6 +71,19 @@ if shopt -q login_shell; then
 fi
 RC
 
+# Silence the stock login banner, so the ptrbox line above is the only thing
+# an `ssh lima-<vm>` prints. Two things sit under it, neither ours:
+#   - "Last login: <date> from UNKNOWN". UNKNOWN is literal, not a rendering
+#     of an empty field: sshd cannot see a peer address for a connection that
+#     arrives through lima's relay, so it writes the string into wtmpdb's
+#     RemoteHost column and reads it back on the next login, forever. Nothing
+#     host-side or guest-side can make it say something true.
+#   - Debian's /etc/motd boilerplate.
+# ~/.hushlogin suppresses exactly those two (sshd's PrintLastLog and
+# PrintMotd); a Banner, were one configured, would still be shown. It costs no
+# root, unlike the sshd_config drop-in that would drop only the first line.
+touch "$HOME/.hushlogin"
+
 # Git identity for agent commits - set globally in the VM so the agent never
 # has to guess one (it will otherwise copy whatever it finds in git log, or
 # invent something). ptrbox fills these in from the HOST's global git config;
