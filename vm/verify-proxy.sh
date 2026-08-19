@@ -59,7 +59,12 @@ else
   exit 1
 fi
 
-if exec 3<>"/dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+# The brace group is not decoration. `exec` with no command applies its
+# redirections to the shell PERMANENTLY, so a bare `exec 3<>... 2>/dev/null`
+# sends every later error - including the FAILED summary at the bottom of this
+# script - to /dev/null. Grouping scopes the silence to the attempt while fd 3
+# stays open afterwards, which is the half we actually want to keep.
+if { exec 3<>"/dev/tcp/127.0.0.1/$port"; } 2>/dev/null; then
   exec 3<&- 3>&-
   ok "squid listening"
 else
@@ -73,7 +78,7 @@ fi
 # code that came back. An empty answer means squid never replied.
 connect() {
   local host="$1" code=""
-  exec 3<>"/dev/tcp/127.0.0.1/$port" 2>/dev/null || return 1
+  { exec 3<>"/dev/tcp/127.0.0.1/$port"; } 2>/dev/null || return 1
   printf 'CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\n\r\n' "$host" "$host" >&3
   # Bounded: on an allowed domain squid dials the origin before answering, so
   # a hung origin must not become a hung install.

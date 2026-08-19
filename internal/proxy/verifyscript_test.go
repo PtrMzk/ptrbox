@@ -54,15 +54,10 @@ func newStubSquid(t *testing.T, allow string) *stubSquid {
 			}
 			go func() {
 				defer conn.Close()
-				line, err := bufio.NewReader(conn).ReadString('\n')
-				if err != nil {
+				host, ok := readRequest(conn)
+				if !ok {
 					return
 				}
-				fields := strings.Fields(line)
-				if len(fields) < 2 {
-					return
-				}
-				host := strings.TrimSuffix(fields[1], ":443")
 				s.asked <- host
 				if host == allow {
 					fmt.Fprint(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
@@ -73,6 +68,38 @@ func newStubSquid(t *testing.T, allow string) *stubSquid {
 		}
 	}()
 	return s
+}
+
+// readRequest reads the WHOLE request - the CONNECT line and the headers after
+// it, up to the blank line - and returns the host it names.
+//
+// Reading all of it is not politeness, it is the difference between a test
+// that passes and one that passes most of the time. Closing a socket with
+// unread bytes still in its receive buffer makes Linux send an RST rather than
+// a FIN, and the script writes its request in more than one syscall: answer
+// after the first line and the RST can land between the script's writes, where
+// it arrives as SIGPIPE and kills the subshell mid-request. The script then
+// reports "answered nothing" for a proxy that answered - which is the shape of
+// every real squid failure this file exists to catch, arriving at random on a
+// loaded machine. Real squid reads the request before it replies; so does this.
+func readRequest(conn net.Conn) (host string, ok bool) {
+	reader := bufio.NewReader(conn)
+	for i := 0; ; i++ {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return host, host != ""
+		}
+		if i == 0 {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				return "", false
+			}
+			host = strings.TrimSuffix(fields[1], ":443")
+		}
+		if strings.TrimRight(line, "\r\n") == "" {
+			return host, host != ""
+		}
+	}
 }
 
 func (s *stubSquid) port() int { return s.listener.Addr().(*net.TCPAddr).Port }
@@ -177,6 +204,16 @@ func TestAProxyThatAllowsEverythingFailsTheScript(t *testing.T) {
 	}
 	if !strings.Contains(out, "answered 200, want 403") {
 		t.Errorf("the denial check is not what failed:\n%s", out)
+	}
+	// The summary is on stderr, and it is what says out loud that the install
+	// is over. `exec` with no command applies its redirections permanently, so
+	// the 2>/dev/null on the listening probe used to silence every later line
+	// of this script - this one included - in exactly the runs where the probe
+	// succeeded and something later failed, which is this one. (The silent
+	// proxy cannot see it: an exec whose open fails never applies the
+	// redirection at all, so that test passed throughout.)
+	if !strings.Contains(out, "check(s) FAILED") {
+		t.Errorf("the failure summary never reached the caller:\n%s", out)
 	}
 }
 
