@@ -151,6 +151,36 @@ func TestEachSandboxDialsItsOwnProxyPort(t *testing.T) {
 	}
 }
 
+func TestRmFreesTheSlotOfACreateThatNeverMadeAVM(t *testing.T) {
+	// A `new` that fails before the VM exists has already taken a port slot
+	// and rendered a config. rm must be able to clean that up, or the name
+	// holds one of the sixteen slots forever - and "no VM named X" would be
+	// the only answer anyone gets.
+	h := newHarness(t)
+	h.fake.StartFails = true
+	if err := h.run("new", "demo"); err == nil {
+		t.Fatal("new succeeded despite the failing start")
+	}
+	if !h.exists(proxy.PortFile("demo")) {
+		t.Fatal("the failed create did not leave a sidecar; this test no longer tests anything")
+	}
+	h.fake.StartFails = false
+
+	h.mustRun("rm", "demo")
+	h.assertOutputContains("failed create")
+	if h.exists(proxy.PortFile("demo")) {
+		t.Error("rm left the abandoned port allocation behind")
+	}
+	if h.exists(config.GeneratedConfig("demo")) {
+		t.Error("rm left the abandoned rendered config behind")
+	}
+
+	// A name with no VM and no artifacts is still an unknown VM.
+	if err := h.run("rm", "demo"); err == nil || !strings.Contains(err.Error(), "no VM named") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestRmFreesTheProxyPortForTheNextSandbox(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("new", "demo")

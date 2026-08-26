@@ -43,6 +43,16 @@ func cmdRm(env *Env, args []string) error {
 	}
 
 	if !env.Lima.Exists(name) {
+		// A `new` that failed before the VM existed still allocated a proxy
+		// port and rendered a config. Those must be rm-able, or an abandoned
+		// name holds one of the sixteen slots forever with nothing anywhere
+		// saying how to free it.
+		if removed, err := removeArtifacts(name); err != nil {
+			return err
+		} else if removed {
+			env.Out.Say("no VM named %q, but a failed create had left its artifacts - removed them", name)
+			return retireFromProxy(env)
+		}
 		return unknownVM(env, name)
 	}
 
@@ -58,19 +68,34 @@ func cmdRm(env *Env, args []string) error {
 	if err := env.Lima.Delete(name); err != nil {
 		return err
 	}
-	// The proxy-port sidecar goes with the config: the port is this VM's slot
-	// at the proxy, and holding it past the VM would leak one of the sixteen.
-	for _, path := range []string{config.GeneratedConfig(name), config.SSHConfigLink(name), proxy.PortFile(name)} {
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
+	if _, err := removeArtifacts(name); err != nil {
+		return err
 	}
 	env.Out.Say("deleted VM %q (the repo on the host is untouched)", name)
+	return retireFromProxy(env)
+}
 
-	// The VM's allowlist stays on the host: it is what makes a later
-	// re-create come back with the same egress. But its rules leave the
-	// running proxy now, so the freed port serves deny-all until reallocated
-	// rather than a dead VM's list.
+// removeArtifacts deletes what `new` created outside the VM itself: the
+// rendered config, the ssh symlink, and the proxy-port sidecar - the port is
+// the VM's slot at the proxy, and holding it past the VM would leak one of
+// the sixteen. The VM's allowlist is deliberately NOT among these: it is
+// what makes a later re-create come back with the same egress.
+func removeArtifacts(name string) (removed bool, err error) {
+	for _, path := range []string{config.GeneratedConfig(name), config.SSHConfigLink(name), proxy.PortFile(name)} {
+		switch err := os.Remove(path); {
+		case err == nil:
+			removed = true
+		case !errors.Is(err, fs.ErrNotExist):
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+// retireFromProxy is rm's tail: the departed VM's rules leave the running
+// proxy (so the freed port serves deny-all until reallocated rather than a
+// dead VM's list), and the proxy itself stops if nobody is left.
+func retireFromProxy(env *Env) error {
 	if env.Proxy.Running() {
 		if result, err := env.Proxy.Sync(); err != nil {
 			return err
