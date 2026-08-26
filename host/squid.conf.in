@@ -77,6 +77,38 @@ http_access deny all
 # objects have priority and can push past it.
 cache_mem 16 MB
 
+# --- Off switches -------------------------------------------------------------
+# This squid serves CONNECT tunnels to one loopback client, and the machinery
+# below serves anyone else. Each line is pinned even where its value is the
+# compiled default - the cache_mem argument again: the default may change,
+# leaving the decision to squid may not. (A directive some future build
+# rejects is caught safely: every config change passes `squid -k parse` as a
+# candidate before it is activated.)
+
+# Nothing here is cacheable - a tunnel is never cached - so say so, and the
+# cache_mem pin above becomes a ceiling on a leak rather than on a working set.
+cache deny all
+
+# No cache peers: the ICP/HTCP inter-cache ports stay closed, no cache digests
+# are computed, and the pinger - a separate helper running with raw-socket
+# privileges to measure peer RTTs - never starts.
+icp_port 0
+htcp_port 0
+digest_generation off
+pinger_enable off
+
+# No SNMP agent.
+snmp_port 0
+
+# The per-client statistics table is sized for a proxy with many clients; this
+# one has exactly one address (everything arrives from the forward as
+# 127.0.0.1, see from_forward above).
+client_db off
+
+# The 403 page is the one thing a sandboxed agent can read from this squid.
+# Don't have it name the exact version to shop for CVEs against.
+httpd_suppress_version_string on
+
 # Restarts: don't linger 30s (the default) draining old connections - the VMs'
 # tunnels are all retry-safe clients; drop them and come back fast. (Config
 # changes restart; allowlist changes go through `squid -k reconfigure`, which

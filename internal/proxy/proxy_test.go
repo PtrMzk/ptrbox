@@ -142,6 +142,33 @@ func TestThePushedConfigPinsSquidsMemory(t *testing.T) {
 	}
 }
 
+func TestThePushedConfigTurnsOffWhatThisProxyDoesNotUse(t *testing.T) {
+	// The proxy serves CONNECT tunnels to one loopback client; everything else
+	// squid can do - caching, peer protocols, the raw-socket pinger, SNMP,
+	// per-client stats, naming its version on the 403 page - is parsing
+	// surface and memory in a 512 MiB VM with no swap. Pinned even where the
+	// value is the compiled default, for the cache_mem reason: the default may
+	// change, leaving the decision to squid may not.
+	h := newHarness(t)
+	h.mustEnsure(t)
+
+	conf := h.vmFile(t, proxy.ConfPath)
+	for _, directive := range []string{
+		"cache deny all",
+		"icp_port 0",
+		"htcp_port 0",
+		"digest_generation off",
+		"pinger_enable off",
+		"snmp_port 0",
+		"client_db off",
+		"httpd_suppress_version_string on",
+	} {
+		if !strings.Contains(conf, "\n"+directive+"\n") {
+			t.Errorf("the pushed config no longer sets %q on a line of its own", directive)
+		}
+	}
+}
+
 func TestEnsurePushesTheHostAllowlist(t *testing.T) {
 	h := newHarness(t)
 	h.mustEnsure(t)
