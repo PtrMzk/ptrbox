@@ -384,6 +384,14 @@ func verifyEgress(env *Env) error {
 		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: limactl list",
 			env.Cfg.ProxyPort, config.ProxyVM)
 	}
+	// The sandbox range is a second lima forward, published independently of
+	// the base port's - so the base being up says nothing about it, and it is
+	// the one the sandboxes actually dial. The first port stands in for the
+	// block: they are one forwarding rule, live or not together.
+	if !waitForPort(env.Cfg.SandboxPortMin(), forwardDeadline) {
+		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s sandbox port range (%d-%d) is not forwarded, so no sandbox could reach the proxy. Check it with: limactl list",
+			env.Cfg.SandboxPortMin(), config.ProxyVM, env.Cfg.SandboxPortMin(), env.Cfg.SandboxPortMax())
+	}
 
 	return env.Proxy.Verify()
 }
@@ -466,11 +474,17 @@ func preflightProxyPort(env *Env) error {
 	if env.Proxy.Running() {
 		return nil
 	}
-	if !portInUse(env.Cfg.ProxyPort) {
-		return nil
+	// The whole block, not just the base port: the sandbox range carries each
+	// VM's egress, so a foreign listener on any of it silently owns one
+	// sandbox's network instead of all of them - smaller blast radius, same
+	// failure class, harder to spot.
+	for port := env.Cfg.ProxyPort; port <= env.Cfg.SandboxPortMax(); port++ {
+		if portInUse(port) {
+			return fmt.Errorf("something else is already listening on 127.0.0.1:%d, which is where a %s port forward has to go (ports %d-%d) - sandboxes would reach that instead of ptrbox's proxy. Find it with: lsof -nP -iTCP:%d -sTCP:LISTEN (a squid left running on the Mac from before the proxy moved into a VM is the usual answer), or set PTRBOX_PROXY_PORT to move the whole block",
+				port, config.ProxyVM, env.Cfg.ProxyPort, env.Cfg.SandboxPortMax(), port)
+		}
 	}
-	return fmt.Errorf("something else is already listening on 127.0.0.1:%d, which is where the %s port forward has to go - the sandboxes would reach that instead of ptrbox's proxy. Find it with: lsof -nP -iTCP:%d -sTCP:LISTEN (a squid left running on the Mac from before the proxy moved into a VM is the usual answer), or set PTRBOX_PROXY_PORT to a free port",
-		env.Cfg.ProxyPort, config.ProxyVM, env.Cfg.ProxyPort)
+	return nil
 }
 
 // preflightKeychain reports a missing token source. A warning rather than an

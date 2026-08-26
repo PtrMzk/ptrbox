@@ -14,6 +14,7 @@ import (
 
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
+	"github.com/PtrMzk/ptrbox/internal/proxy"
 )
 
 // --- rm ----------------------------------------------------------------------
@@ -122,16 +123,46 @@ func TestNewRestartsAStoppedProxy(t *testing.T) {
 }
 
 func TestTheSandboxTemplateStillPointsAtTheHostSideProxyAddress(t *testing.T) {
-	// The re-homing of squid must be invisible to the sandboxes: same gateway
-	// address, same port, same firewall rule.
+	// Same gateway address as ever; the port is the VM's own allocation since
+	// item 37, and the first sandbox gets the first slot above the base port.
+	// Env var and firewall rule must name the same destination.
 	h := newHarness(t)
 	h.mustRun("new", "demo")
 	body := h.generated("demo")
-	if !strings.Contains(body, `HTTPS_PROXY="http://192.168.5.2:8888"`) {
-		t.Error("the guest proxy env var changed")
+	if !strings.Contains(body, `HTTPS_PROXY="http://192.168.5.2:8889"`) {
+		t.Error("the guest proxy env var does not point at the VM's allocated port")
 	}
-	if !strings.Contains(body, "ip daddr 192.168.5.2 tcp dport 8888 accept") {
-		t.Error("the firewall rule no longer names the proxy")
+	if !strings.Contains(body, "ip daddr 192.168.5.2 tcp dport 8889 accept") {
+		t.Error("the firewall rule does not name the VM's allocated port")
+	}
+}
+
+func TestEachSandboxDialsItsOwnProxyPort(t *testing.T) {
+	// The port is the VM's identity at squid - two sandboxes sharing one
+	// would share an allowlist once item 38 lands.
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	h.mustRun("new", "other")
+	if !strings.Contains(h.generated("demo"), "tcp dport 8889 accept") {
+		t.Error("the first sandbox does not dial the first slot")
+	}
+	if !strings.Contains(h.generated("other"), "tcp dport 8890 accept") {
+		t.Error("the second sandbox does not dial the second slot")
+	}
+}
+
+func TestRmFreesTheProxyPortForTheNextSandbox(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	h.mustRun("new", "other")
+	h.mustRun("rm", "--no-archive", "demo")
+	if h.exists(proxy.PortFile("demo")) {
+		t.Error("rm left the port sidecar behind")
+	}
+
+	h.mustRun("new", "third")
+	if !strings.Contains(h.generated("third"), "tcp dport 8889 accept") {
+		t.Error("the freed slot was not reused")
 	}
 }
 

@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -119,6 +120,36 @@ func TestEnsurePushesTheRenderedSquidConfig(t *testing.T) {
 	}
 	if strings.Contains(conf, "__PROXY_PORT__") {
 		t.Error("pushed config still has placeholders")
+	}
+}
+
+func TestThePushedConfigListensOnEverySandboxSlot(t *testing.T) {
+	// The listener set is static - base port plus all 16 sandbox slots,
+	// allocated or not - because the listeners decide the lima forwards, and
+	// changing those means restarting the proxy VM under every live sandbox.
+	h := newHarness(t)
+	h.mustEnsure(t)
+
+	conf := h.vmFile(t, proxy.ConfPath)
+	for port := 8888; port <= 8904; port++ {
+		if !strings.Contains(conf, fmt.Sprintf("\nhttp_port %d\n", port)) {
+			t.Errorf("the pushed config does not listen on port %d", port)
+		}
+	}
+}
+
+func TestThePushedConfigLogsTheArrivalPort(t *testing.T) {
+	// Every client is 127.0.0.1, so the local port is the only field that says
+	// which sandbox a log line - above all a TCP_DENIED - belongs to.
+	h := newHarness(t)
+	h.mustEnsure(t)
+
+	conf := h.vmFile(t, proxy.ConfPath)
+	if !strings.Contains(conf, "localport=%lp") {
+		t.Error("the access log format no longer carries the arrival port")
+	}
+	if !strings.Contains(conf, "access_log daemon:/var/log/squid/access.log ptrbox") {
+		t.Error("the access log does not use the ptrbox format")
 	}
 }
 

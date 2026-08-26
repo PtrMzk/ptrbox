@@ -47,9 +47,23 @@ mounts: []
 
 # The host's only share of the proxy: loopback-bound, so nothing on the LAN
 # can reach squid, and the sandboxes reach it only via the usernet relay.
+#
+# Two forwards. The base port is the Mac's own way in (and what `ptrbox
+# install` verifies); the range is one port per sandbox slot - squid tells
+# sandboxes apart by the port they dial, since the relay and the forward
+# deliver every one of them as 127.0.0.1. The range is STATIC on purpose:
+# forwards are fixed at VM start, so a per-VM forward added on demand would
+# mean restarting this VM under every live sandbox - whose only network this
+# is. Sixteen idle listeners are cheaper than that. (The range overlaps the
+# sandboxes' dev-port forwards, as the base port always has: a dev server in
+# a sandbox bound to one of these ports keeps working, it just does not get
+# its host-side forward while the proxy holds the port.)
 portForwards:
   - guestPort: __PROXY_PORT__
     hostPort: __PROXY_PORT__
+    hostIP: "127.0.0.1"
+  - guestPortRange: [__SANDBOX_PORT_MIN__, __SANDBOX_PORT_MAX__]
+    hostPortRange: [__SANDBOX_PORT_MIN__, __SANDBOX_PORT_MAX__]
     hostIP: "127.0.0.1"
 
 ssh:

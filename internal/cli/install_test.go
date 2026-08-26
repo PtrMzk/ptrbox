@@ -345,12 +345,15 @@ func TestAForwardStillReappearingAfterTheSquidRestartIsWaitedFor(t *testing.T) {
 	// one-shot version of this check failed a healthy proxy on the first
 	// smoke run whose config actually changed.
 	h := newHarness(t)
-	calls := 0
-	h.portInUse = func(int) bool { calls++; return calls > 3 }
+	// Per port, not per call: preflight asks about every port in the block
+	// once, and only the verification polls one port repeatedly - which is
+	// the behaviour under test.
+	calls := map[int]int{}
+	h.portInUse = func(port int) bool { calls[port]++; return calls[port] > 3 }
 
 	h.mustRun("install")
-	if calls <= 3 {
-		t.Fatalf("portInUse answered %d times, so the wait was never exercised", calls)
+	if calls[8888] <= 3 {
+		t.Fatalf("portInUse answered %d times for the base port, so the wait was never exercised", calls[8888])
 	}
 }
 

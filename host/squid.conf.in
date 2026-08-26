@@ -21,9 +21,18 @@
 # "http_access deny all".
 # =============================================================================
 
-# Port the sandboxes' proxy env vars and firewall rules point at (via the
-# host's 127.0.0.1 forward into this VM).
+# The base port: the Mac's own way into squid, and what `ptrbox install`
+# verifies (via the host's 127.0.0.1 forward into this VM). No sandbox points
+# here - each one dials its own port from the block below.
 http_port __PROXY_PORT__
+
+# One listener per sandbox slot. The port a request arrives on is the ONLY
+# thing that tells squid which sandbox is asking - every client address is
+# 127.0.0.1 by the time the forward has delivered it - and each VM's firewall
+# pins it to exactly one of these. Pinned open statically, allocated or not:
+# the listener set decides the lima forwards, and changing those means
+# restarting this VM under every live sandbox.
+__SANDBOX_HTTP_PORTS__
 
 # --- ACL definitions (inert until referenced by http_access) ---
 acl SSL_ports port 443                  # standard HTTPS
@@ -108,6 +117,14 @@ client_db off
 # The 403 page is the one thing a sandboxed agent can read from this squid.
 # Don't have it name the exact version to shop for CVEs against.
 httpd_suppress_version_string on
+
+# The access log, in squid's default format plus the port the request arrived
+# on. The client address squid would normally identify a request by is
+# 127.0.0.1 for every sandbox (see from_forward above); the local port is the
+# one field that says WHICH sandbox asked, so without it no TCP_DENIED line
+# can ever be attributed.
+logformat ptrbox %ts.%03tu %6tr %>a %Ss/%03>Hs %<st %rm %ru %[un %Sh/%<a %mt localport=%lp
+access_log daemon:/var/log/squid/access.log ptrbox
 
 # Restarts: don't linger 30s (the default) draining old connections - the VMs'
 # tunnels are all retry-safe clients; drop them and come back fast. (Config

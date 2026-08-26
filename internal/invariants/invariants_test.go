@@ -8,6 +8,7 @@ package invariants
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,6 +93,10 @@ func countMatches(body, pattern string) int {
 }
 
 func asset(t *testing.T, name string) string { return rendertest.Asset(t, name) }
+
+// renderedSquidConf is the squid config as the proxy VM receives it - the
+// listener block is generated, so assertions about it need the rendered form.
+func renderedSquidConf(t *testing.T) string { return rendertest.SquidConf(t) }
 
 // --- one mount ---------------------------------------------------------------
 
@@ -178,11 +183,25 @@ func TestExactlyFiveEgressAllowancesAndNoMore(t *testing.T) {
 }
 
 func TestTheOnlyRouteOutIsTheConfiguredProxy(t *testing.T) {
+	// 8889 is this VM's OWN allocated proxy port (the fixture's first
+	// allocation), not the shared base port: the port is the sandbox's
+	// identity at squid, and the firewall pinning it to exactly one is what
+	// makes that identity kernel-enforced rather than claimed.
 	_, stripped := sandbox(t)
-	mustMatch(t, stripped, `ip daddr 192\.168\.5\.2 tcp dport 8888 accept`,
+	mustMatch(t, stripped, `ip daddr 192\.168\.5\.2 tcp dport 8889 accept`,
 		"the proxy is not the destination of the one egress rule")
 	// No blanket HTTPS egress, and no second address.
 	mustNotMatch(t, stripped, `tcp dport (443|80) accept`, "there is blanket web egress")
+}
+
+func TestTheSandboxDialsExactlyOneProxyPort(t *testing.T) {
+	// One dport rule toward the proxy host. A second one would let this VM
+	// borrow another sandbox's identity - and with it, in item 38, another
+	// sandbox's allowlist.
+	_, stripped := sandbox(t)
+	if n := countMatches(stripped, `ip daddr 192\.168\.5\.2 tcp dport \d+ accept`); n != 1 {
+		t.Errorf("the firewall allows %d ports toward the proxy host, want exactly 1", n)
+	}
 }
 
 func TestDNSIsPinnedToTheConfiguredResolvers(t *testing.T) {
@@ -229,8 +248,10 @@ func TestNoCredentialsAreBakedIntoTheVMConfig(t *testing.T) {
 }
 
 func TestProxyEnvironmentPointsAtTheConfiguredProxyOnly(t *testing.T) {
+	// The same per-VM port the firewall allows: the cooperative layer and the
+	// enforcement layer must name the same destination.
 	rendered, _ := sandbox(t)
-	mustMatch(t, rendered, `export HTTPS_PROXY="http://192\.168\.5\.2:8888"`,
+	mustMatch(t, rendered, `export HTTPS_PROXY="http://192\.168\.5\.2:8889"`,
 		"the guest does not point at the configured proxy")
 	if n := countMatches(rendered, `HTTPS_PROXY=`); n != 1 {
 		t.Errorf("HTTPS_PROXY is set %d times, want 1", n)
@@ -248,13 +269,43 @@ func TestTheProxyVMMountsNothing(t *testing.T) {
 	mustNotMatch(t, stripped, `mountPoint|writable`, "the proxy VM has a mount")
 }
 
-func TestTheProxyVMsOnlyHostSurfaceIsALoopbackForward(t *testing.T) {
-	rendered, stripped := proxyVM(t)
-	mustMatch(t, rendered, `hostIP: "127\.0\.0\.1"`, "the forward is not loopback-bound")
-	if n := countMatches(stripped, `hostPort`); n != 1 {
-		t.Errorf("the proxy VM forwards %d host ports, want 1", n)
+func TestTheProxyVMsOnlyHostSurfaceIsLoopbackForwards(t *testing.T) {
+	// Two forwards since item 37: the base port and the per-sandbox range.
+	// Every one of them loopback-bound - nothing on the LAN may reach squid.
+	_, stripped := proxyVM(t)
+	forwards := countMatches(stripped, `(?m)^  - guestPort`)
+	if forwards != 2 {
+		t.Errorf("the proxy VM declares %d forwards, want exactly 2 (base port + sandbox range)", forwards)
 	}
-	mustNotMatch(t, stripped, `hostIP: "(0\.0\.0\.0|::)?"`, "the forward is bound beyond loopback")
+	if n := countMatches(stripped, `hostIP: "127\.0\.0\.1"`); n != forwards {
+		t.Errorf("%d of %d forwards are loopback-bound; every one must be", n, forwards)
+	}
+	mustNotMatch(t, stripped, `hostIP: "(0\.0\.0\.0|::)?"`, "a forward is bound beyond loopback")
+	// The range is the sandbox slots and nothing more.
+	mustMatch(t, stripped, `guestPortRange: \[8889, 8904\]`,
+		"the sandbox port range is not the 16 slots above the base port")
+	mustMatch(t, stripped, `hostPortRange: \[8889, 8904\]`,
+		"the host side of the range does not mirror the guest side")
+}
+
+func TestEverySquidListenerIsForwardedAndViceVersa(t *testing.T) {
+	// The listener set and the forward set are the same 17 ports. A listener
+	// without a forward is a sandbox slot that cannot carry traffic; a forward
+	// without a listener never comes up at all (lima publishes a forward only
+	// while the guest port has one) and fails exactly like the first case:
+	// an agent with no network, minutes later.
+	conf := renderedSquidConf(t)
+	if !strings.Contains(conf, "\nhttp_port 8888\n") {
+		t.Error("squid does not listen on the base port")
+	}
+	for port := 8889; port <= 8904; port++ {
+		if !strings.Contains(conf, fmt.Sprintf("\nhttp_port %d\n", port)) {
+			t.Errorf("squid does not listen on sandbox port %d", port)
+		}
+	}
+	if n := countMatches(conf, `(?m)^http_port `); n != 17 {
+		t.Errorf("squid listens on %d ports, want exactly 17 (base + 16 sandbox slots)", n)
+	}
 }
 
 func TestNoCredentialsReachTheProxyVM(t *testing.T) {

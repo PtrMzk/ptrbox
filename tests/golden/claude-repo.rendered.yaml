@@ -318,7 +318,7 @@ provision:
           ip daddr { 9.9.9.9, 1.1.1.1 } tcp dport 53 accept
           # THE one road out: the Squid allowlist proxy on the Mac, reached at the
           # vzNAT gateway address.
-          ip daddr 192.168.5.2 tcp dport 8888 accept
+          ip daddr 192.168.5.2 tcp dport 8889 accept
         }
       }
       NFT
@@ -472,7 +472,7 @@ provision:
       # Route cooperative tools (curl, npm, pip, git, claude) through the host Squid
       # proxy. This is the polite/routing layer; nftables is the enforcement layer
       # that makes the proxy the ONLY physical way out.
-      export HTTPS_PROXY="http://192.168.5.2:8888"
+      export HTTPS_PROXY="http://192.168.5.2:8889"
       export HTTP_PROXY="$HTTPS_PROXY"
       # Don't proxy the VM's own local traffic (tests hitting localhost, etc.)
       export NO_PROXY="localhost,127.0.0.1"

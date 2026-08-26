@@ -35,6 +35,23 @@ var Keys = []string{
 	"EXTRA_PACKAGES", "TOOLCHAIN", "NODE_VERSION",
 }
 
+// SandboxProxyPorts is how many sandbox VMs can hold a proxy port at once.
+// Squid sees every client as 127.0.0.1 (the usernet relay and the loopback
+// forward erase the source), so the port a sandbox dials is the only signal
+// that survives the trip - each VM gets its own, and that port is its identity
+// at the proxy. The range is static and declared in vm/proxy.yaml, because
+// adding a forward to a running proxy VM means restarting it, which takes the
+// network away from every live sandbox at once. 16 is a ceiling on concurrent
+// sandboxes, not on repos - ports free on `ptrbox rm`.
+const SandboxProxyPorts = 16
+
+// SandboxPortMin is the first per-sandbox proxy port. PROXY_PORT itself stays
+// the base port: the Mac's own way into squid, and what install verifies.
+func (c *Config) SandboxPortMin() int { return c.ProxyPort + 1 }
+
+// SandboxPortMax is the last per-sandbox proxy port.
+func (c *Config) SandboxPortMax() int { return c.ProxyPort + SandboxProxyPorts }
+
 // Toolchains are the language runtimes vm/provision/30-toolchain.sh knows how
 // to install, and the values PTRBOX_TOOLCHAIN accepts. Each name is also the
 // command vm/verify.sh looks for afterwards, which is what makes a requested
@@ -346,6 +363,13 @@ func (c *Config) validate() error {
 			return fmt.Errorf("PTRBOX_%s must look like 8GiB or 512MiB, got %q",
 				size.key, size.value)
 		}
+	}
+
+	// The sandbox ports sit directly above the base port, so the whole block
+	// has to fit under the port ceiling.
+	if c.ProxyPort < 1 || c.ProxyPort+SandboxProxyPorts > 65535 {
+		return fmt.Errorf("PTRBOX_PROXY_PORT must leave room for %d sandbox ports above it, got %d",
+			SandboxProxyPorts, c.ProxyPort)
 	}
 
 	if !ipv4Re.MatchString(c.ProxyHost) {

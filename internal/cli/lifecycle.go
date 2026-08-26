@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
+	"github.com/PtrMzk/ptrbox/internal/proxy"
 )
 
 func cmdRm(env *Env, args []string) error {
@@ -57,7 +58,9 @@ func cmdRm(env *Env, args []string) error {
 	if err := env.Lima.Delete(name); err != nil {
 		return err
 	}
-	for _, path := range []string{config.GeneratedConfig(name), config.SSHConfigLink(name)} {
+	// The proxy-port sidecar goes with the config: the port is this VM's slot
+	// at the proxy, and holding it past the VM would leak one of the sixteen.
+	for _, path := range []string{config.GeneratedConfig(name), config.SSHConfigLink(name), proxy.PortFile(name)} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

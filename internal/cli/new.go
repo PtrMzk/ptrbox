@@ -24,6 +24,7 @@ import (
 
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
+	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/render"
 )
 
@@ -76,6 +77,15 @@ func cmdNew(env *Env, args []string) error {
 	if err := os.MkdirAll(config.GeneratedDir(), 0o755); err != nil {
 		return err
 	}
+
+	// The VM's own proxy port: its identity at squid, baked into the firewall
+	// ruleset below. Allocated before the render so the sidecar and the
+	// rendered config can never disagree.
+	proxyPort, err := proxy.AllocatePort(env.Cfg, name)
+	if err != nil {
+		return err
+	}
+
 	configPath := config.GeneratedConfig(name)
 	cfg := env.Cfg
 	err = render.RenderFile(configPath, env.Assets, "vm/claude-repo.yaml", "vm", render.Values{
@@ -89,7 +99,7 @@ func cmdNew(env *Env, args []string) error {
 		"PORT_MIN":       fmt.Sprint(cfg.PortMin),
 		"PORT_MAX":       fmt.Sprint(cfg.PortMax),
 		"PROXY_HOST":     cfg.ProxyHost,
-		"PROXY_PORT":     fmt.Sprint(cfg.ProxyPort),
+		"PROXY_PORT":     fmt.Sprint(proxyPort),
 		"DNS_LIST":       cfg.DNSList(),
 		"DNS_NFT_SET":    cfg.DNSNftSet(),
 		"EXTRA_PACKAGES": cfg.ExtraPackageList(),
