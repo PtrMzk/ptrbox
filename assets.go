@@ -1,6 +1,7 @@
-// Package ptrbox embeds the guest-side assets: the Lima VM templates, the
-// provisioning scripts that run inside them, the verification script, and the
-// squid config template plus its seed allowlist.
+// Package ptrbox embeds the assets the binary installs: the Lima VM
+// templates, the provisioning scripts that run inside them, the verification
+// script, the squid config template plus its seed allowlist, and the annotated
+// config file `ptrbox install` writes for you.
 //
 // These stay as .yaml/.sh/.txt files rather than becoming Go string constants
 // for two reasons. They execute inside Debian guests, so bash is their native
@@ -16,9 +17,10 @@ package ptrbox
 
 import "embed"
 
-// Assets holds the vm/ and host/ trees, rooted exactly as they appear in the
-// repository, so paths like "vm/provision/10-base.sh" and
-// "host/squid.conf.in" mean the same thing in code, in tests and in docs.
+// Assets holds the vm/, host/ and config/ trees, rooted exactly as they appear
+// in the repository, so paths like "vm/provision/10-base.sh",
+// "host/squid.conf.in" and "config/ptrbox.conf.example" mean the same thing in
+// code, in tests and in docs.
 //
-//go:embed vm host
+//go:embed vm host config
 var Assets embed.FS

@@ -273,6 +273,27 @@ func (h *harness) allowlist() string {
 }
 
 // generated reads a rendered Lima config.
+// noConfigFile removes the empty config file newHarness leaves behind, so a
+// test can describe a Mac that has never run ptrbox before. Without it,
+// install's seeding is skipped: an existing config file is never overwritten.
+func (h *harness) noConfigFile() {
+	h.t.Helper()
+	if err := os.Remove(config.Path()); err != nil && !os.IsNotExist(err) {
+		h.t.Fatal(err)
+	}
+}
+
+// mustLoadConfig resolves the configuration the way a fresh invocation would -
+// from the files on disk, after whatever the run under test wrote there.
+func (h *harness) mustLoadConfig() *config.Config {
+	h.t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		h.t.Fatalf("config.Load: %v", err)
+	}
+	return cfg
+}
+
 // writeVMConfig puts a per-VM override file where `ptrbox new` will find it.
 func (h *harness) writeVMConfig(vm, body string) {
 	h.t.Helper()

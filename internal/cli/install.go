@@ -61,6 +61,11 @@ func cmdInstall(env *Env, args []string) error {
 			return err
 		}
 	}
+	// The config directory is left ready to edit, not merely present: see
+	// seed.go for why an empty directory is not "set up".
+	if err := seedConfigDir(env); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".ssh", "config.d"), 0o700); err != nil {
 		return err
 	}
@@ -104,6 +109,8 @@ func cmdInstall(env *Env, args []string) error {
 		"",
 		fmt.Sprintf("proxy     %s, reached at 127.0.0.1:%d", config.ProxyVM, env.Cfg.ProxyPort),
 		fmt.Sprintf("allowlist %s", config.AllowlistPath()),
+		fmt.Sprintf("settings  %s", config.Path()),
+		fmt.Sprintf("per VM    %s/<vm-name>", config.VMDir()),
 	)
 	return nil
 }

@@ -10,11 +10,13 @@ package cli
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	ptrbox "github.com/PtrMzk/ptrbox"
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
 )
@@ -65,11 +67,129 @@ func TestInstallCreatesTheDirectoriesPtrboxNeeds(t *testing.T) {
 	for _, dir := range []string{
 		h.repos,
 		config.GeneratedDir(),
+		config.Dir(),
+		config.VMDir(),
 		filepath.Join(h.home, ".ssh", "config.d"),
 	} {
 		if !h.exists(dir) {
 			t.Errorf("%s was not created", dir)
 		}
+	}
+}
+
+// --- the config directory ----------------------------------------------------
+
+// Present is not the same as ready. Anything install leaves you to assemble by
+// hand - mkdir this, copy that - is a setup step with no test, done from a doc,
+// and the first thing a new user gets wrong.
+func TestInstallLeavesTheConfigDirectoryReadyToEdit(t *testing.T) {
+	h := newHarness(t)
+	h.noConfigFile()
+	h.mustRun("install")
+
+	for _, path := range []string{
+		config.Path(),
+		config.VMDir(),
+		filepath.Join(config.VMDir(), "README"),
+	} {
+		if !h.exists(path) {
+			t.Errorf("%s was not created", path)
+		}
+	}
+	// And it says where, so the summary is the answer to "where do I change
+	// this" rather than a doc search.
+	if !strings.Contains(h.stderr, config.Path()) {
+		t.Errorf("the summary does not name the config file:\n%s", h.stderr)
+	}
+	if !strings.Contains(h.stderr, config.VMDir()) {
+		t.Errorf("the summary does not name the per-VM directory:\n%s", h.stderr)
+	}
+}
+
+// What lands is the annotated example, byte for byte - which is what makes it
+// editable: every key present, every line commented. The config package
+// asserts those two properties of the example itself.
+func TestTheSeededConfigFileIsTheShippedExample(t *testing.T) {
+	h := newHarness(t)
+	h.noConfigFile()
+	h.mustRun("install")
+
+	want, err := fs.ReadFile(ptrbox.Assets, "config/ptrbox.conf.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, config.Path()); got != string(want) {
+		t.Error("the seeded config file is not the shipped example")
+	}
+	// Inert as seeded: a fresh install must resolve to the built-in defaults.
+	if cfg := h.mustLoadConfig(); cfg.CPUs != 4 || cfg.Distro != "debian13" {
+		t.Errorf("the seeded config changed the defaults: CPUs=%d distro=%s",
+			cfg.CPUs, cfg.Distro)
+	}
+}
+
+// install is idempotent and people re-run it after every rebuild. Overwriting
+// settings would make it the one command that silently discards your work.
+func TestInstallNeverOverwritesAnExistingConfigFile(t *testing.T) {
+	h := newHarness(t)
+	const mine = "PTRBOX_MEMORY=16GiB\n"
+	writeFile(t, config.Path(), mine)
+	writeFile(t, filepath.Join(config.VMDir(), "README"), "mine too\n")
+
+	h.mustRun("install")
+
+	if got := readFile(t, config.Path()); got != mine {
+		t.Errorf("install rewrote the config file:\n%s", got)
+	}
+	if got := readFile(t, filepath.Join(config.VMDir(), "README")); got != "mine too\n" {
+		t.Errorf("install rewrote the per-VM README:\n%s", got)
+	}
+}
+
+func TestTheSeededConfigDirIsRecordedInTheManifest(t *testing.T) {
+	h := newHarness(t)
+	h.noConfigFile()
+	h.mustRun("install", "--yes")
+
+	manifest := readFile(t, filepath.Join(config.Dir(), "install-manifest"))
+	for _, path := range []string{config.Path(), filepath.Join(config.VMDir(), "README")} {
+		if !strings.Contains(manifest, "wrote "+path) {
+			t.Errorf("%s is not in the manifest:\n%s", path, manifest)
+		}
+	}
+}
+
+// The README sits in the directory ptrbox looks up per-VM config files in, so
+// it must be impossible to read as one. VMName lowercases, so no VM can be
+// called README - which is why the name is in capitals rather than being
+// something like `_readme` that a strip rule might one day allow.
+func TestTheVMsREADMEIsUnreachableAsAPerVMConfig(t *testing.T) {
+	h := newHarness(t)
+	h.noConfigFile()
+	h.mustRun("install")
+
+	name, err := config.VMName("README")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name == "README" {
+		t.Fatal("a VM can be named README, so the per-VM README would be read as its config")
+	}
+	if !h.exists(filepath.Join(config.VMDir(), "README")) {
+		t.Fatal("the README this test is about was not written")
+	}
+	cfg := h.mustLoadConfig()
+	if _, err := cfg.Overlay("README"); err == nil {
+		t.Error("Overlay accepted README as a VM name")
+	}
+	// And the VM you would get from the argument "README" reads a different
+	// file, which does not exist - so it resolves to the defaults.
+	overlaid, err := cfg.Overlay(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overlaid.Memory != cfg.Memory {
+		t.Errorf("the README leaked into VM %q: memory %q", name, overlaid.Memory)
 	}
 }
 
@@ -95,6 +215,7 @@ func TestInstallRestartsSquidAfterPushingANewConfig(t *testing.T) {
 
 func TestASecondInstallChangesNothingAndSaysSo(t *testing.T) {
 	h := newHarness(t)
+	h.noConfigFile()
 	h.mustRun("install")
 	h.fake.Reset()
 
@@ -103,6 +224,11 @@ func TestASecondInstallChangesNothingAndSaysSo(t *testing.T) {
 	h.assertNotCalled("^start")
 	h.assertNotCalled("systemctl restart")
 	h.assertNotCalled("squid -k reconfigure")
+	// The seeded files are announced on the run that writes them and never
+	// again - re-running install after a rebuild is the common case.
+	if strings.Contains(h.stderr, "installed "+config.Path()) {
+		t.Errorf("the second install re-announced the config file:\n%s", h.stderr)
+	}
 }
 
 // --- validation --------------------------------------------------------------
@@ -682,6 +808,14 @@ func TestInstallRecordsWhatItTouched(t *testing.T) {
 }
 
 // --- helpers -----------------------------------------------------------------
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	mkdir(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
