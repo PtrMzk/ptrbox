@@ -37,17 +37,33 @@ acl CONNECT method CONNECT              # proxy tunnel requests (how HTTPS trans
 acl from_forward src 127.0.0.1
 acl from_forward src ::1
 acl allowed_domains dstdomain "/etc/squid/allowed_domains.txt"
+# Destinations that are not the internet. allowed_domains checks the NAME a
+# tunnel asks for; this checks the ADDRESS that name resolves to when the
+# request is evaluated. Without it, an allowlisted domain whose DNS answer is
+# (or rebinds to) a private address opens a tunnel from THIS VM's network
+# position - so 192.168.x.x is the Mac's LAN: printers, router admin pages,
+# other machines, none of which any sandbox has business reaching. Loopback
+# here is this VM itself, and link-local covers the 169.254 metadata
+# convention. Every legitimate destination is a public registry or API;
+# nothing they resolve to lives in these ranges.
+acl to_internal dst 0.0.0.0/8 127.0.0.0/8 10.0.0.0/8 100.64.0.0/10 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16
+acl to_internal dst ::1 fc00::/7 fe80::/10
 
 # --- Access rules ---
 # 1) No tunnels to ports other than 443 - otherwise an allowed domain could be
 #    reached on ANY port (ssh/smtp/...), making this a generic TCP relay.
 http_access deny CONNECT !SSL_ports
-# 2) The allow rule: from the forward AND a CONNECT tunnel (HTTPS) AND an
+# 2) No tunnels into private address space, whatever name they asked for. The
+#    allow rule below trusts DNS; this is the rule that does not. It must sit
+#    ABOVE the allow - first match wins, so below it an allowlisted name
+#    resolving inward would already have been granted.
+http_access deny to_internal
+# 3) The allow rule: from the forward AND a CONNECT tunnel (HTTPS) AND an
 #    allowlisted destination hostname. (Plain http:// matches nothing here ->
 #    falls through to deny. HTTPS-only egress, which every registry/API in
 #    the list supports.)
 http_access allow from_forward CONNECT allowed_domains
-# 3) Default-deny. Everything else -> 403, logged as TCP_DENIED. KEEP LAST.
+# 4) Default-deny. Everything else -> 403, logged as TCP_DENIED. KEEP LAST.
 http_access deny all
 
 # Memory. Left unset, cache_mem defaults to 256 MB - half of this VM's 512 MiB

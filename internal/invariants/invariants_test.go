@@ -292,6 +292,42 @@ func TestTheSquidConfigKeepsDefaultDenyLast(t *testing.T) {
 	}
 }
 
+func TestTheSquidConfigDeniesTunnelsIntoPrivateAddressSpace(t *testing.T) {
+	// The allowlist checks the NAME a tunnel asks for; to_internal checks the
+	// ADDRESS it resolves to. Without it, an allowlisted domain that resolves
+	// (or rebinds) to a private address opens a tunnel from the proxy VM's
+	// network position - the Mac's LAN - which no sandbox has business
+	// reaching.
+	conf := asset(t, "host/squid.conf.in")
+	for _, network := range []string{
+		"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"169.254.0.0/16", "::1", "fc00::/7", "fe80::/10",
+	} {
+		if !regexp.MustCompile(`(?m)^acl to_internal dst .*` + regexp.QuoteMeta(network)).MatchString(conf) {
+			t.Errorf("the to_internal ACL no longer covers %s", network)
+		}
+	}
+
+	// Ordering is the teeth: rules evaluate top to bottom, first match wins,
+	// so a deny BELOW the allow never sees an allowlisted name - and the
+	// allowlisted-name-resolving-inward case is the whole point.
+	deny, allow := -1, -1
+	for i, line := range strings.Split(conf, "\n") {
+		switch {
+		case strings.HasPrefix(line, "http_access deny to_internal"):
+			deny = i
+		case strings.HasPrefix(line, "http_access allow"):
+			allow = i
+		}
+	}
+	if deny == -1 {
+		t.Fatal("the squid config no longer denies to_internal")
+	}
+	if allow != -1 && deny > allow {
+		t.Error("the to_internal deny sits below the allow rule, where an allowlisted name has already matched")
+	}
+}
+
 // --- provisioning safety -----------------------------------------------------
 
 func TestEveryNetworkDependentProvisionStepIsGuarded(t *testing.T) {
