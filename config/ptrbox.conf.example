@@ -4,7 +4,18 @@
 # Plain shell: KEY=value, no exports needed. Every key below can also be set as
 # an environment variable of the same name, which overrides the file.
 #
-# Precedence: built-in defaults < this file < environment.
+# Precedence, lowest to highest:
+#
+#   built-in defaults  <  this file  <  ~/.config/ptrbox/vms/<vm>  <  environment
+#
+# Every layer above the first is sparse - it says only what it changes, and a
+# key it does not mention falls through to the layer below. Only the built-in
+# defaults are complete, and they live in the binary. So this file never needs
+# to be filled in: the commented lines below ARE the defaults, listed so that
+# no setting can only be found by reading the source.
+#
+# Every key is listed exactly once, here. Which of them may also be set per VM
+# is marked [per-VM] on the section heading; see the end of the file.
 # =============================================================================
 
 # --- Where repos live --------------------------------------------------------
@@ -12,7 +23,7 @@
 # a slash are used literally and ignore this.
 #PTRBOX_REPO_ROOT="$HOME/code"
 
-# --- Guest distro ------------------------------------------------------------
+# --- Guest distro [per-VM] ---------------------------------------------------
 # debian13 (default) or ubuntu2404. Both are apt-based and share package names,
 # so provisioning is identical; Debian's cloud image is just smaller and has no
 # snap machinery. Anything else needs its own base provisioning script.
@@ -22,7 +33,7 @@
 # must be Debian-family or vm/provision/10-base.sh will not find its packages.
 #PTRBOX_IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"
 
-# --- Extra guest packages ----------------------------------------------------
+# --- Extra guest packages [per-VM] -------------------------------------------
 # Space-separated apt packages installed into every sandbox VM on top of the
 # base list in vm/provision/10-base.sh. Version pins (pkg=1.2-3) are allowed.
 # Applies at VM creation: re-create existing VMs to pick up changes.
@@ -32,7 +43,7 @@
 # mount would let the agent install software into its own sandbox.
 #PTRBOX_EXTRA_PACKAGES="ripgrep sqlite3"
 
-# --- VM sizing ---------------------------------------------------------------
+# --- VM sizing [per-VM] ------------------------------------------------------
 # CPUs are only consumed while the VM computes; memory is the one to watch if
 # you run several VMs on a 16GB Mac. Disk is sparse - a generous ceiling is
 # free, and running out mid-build is not.
@@ -40,7 +51,7 @@
 #PTRBOX_MEMORY=8GiB
 #PTRBOX_DISK=50GiB
 
-# --- Port forwarding ---------------------------------------------------------
+# --- Port forwarding [per-VM] ------------------------------------------------
 # Guest ports in this range are reachable on the Mac's localhost. Covers vite
 # (5173), Next/CRA (3000), Flask (5000), Django (8000).
 #PTRBOX_PORT_MIN=3000
@@ -68,7 +79,7 @@
 # Defaults are Quad9 (which also blocks known-malicious domains) + Cloudflare.
 #PTRBOX_DNS_SERVERS="9.9.9.9 1.1.1.1"
 
-# --- Claude Code -------------------------------------------------------------
+# --- Claude Code [per-VM: model only] ----------------------------------------
 # Pre-seeded into each VM's ~/.claude/settings.json. "opus" is an alias that
 # tracks the latest Opus-class model, so it needs no updating on releases.
 #PTRBOX_CLAUDE_MODEL=opus
@@ -78,7 +89,7 @@
 #   security add-generic-password -a "$USER" -s claude-sandbox-token -w
 #PTRBOX_KEYCHAIN_SERVICE=claude-sandbox-token
 
-# --- Git identity for in-VM commits ------------------------------------------
+# --- Git identity for in-VM commits [per-VM] ---------------------------------
 # Defaults to the host's global git config. Set these to commit under a
 # different name inside sandboxes.
 #PTRBOX_GIT_USER_NAME="Your Name"
@@ -88,4 +99,43 @@
 # The squid access log, as a path INSIDE the proxy VM (read via limactl
 # shell). Defaults to Debian's standard location.
 #PTRBOX_SQUID_LOG=/var/log/squid/access.log
+
+# Where `ptrbox install` offers to symlink the CLI so that `ptrbox` is on your
+# PATH. The offer is declinable, and nothing is written without a yes.
+#PTRBOX_BIN_DIR="$HOME/bin"
+
+# =============================================================================
+# Per-VM overrides
+#
+# One optional file per sandbox, named for its VM, in the same directory as
+# this one:
+#
+#     ~/.config/ptrbox/vms/<vm-name>
+#
+# Same format, and sparse in the same way: it says only what differs for that
+# sandbox, and everything else falls through to this file. `ptrbox new` reads
+# it once, at create time, and bakes the result into the VM - so editing one
+# does nothing until you re-create that VM (ptrbox rm <name> && ptrbox new
+# <name>). Keeping the file when the VM goes away is the point: it is what
+# makes the re-create reproduce the same sandbox.
+#
+#     $ cat ~/.config/ptrbox/vms/thesis
+#     PTRBOX_EXTRA_PACKAGES="texlive-latex-recommended texlive-latex-extra latexmk"
+#     PTRBOX_MEMORY=4GiB
+#
+# Only the sections marked [per-VM] above may appear in one. The rest describe
+# your Mac - there is one proxy, one Keychain, one repo root - and ptrbox
+# refuses the file rather than ignoring the line, because a sandbox pointed at
+# a proxy that is not there fails minutes later as "the agent has no network".
+# DNS_SERVERS is refused too, though it is technically per-VM: it is rendered
+# into that guest's firewall, so changing it is a security decision and
+# belongs in a commit message.
+#
+# Overrides replace, they do not merge. A per-VM PTRBOX_EXTRA_PACKAGES is the
+# whole list for that VM, not an addition to the one above - one rule for
+# every key, so a VM never holds a package that appears in no single file.
+#
+# The VM name is the repo directory's name, lowercased and stripped to
+# [a-z0-9-] - the name `ptrbox new` prints and `ssh lima-<name>` uses.
+# =============================================================================
 

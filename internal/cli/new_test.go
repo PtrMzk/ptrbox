@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PtrMzk/ptrbox/internal/config"
 )
 
 func TestNewCreatesTheRepoDirectoryAndGitInitsIt(t *testing.T) {
@@ -89,6 +91,86 @@ func TestNoExtraPackagesRendersAnEmptyInertInstallStep(t *testing.T) {
 	if !strings.Contains(h.generated("demo"), `EXTRA_PACKAGES=""`) {
 		t.Error("the empty package list is not rendered as an empty literal")
 	}
+}
+
+// --- per-VM overrides --------------------------------------------------------
+
+// The end-to-end version of the layering: a per-VM file reaches the guest.
+// internal/config proves the precedence rules; this proves `new` consults
+// them at all, and at a moment early enough to matter.
+func TestAPerVMConfigFileReachesTheGeneratedConfig(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_EXTRA_PACKAGES=\"texlive-latex-recommended latexmk\"\n")
+	h.mustRun("new", "demo")
+
+	if !strings.Contains(h.generated("demo"), `EXTRA_PACKAGES="texlive-latex-recommended latexmk"`) {
+		t.Error("the per-VM package list is not in the generated config")
+	}
+	// The file is named in the summary: editing it later changes nothing
+	// until a re-create, so create time is when to say which one was read.
+	if !strings.Contains(h.stderr, config.VMConfigPath("demo")) {
+		t.Errorf("the summary does not name the per-VM file:\n%s", h.stderr)
+	}
+}
+
+// One sandbox's file must not reach another's.
+func TestAPerVMConfigFileAppliesOnlyToItsOwnVM(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_EXTRA_PACKAGES=latexmk\n")
+	h.mustRun("new", "other")
+
+	if strings.Contains(h.generated("other"), "latexmk") {
+		t.Error("another VM's per-VM config leaked into this one")
+	}
+	if !strings.Contains(h.generated("other"), `EXTRA_PACKAGES=""`) {
+		t.Error("the VM without a per-VM file should have no extra packages")
+	}
+}
+
+// A per-VM distro has to reach the image URL, not just the label - the
+// derivation is re-run rather than the field patched.
+func TestAPerVMDistroChangesTheImageAndTheNarration(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_DISTRO=ubuntu2404\n")
+	h.mustRun("new", "demo")
+
+	body := h.generated("demo")
+	if !strings.Contains(body, "ubuntu-24.04-server-cloudimg-arm64.img") {
+		t.Error("the generated config does not use the ubuntu image")
+	}
+	if strings.Contains(body, "debian-13-genericcloud") {
+		t.Error("the generated config still names the debian image")
+	}
+	if h.narrator.Image != "ubuntu2404" {
+		t.Errorf("narrator.Image = %q, want the per-VM distro", h.narrator.Image)
+	}
+}
+
+// Refused, not ignored, and refused before any VM state is touched.
+func TestAHostGlobalKeyInAPerVMFileFailsNewBeforeAnyVMIsTouched(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_PROXY_PORT=9999\n")
+
+	err := h.run("new", "demo")
+	if err == nil {
+		t.Fatal("new accepted a host-wide setting in a per-VM file")
+	}
+	if !strings.Contains(err.Error(), "PROXY_PORT") {
+		t.Errorf("error = %v, want it to name the offending key", err)
+	}
+	h.assertNotCalled("start")
+}
+
+// An invalid per-VM value is caught with the same force as an invalid one in
+// the main config: before the several minutes of provisioning, not after.
+func TestAnInvalidPerVMPackageAbortsNewBeforeAnyVMIsTouched(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_EXTRA_PACKAGES=\"latexmk; reboot\"\n")
+
+	if err := h.run("new", "demo"); err == nil {
+		t.Fatal("new accepted an injected package name from a per-VM file")
+	}
+	h.assertNotCalled("start")
 }
 
 func TestAnInvalidExtraPackageAbortsNewBeforeAnyVMIsTouched(t *testing.T) {

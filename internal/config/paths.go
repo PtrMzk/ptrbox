@@ -28,6 +28,16 @@ func Dir() string { return filepath.Dir(Path()) }
 // re-creation.
 func AllowlistPath() string { return filepath.Join(Dir(), "allowed_domains.txt") }
 
+// VMDir holds the per-VM config files, one optional file per sandbox named
+// for its VM. Next to the main config rather than under the repo root, and
+// never inside a repo: see internal/config/overlay.go.
+func VMDir() string { return filepath.Join(Dir(), "vms") }
+
+// VMConfigPath is the per-VM config file for one sandbox. Callers reaching
+// the filesystem with a name that did not come from VMName should go through
+// Config.Overlay, which checks it.
+func VMConfigPath(name string) string { return filepath.Join(VMDir(), name) }
+
 // GeneratedDir is where rendered Lima configs are written. Lima's own
 // directory rather than ptrbox's: `limactl start` is handed a path in it, and
 // keeping the artifact next to the VM it describes is what makes a generated

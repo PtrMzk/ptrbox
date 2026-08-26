@@ -61,6 +61,17 @@ func cmdNew(env *Env, args []string) error {
 			name, name, name)
 	}
 
+	// --- per-VM overrides ---------------------------------------------------
+	// The name is what selects them, so this is the earliest it can happen -
+	// and it has to happen before anything below reads a setting. Every key a
+	// per-VM file may set is consumed in this function and then frozen into
+	// the generated config, which is why no other command re-resolves.
+	if env.LoadVM != nil {
+		if err := env.LoadVM(env, name); err != nil {
+			return err
+		}
+	}
+
 	// --- generate the VM config ---------------------------------------------
 	if err := os.MkdirAll(config.GeneratedDir(), 0o755); err != nil {
 		return err
@@ -143,14 +154,25 @@ func cmdNew(env *Env, args []string) error {
 		return err
 	}
 
-	env.Out.Summary(fmt.Sprintf("VM %q is ready", name),
+	// The summary is where a per-VM file gets said out loud. Editing one
+	// changes nothing until the VM is re-created, so create time is the only
+	// moment the file and the VM are known to agree.
+	lines := []string{
 		fmt.Sprintf("ssh lima-%s", name),
 		"cd /workspace && claude",
 		"",
 		fmt.Sprintf("distro   %s, %d CPUs, %s memory", env.Cfg.Distro, env.Cfg.CPUs, env.Cfg.Memory),
 		fmt.Sprintf("repo     %s, mounted at /workspace", repoDir),
-		"push     from the host; the VM has no credentials but the Claude token",
-	)
+	}
+	if packages := env.Cfg.ExtraPackageList(); packages != "" {
+		lines = append(lines, "extra    "+packages)
+	}
+	if config.HasVMConfig(name) {
+		lines = append(lines, "config   "+config.VMConfigPath(name))
+	}
+	lines = append(lines,
+		"push     from the host; the VM has no credentials but the Claude token")
+	env.Out.Summary(fmt.Sprintf("VM %q is ready", name), lines...)
 	return nil
 }
 

@@ -129,11 +129,39 @@ func defaults() map[string]string {
 	}
 }
 
+// Layers, lowest precedence first. Every layer above the first is sparse: it
+// says only what it changes, and a key it does not mention falls through to
+// the layer below. Only layerDefault is complete, and it lives in code rather
+// than in a file - which is why the shipped example config has every line
+// commented out and an empty config file is a valid one.
+const (
+	layerDefault = iota
+	layerFile    // ~/.config/ptrbox/config
+	layerVM      // ~/.config/ptrbox/vms/<name>
+	layerEnv     // PTRBOX_*
+)
+
 // Load resolves defaults, the config file and the environment into a
-// validated Config.
-func Load() (*Config, error) {
+// validated Config. Per-VM overrides are not applied: the VM's name is not
+// known until a command has parsed its arguments. See Config.Overlay.
+func Load() (*Config, error) { return load("") }
+
+// load resolves every layer. vm is the sandbox whose per-VM file should be
+// layered in, or "" for none.
+func load(vm string) (*Config, error) {
 	values := defaults()
 	var warnings []string
+
+	// Which layer last set each key. Only the derivation below reads this,
+	// and only to settle one question: whether a distro named higher up than
+	// an image URL should re-derive that URL.
+	origin := map[string]int{}
+	apply := func(from map[string]string, layer int) {
+		for key, value := range from {
+			values[key] = value
+			origin[key] = layer
+		}
+	}
 
 	// The config file, if there is one. Unlike the bash version this parses
 	// KEY=value rather than sourcing, so a config file is data now, not code
@@ -144,19 +172,38 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	warnings = append(warnings, fileWarnings...)
-	for key, value := range fileValues {
-		values[key] = value
+	apply(fileValues, layerFile)
+
+	// The per-VM file, if this run is about a particular sandbox. Restricted
+	// to the keys a VM can own; see perVMKeys for why the rest are refused
+	// rather than ignored.
+	if vm != "" {
+		vmPath := VMConfigPath(vm)
+		vmValues, vmWarnings, err := parseFile(vmPath)
+		if err != nil {
+			return nil, err
+		}
+		warnings = append(warnings, vmWarnings...)
+		for _, key := range Keys {
+			if _, ok := vmValues[key]; ok && !perVMKeys[key] {
+				return nil, fmt.Errorf(
+					"%s: PTRBOX_%s describes the host, not one VM, so it cannot be set per VM"+
+						" - move it to %s (settable per VM: %s)",
+					vmPath, key, Path(), strings.Join(PerVMKeys(), " "))
+			}
+		}
+		apply(vmValues, layerVM)
 	}
 
-	// The environment wins over the file.
+	// The environment wins over every file.
 	for _, key := range Keys {
 		if value, ok := os.LookupEnv("PTRBOX_" + key); ok {
 			values[key] = value
+			origin[key] = layerEnv
 		}
 	}
 
-	// Derived defaults, resolved after the file and environment have had
-	// their say.
+	// Derived defaults, resolved after every layer has had its say.
 
 	// A path INSIDE the proxy VM (Debian squid's default), read via
 	// limactl shell.
@@ -168,7 +215,13 @@ func Load() (*Config, error) {
 	// override is an escape hatch for pinning a build or trying another
 	// apt-based image; you are on your own for package names if the image is
 	// not Debian-family.
-	if values["IMAGE_URL"] == "" {
+	//
+	// A distro named at a HIGHER layer than the image URL re-derives it: a
+	// per-VM `DISTRO=ubuntu2404` next to a pinned IMAGE_URL in the main
+	// config otherwise produces a VM labelled ubuntu that boots the Debian
+	// image, and nothing anywhere says so. Same layer means the URL was the
+	// more specific statement of the two, so it stands.
+	if values["IMAGE_URL"] == "" || origin["DISTRO"] > origin["IMAGE_URL"] {
 		values["IMAGE_URL"] = imageFor(values["DISTRO"])
 		if values["IMAGE_URL"] == "" {
 			return nil, fmt.Errorf("unknown PTRBOX_DISTRO %q (supported: %s)",

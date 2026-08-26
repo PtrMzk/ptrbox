@@ -57,6 +57,16 @@ type Env struct {
 	// called only for commands that need it, so `ptrbox help` and
 	// `ptrbox version` still work on a host whose config file does not parse.
 	Load func(*Env) error
+
+	// LoadVM re-resolves the configuration with a VM's per-VM overrides
+	// layered in, once its name is known. Only `new` calls it: it is the only
+	// command that consumes a per-VM key, because those keys are frozen into
+	// the generated Lima config at create time and inert afterwards.
+	//
+	// A separate hook rather than a Config method call at the site, because
+	// re-resolving also re-answers the things main derives from a config -
+	// which image the narrator names, and the Proxy's view of the world.
+	LoadVM func(env *Env, vm string) error
 }
 
 // now is the clock, defaulting to the real one. A method rather than a bare

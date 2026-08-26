@@ -167,16 +167,33 @@ func (h *harness) run(args ...string) error {
 	if h.missing["limactl"] {
 		env.Lima = &lima.Client{Runner: unavailableRunner{h.fake}, Stdout: h.narrator, Stderr: h.narrator}
 	}
-	env.Load = func(e *Env) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
+	// Wired the way main wires it, including the per-VM re-resolution: the
+	// layering is only real if the commands go through the same two hooks a
+	// real run does.
+	apply := func(e *Env, cfg *config.Config) {
+		for _, warning := range cfg.Warnings {
+			e.Out.Warn("%s", warning)
 		}
 		// main names the image for the narrator here too - it is the first
 		// moment anyone knows the distro.
 		h.narrator.Image = cfg.Distro
 		e.Cfg = cfg
 		e.Proxy = &proxy.Proxy{Cfg: cfg, Lima: e.Lima, Assets: e.Assets, Out: e.Out}
+	}
+	env.Load = func(e *Env) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		apply(e, cfg)
+		return nil
+	}
+	env.LoadVM = func(e *Env, vm string) error {
+		cfg, err := e.Cfg.Overlay(vm)
+		if err != nil {
+			return err
+		}
+		apply(e, cfg)
 		return nil
 	}
 
@@ -256,6 +273,15 @@ func (h *harness) allowlist() string {
 }
 
 // generated reads a rendered Lima config.
+// writeVMConfig puts a per-VM override file where `ptrbox new` will find it.
+func (h *harness) writeVMConfig(vm, body string) {
+	h.t.Helper()
+	mkdir(h.t, config.VMDir())
+	if err := os.WriteFile(config.VMConfigPath(vm), []byte(body), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 func (h *harness) generated(name string) string {
 	h.t.Helper()
 	body, err := os.ReadFile(config.GeneratedConfig(name))

@@ -43,6 +43,7 @@ func main() {
 		Now:         time.Now,
 		Lima:        &lima.Client{Runner: lima.Exec{}, Stdout: narrator, Stderr: narrator},
 		Load:        loadWith(narrator),
+		LoadVM:      loadVMWith(narrator),
 	}
 
 	err := cli.Run(env, args)
@@ -116,24 +117,47 @@ func colorFlag(args []string) ([]string, bool) {
 // loadWith resolves the configuration and everything that depends on it.
 // Called only for commands that need it, so a config file that does not parse
 // cannot stop `ptrbox help` from explaining itself.
-//
-// The narrator is handed the distro here because this is the first moment
-// anyone knows it, and "downloading the debian13 image" is a better line than
-// "downloading the VM image" during the several minutes that download takes.
 func loadWith(narrator *narrate.Stream) func(*cli.Env) error {
 	return func(env *cli.Env) error {
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-		for _, warning := range cfg.Warnings {
-			env.Out.Warn("%s", warning)
-		}
-		narrator.Image = cfg.Distro
-		env.Cfg = cfg
-		env.Proxy = &proxy.Proxy{Cfg: cfg, Lima: env.Lima, Assets: env.Assets, Out: env.Out}
+		apply(env, narrator, cfg)
 		return nil
 	}
+}
+
+// loadVMWith re-resolves the configuration with a sandbox's per-VM overrides
+// layered in. Everything derived from a config is derived again: a per-VM
+// distro changes which image the narrator should name, and the Proxy holds a
+// config of its own.
+//
+// The Proxy cannot actually move - no proxy key is settable per VM - but
+// rebuilding it costs nothing and means the invariant is upheld by the code
+// rather than by remembering it here.
+func loadVMWith(narrator *narrate.Stream) func(*cli.Env, string) error {
+	return func(env *cli.Env, vm string) error {
+		cfg, err := env.Cfg.Overlay(vm)
+		if err != nil {
+			return err
+		}
+		apply(env, narrator, cfg)
+		return nil
+	}
+}
+
+// apply installs a resolved config and everything that hangs off it. The
+// narrator is handed the distro here because this is the first moment anyone
+// knows it, and "downloading the debian13 image" is a better line than
+// "downloading the VM image" during the several minutes that download takes.
+func apply(env *cli.Env, narrator *narrate.Stream, cfg *config.Config) {
+	for _, warning := range cfg.Warnings {
+		env.Out.Warn("%s", warning)
+	}
+	narrator.Image = cfg.Distro
+	env.Cfg = cfg
+	env.Proxy = &proxy.Proxy{Cfg: cfg, Lima: env.Lima, Assets: env.Assets, Out: env.Out}
 }
 
 // executable is the path to this binary, with symlinks resolved, so

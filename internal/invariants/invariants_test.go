@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	ptrbox "github.com/PtrMzk/ptrbox"
+	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/rendertest"
 )
 
@@ -319,6 +320,46 @@ func TestTheExtraPackageListIsFixedAtRenderTime(t *testing.T) {
 	mustMatch(t, rendered, `EXTRA_PACKAGES=""`, "the fixture's empty list is not rendered as a literal")
 	mustNotMatch(t, rendered, "EXTRA_PACKAGES=.*(\\$\\(|`|<|cat |curl |workspace)",
 		"the package list is computed inside the guest")
+}
+
+// Invariant 3, for the per-VM config layer. Per-project settings idiomatically
+// live in a dotfile in the project, and that is the one place these may never
+// be: the repo is mounted into the sandbox, so a package list living there
+// would let the agent choose what gets installed into its own VM on the next
+// re-create. Keyed by VM name, under the config directory, always.
+func TestPerVMConfigLivesBesideTheMainConfigAndNeverInARepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("PTRBOX_CONFIG", "")
+	os.Unsetenv("PTRBOX_CONFIG")
+	t.Setenv("PTRBOX_REPO_ROOT", filepath.Join(home, "code"))
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, vm := range []string{"demo", "my-api"} {
+		path := config.VMConfigPath(vm)
+		if dir := filepath.Dir(path); dir != config.VMDir() {
+			t.Errorf("per-VM config for %q resolved outside the per-VM directory: %s", vm, path)
+		}
+		if !strings.HasPrefix(path, config.Dir()+string(filepath.Separator)) {
+			t.Errorf("per-VM config for %q is not under the config directory: %s", vm, path)
+		}
+		// The repo root is where every mounted repo lives; nothing ptrbox
+		// reads as configuration may come from under it.
+		if strings.HasPrefix(path, cfg.RepoRoot+string(filepath.Separator)) {
+			t.Errorf("per-VM config for %q is under the repo root: %s", vm, path)
+		}
+	}
+
+	// And a name that would climb out is refused rather than resolved.
+	for _, escape := range []string{"../config", "a/b", "../../etc/passwd"} {
+		if _, err := cfg.Overlay(escape); err == nil {
+			t.Errorf("Overlay(%q) was accepted", escape)
+		}
+	}
 }
 
 func TestTheFailedPackageMarkerIsSpelledTheSameInBothScripts(t *testing.T) {
