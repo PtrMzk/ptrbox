@@ -67,6 +67,19 @@ func cmdRm(env *Env, args []string) error {
 	}
 	env.Out.Say("deleted VM %q (the repo on the host is untouched)", name)
 
+	// The VM's allowlist stays on the host: it is what makes a later
+	// re-create come back with the same egress. But its rules leave the
+	// running proxy now, so the freed port serves deny-all until reallocated
+	// rather than a dead VM's list.
+	if env.Proxy.Running() {
+		if result, err := env.Proxy.Sync(); err != nil {
+			return err
+		} else if result == proxy.Rejected {
+			return fmt.Errorf("squid rejected the updated proxy configuration; the proxy VM was rolled back. Check %s",
+				config.AllowlistPath())
+		}
+	}
+
 	// With this sandbox gone the proxy may have nobody left to serve.
 	return env.Proxy.StopIfIdle()
 }

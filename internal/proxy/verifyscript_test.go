@@ -135,6 +135,13 @@ func runVerifyScript(t *testing.T, port int, allowlist string) (string, bool) {
 		t.Fatal(err)
 	}
 
+	// The per-VM rules file the sync always pushes, empty here: these cases
+	// are about the egress checks, and the script only asserts its presence.
+	vmAccess := filepath.Join(dir, "vm_access.conf")
+	if err := os.WriteFile(vmAccess, []byte("# generated\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	// A systemd that says yes. The service check is not what these cases are
 	// about, and a stub keeps it from turning every one of them into a
 	// failure on a host that is not the proxy VM.
@@ -146,7 +153,7 @@ func runVerifyScript(t *testing.T, port int, allowlist string) (string, bool) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("bash", script, conf, list)
+	cmd := exec.Command("bash", script, conf, list, vmAccess)
 	cmd.Env = append(os.Environ(), "PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
 	return string(out), err == nil
@@ -247,6 +254,39 @@ func TestAnAllowlistWithNothingFetchableFailsTheScript(t *testing.T) {
 	}
 	if !strings.Contains(out, "no fetchable domain in") {
 		t.Errorf("the tunnelling check is not what failed:\n%s", out)
+	}
+}
+
+func TestAMissingPerVMRulesFileFailsTheScript(t *testing.T) {
+	// The config includes the per-VM rules, so squid cannot restart without
+	// them - a live squid with the file gone is a time bomb, and the script
+	// must call it out while everything still looks healthy.
+	squid := newStubSquid(t, "api.anthropic.com")
+	dir := t.TempDir()
+	script := filepath.Join(dir, "verify-proxy.sh")
+	body, err := ptrbox.Assets.ReadFile("vm/verify-proxy.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(dir, "squid.conf")
+	confBody := fmt.Sprintf("# ptrbox-managed v2\n\nhttp_port %d\n", squid.port())
+	if err := os.WriteFile(conf, []byte(confBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	list := filepath.Join(dir, "allowed_domains.txt")
+	if err := os.WriteFile(list, []byte(sampleAllowlist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := exec.Command("bash", script, conf, list, filepath.Join(dir, "absent.conf")).CombinedOutput()
+	if err == nil {
+		t.Fatalf("the script passed with the per-VM rules file missing:\n%s", out)
+	}
+	if !strings.Contains(string(out), "per-VM access rules") {
+		t.Errorf("the diagnosis does not name the missing rules:\n%s", out)
 	}
 }
 

@@ -166,6 +166,74 @@ func TestRmFreesTheProxyPortForTheNextSandbox(t *testing.T) {
 	}
 }
 
+func TestNewSeedsThePerVMAllowlistAndPointsSquidAtIt(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+
+	body, err := os.ReadFile(config.VMAllowlistPath("demo"))
+	if err != nil {
+		t.Fatalf("new did not seed the VM's allowlist: %v", err)
+	}
+	if !strings.Contains(string(body), "api.anthropic.com") {
+		t.Error("the seeded list does not carry the Claude API")
+	}
+
+	rules := h.proxyFile(proxy.VMAccessPath)
+	if !strings.Contains(rules, "acl vm_demo_port localport 8889") {
+		t.Errorf("squid's rules do not key on the VM's port:\n%s", rules)
+	}
+	if h.proxyFile("/etc/squid/allowed.d/demo.txt") != string(body) {
+		t.Error("the pushed list differs from the host's")
+	}
+	h.assertOutputContains("egress   proxy port 8889")
+}
+
+func TestAPreDeclaredAllowlistIsUsedInsteadOfTheTemplate(t *testing.T) {
+	// The file outliving (and predating) the VM is what makes declaring
+	// egress before the create - and reproducing it after an rm - work.
+	h := newHarness(t)
+	mkdir(t, config.VMAllowlistDir())
+	if err := os.WriteFile(config.VMAllowlistPath("demo"), []byte("api.anthropic.com\nonly.example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h.mustRun("new", "demo")
+	if got := h.proxyFile("/etc/squid/allowed.d/demo.txt"); got != "api.anthropic.com\nonly.example.com\n" {
+		t.Errorf("the VM serves %q, want the pre-declared list", got)
+	}
+}
+
+func TestRmKeepsTheHostAllowlistButRetiresTheSquidRules(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	h.mustRun("new", "other") // keeps the proxy running through the rm
+	h.mustRun("rm", "demo")
+
+	if _, err := os.Stat(config.VMAllowlistPath("demo")); err != nil {
+		t.Errorf("rm removed the host-side allowlist: %v", err)
+	}
+	rules := h.proxyFile(proxy.VMAccessPath)
+	if strings.Contains(rules, "vm_demo") {
+		t.Errorf("the removed VM's rules linger at the proxy:\n%s", rules)
+	}
+	if !strings.Contains(rules, "vm_other") {
+		t.Errorf("the surviving VM's rules were lost:\n%s", rules)
+	}
+}
+
+func TestSandboxChurnReloadsSquidWithoutRestartingIt(t *testing.T) {
+	// The config file is static; a VM coming or going changes only the
+	// generated include and the list files. A restart here would sever every
+	// other sandbox's live tunnels, Claude's requests included.
+	h := newHarness(t)
+	h.mustRun("install")
+	h.fake.Reset()
+
+	h.mustRun("new", "demo")
+	h.assertCalled(`sudo squid -k reconfigure`)
+	h.assertNotCalled(`systemctl restart`)
+}
+
 // --- rm stops the proxy with the last sandbox --------------------------------
 
 func TestRmOfTheLastSandboxStopsTheProxyButKeepsItAround(t *testing.T) {

@@ -272,6 +272,10 @@ func (f *Fake) sudo(c lima.Cmd, vm string, args []string) error {
 		}
 		return nil
 
+	case "mkdir":
+		// -p only; the fake filesystem is flat, so the directory is implicit.
+		return nil
+
 	case "systemctl":
 		return nil
 

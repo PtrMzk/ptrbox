@@ -9,9 +9,9 @@
 // the forward picks it up.
 //
 // The proxy VM is cattle. Everything it serves lives host-side - the config
-// template embedded in this binary, the allowlist next to ptrbox's config file
-// - and is pushed in on every sync, so `limactl delete ptrbox-proxy` is always
-// recoverable.
+// template embedded in this binary, the template allowlist and the per-VM
+// allowlists next to ptrbox's config file - and is pushed in on every sync,
+// so `limactl delete ptrbox-proxy` is always recoverable.
 //
 // Lifecycle is coupled to the sandboxes: `new`/`start` bring the proxy up,
 // `rm`/`stop` shut it down once no sandbox VM is left running. Every decision
@@ -27,6 +27,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
@@ -66,11 +67,18 @@ func (p *Proxy) sudo(args ...string) (string, error) {
 
 // read returns a file from the proxy VM, or "" if it is not there.
 func (p *Proxy) read(path string) string {
+	out, _ := p.readOK(path)
+	return out
+}
+
+// readOK additionally says whether the file exists - rollback needs the
+// difference between "was empty" (restore empty) and "was absent" (remove).
+func (p *Proxy) readOK(path string) (string, bool) {
 	out, err := p.sudo("cat", path)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return out
+	return out, true
 }
 
 // write puts content into a file in the proxy VM. tee, not a redirect: a
@@ -82,9 +90,9 @@ func (p *Proxy) write(path, content string) error {
 
 // --- the host-side allowlist -------------------------------------------------
 
-// SeedAllowlist installs the shipped allowlist if the user has none yet, and
-// reports whether it created one. An existing allowlist is never overwritten:
-// it is the user's living capability list.
+// SeedAllowlist installs the shipped template allowlist if the user has none
+// yet, and reports whether it created one. An existing template is never
+// overwritten: it is the user's statement of what a new sandbox starts with.
 func (p *Proxy) SeedAllowlist() (bool, error) {
 	target := config.AllowlistPath()
 	if _, err := os.Stat(target); err == nil {
@@ -152,18 +160,79 @@ func (p *Proxy) Sync() (SyncResult, error) {
 		return Unchanged, err
 	}
 
-	vmAllow := p.read(AllowlistPath)
+	// The per-VM half: every allocated port gets its host-side list (seeded
+	// from the template if the file is gone - a deleted file is a reset, not
+	// a parse error) and its generated access rules.
+	ports, err := PortAllocations()
+	if err != nil {
+		return Unchanged, err
+	}
+	names := make([]string, 0, len(ports))
+	for name := range ports {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// Everything squid serves besides the config itself, in push order: the
+	// config references all of it, so no parse can succeed until it is in
+	// place.
+	desired := []struct{ path, content string }{
+		{AllowlistPath, string(hostAllow)},
+	}
+	for _, name := range names {
+		body, err := p.ensureVMAllowlist(name, hostAllow)
+		if err != nil {
+			return Unchanged, err
+		}
+		desired = append(desired, struct{ path, content string }{vmAllowlistVMPath(name), body})
+	}
+	desired = append(desired, struct{ path, content string }{VMAccessPath, VMAccessConf(ports)})
+
+	type pushed struct {
+		path, content string
+		prev          string
+		existed       bool
+	}
+	var pushes []pushed
+	for _, f := range desired {
+		current, ok := p.readOK(f.path)
+		if ok && current == f.content {
+			continue
+		}
+		pushes = append(pushes, pushed{f.path, f.content, current, ok})
+	}
 	changedConf := p.read(ConfPath) != string(rendered)
-	changedAllow := vmAllow != string(hostAllow)
-	if !changedConf && !changedAllow {
+	if !changedConf && len(pushes) == 0 {
 		return Unchanged, nil
 	}
 
-	// Allowlist first: the config references it, so it must be in place
-	// before any parse can succeed.
-	if changedAllow {
-		if err := p.write(AllowlistPath, string(hostAllow)); err != nil {
+	// rollback puts every pushed file back the way it was after a failed
+	// parse, so a later squid restart in the VM cannot trip over files we
+	// knew were bad.
+	rollback := func() error {
+		var firstErr error
+		for _, f := range pushes {
+			var err error
+			if f.existed {
+				err = p.write(f.path, f.prev)
+			} else {
+				_, err = p.sudo("rm", "-f", f.path)
+			}
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
+
+	if len(pushes) > 0 {
+		if _, err := p.sudo("mkdir", "-p", vmAllowlistDir); err != nil {
 			return Unchanged, err
+		}
+		for _, f := range pushes {
+			if err := p.write(f.path, f.content); err != nil {
+				return Unchanged, err
+			}
 		}
 	}
 
@@ -178,7 +247,7 @@ func (p *Proxy) Sync() (SyncResult, error) {
 			if _, rmErr := p.sudo("rm", "-f", candidatePath); rmErr != nil {
 				return Rejected, rmErr
 			}
-			return Rejected, p.restoreAllowlist(changedAllow, vmAllow)
+			return Rejected, rollback()
 		}
 		if _, err := p.sudo("mv", candidatePath, ConfPath); err != nil {
 			return Applied, err
@@ -186,32 +255,26 @@ func (p *Proxy) Sync() (SyncResult, error) {
 		// A config change needs a real restart; reconfigure is only
 		// guaranteed for ACL-level changes. Live tunnels drop, but this path
 		// only runs on a template version bump (or first boot, where squid
-		// still serves the distro's stock config).
+		// still serves the distro's stock config): sandbox churn changes only
+		// the files above, never the config, which is the point of the
+		// vm_access include.
 		if _, err := p.sudo("systemctl", "restart", "squid"); err != nil {
 			return Applied, err
 		}
 		return Applied, nil
 	}
 
-	// Allowlist-only change: validate the live config against the new list,
-	// then reload without dropping the listener or any live tunnel.
+	// Supporting files only - an allowlist edit or sandbox churn: validate
+	// the live config against them, then reload without dropping the
+	// listener or any live tunnel.
 	if _, err := p.sudo("squid", "-k", "parse"); err != nil {
 		p.Out.Raw(err.Error())
-		return Rejected, p.restoreAllowlist(changedAllow, vmAllow)
+		return Rejected, rollback()
 	}
 	if _, err := p.sudo("squid", "-k", "reconfigure"); err != nil {
 		return Applied, err
 	}
 	return Applied, nil
-}
-
-// restoreAllowlist undoes a pushed allowlist after a failed parse, so a later
-// squid restart in the VM cannot trip over a file we knew was bad.
-func (p *Proxy) restoreAllowlist(changed bool, previous string) error {
-	if !changed {
-		return nil
-	}
-	return p.write(AllowlistPath, previous)
 }
 
 // --- verification ------------------------------------------------------------

@@ -1,21 +1,22 @@
 # =============================================================================
-# Egress allowlist. One domain per line. Leading dot = domain AND subdomains.
+# TEMPLATE egress allowlist: what a NEW sandbox starts out allowed to reach.
+# One domain per line. Leading dot = domain AND subdomains.
 #
-# Keep minimal: every entry is a capability grant, not just a destination.
-# To find missing domains:   ptrbox logs --denied
-# To grant one:              ptrbox allow files.example.com
-# To edit by hand:           ptrbox allow      (opens $EDITOR, then validates
-#                            and runs squid -k reconfigure, which reloads
-#                            without dropping tunnels; a full restart severs
-#                            every live VM connection, Claude's included)
+# Scope: `ptrbox new` copies this file into the VM's own list
+# (~/.config/ptrbox/allowed_domains.d/<vm>.txt), and from then on that file
+# ALONE decides that VM's egress - editing this one changes no existing
+# sandbox and needs no reload, it only shapes future creates. Each group
+# below says what needs it, so pruning a VM's copy down to what its project
+# uses is encouraged: every entry is a capability grant, not just a
+# destination.
+#
+# To find domains a sandbox is missing:  ptrbox logs --denied
+#   (the localport= field says which VM asked; its port is in
+#    ~/.lima/_generated/<vm>.proxy-port)
 #
 # `ptrbox install` copies this file in only if none exists yet - once
-# installed, the live allowlist is yours to curate and install will report a
-# diff rather than overwrite it.
-#
-# Scope: the proxy is shared by every VM and cannot tell them apart (Lima's
-# usernet relay makes all guests look like 127.0.0.1), so a domain added here
-# is granted to ALL sandboxes. There is no per-project allowlist.
+# installed, the template is yours to curate and install will report a diff
+# rather than overwrite it.
 # =============================================================================
 
 # --- Claude Code: required ---
@@ -33,6 +34,9 @@ files.pythonhosted.org     # actual package downloads
 astral.sh                  # uv installer script
 
 # --- GitHub / git over HTTPS ---
+# Also the classic exfiltration route: anything a compromised agent can read,
+# it can push somewhere that outlives the VM. Prune this group from a VM's
+# copy when the project does not need GitHub.
 github.com
 api.github.com             # gh CLI and tooling
 codeload.github.com        # tarball/zip downloads (pip-from-github uses it)

@@ -23,10 +23,27 @@ func Path() string {
 // ptrbox keeps host-side: the live allowlist and the install manifest.
 func Dir() string { return filepath.Dir(Path()) }
 
-// AllowlistPath is the host-side egress allowlist: the user's living
-// capability list, kept next to the config file so it survives proxy VM
-// re-creation.
+// AllowlistPath is the host-side template allowlist: what a NEW sandbox may
+// reach, copied into its own file at create time. Nothing live follows it
+// except the proxy's base port (the Mac's own way in, and what install
+// verifies) - editing it needs no reload and changes no existing VM.
 func AllowlistPath() string { return filepath.Join(Dir(), "allowed_domains.txt") }
+
+// VMAllowlistDir holds the per-VM allowlists. Beside the config file and
+// never in a repo, for the same reason as VMDir: the repo is mounted into the
+// sandbox, and an allowlist living there would let the agent grant its own
+// egress.
+func VMAllowlistDir() string { return filepath.Join(Dir(), "allowed_domains.d") }
+
+// VMAllowlistPath is one sandbox's complete egress allowlist - what that VM
+// may CONNECT to, with nothing layered behind it. It survives `ptrbox rm` so
+// a re-create keeps its list; deleting it resets the VM to the template on
+// the next sync. The ".txt" suffix keeps the same charset argument as
+// vms/README.txt: no legal VM name contains a dot, so no two VMs can collide
+// here even on a case-folding filesystem.
+func VMAllowlistPath(name string) string {
+	return filepath.Join(VMAllowlistDir(), name+".txt")
+}
 
 // VMDir holds the per-VM config files, one optional file per sandbox named
 // for its VM. Next to the main config rather than under the repo root, and

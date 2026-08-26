@@ -26,6 +26,7 @@ set -u
 # of only syntax-checking it - ptrbox passes neither.
 conf="${1:-/etc/squid/squid.conf}"
 allowlist="${2:-/etc/squid/allowed_domains.txt}"
+vm_access="${3:-/etc/squid/vm_access.conf}"
 
 # RFC 2606 reserves .invalid, so this name can never be a destination anyone
 # would legitimately allowlist - which is what makes it safe to assert a
@@ -57,6 +58,15 @@ else
   bad "ptrbox config live" "no http_port in $conf - the host never pushed its config"
   printf '\n%s check(s) FAILED - the sandboxes have no working egress\n' "$fails" >&2
   exit 1
+fi
+
+# The config includes the per-VM rules file, so squid will not start without
+# it - but this script can run against a squid that started BEFORE the file
+# went missing, where the include is a time bomb for the next restart.
+if [ -f "$vm_access" ]; then
+  ok "per-VM rules pushed"
+else
+  bad "per-VM rules pushed" "no $vm_access - the host never pushed the per-VM access rules"
 fi
 
 # The brace group is not decoration. `exec` with no command applies its

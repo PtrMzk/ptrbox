@@ -190,6 +190,10 @@ func cmdNew(env *Env, args []string) error {
 	if config.HasVMConfig(name) {
 		lines = append(lines, "config   "+config.VMConfigPath(name))
 	}
+	// The VM's own egress: its port at the proxy and the one file that
+	// decides what it may reach. Always shown - the list outlives the VM, so
+	// this is where its existence is said out loud.
+	lines = append(lines, fmt.Sprintf("egress   proxy port %d, allowlist %s", proxyPort, config.VMAllowlistPath(name)))
 	lines = append(lines,
 		"push     from the host; the VM has no credentials but the Claude token")
 	env.Out.Summary(fmt.Sprintf("VM %q is ready", name), lines...)

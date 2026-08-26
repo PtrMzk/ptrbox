@@ -382,6 +382,151 @@ func TestSyncWithoutAnAllowlistPointsAtInstall(t *testing.T) {
 	}
 }
 
+// --- per-VM allowlists -------------------------------------------------------
+
+func TestSyncSeedsAndPushesAnAllocatedVMsAllowlist(t *testing.T) {
+	h := newHarness(t)
+	h.mustEnsure(t)
+	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	h.fake.Reset()
+
+	result, err := h.Sync()
+	if err != nil || result != proxy.Applied {
+		t.Fatalf("Sync = %v, %v", result, err)
+	}
+
+	// Host-side: the file exists and carries the template's capabilities.
+	body, err := os.ReadFile(config.VMAllowlistPath("demo"))
+	if err != nil {
+		t.Fatalf("no per-VM allowlist was seeded: %v", err)
+	}
+	if !strings.Contains(string(body), "api.anthropic.com") {
+		t.Error("the seeded list does not carry the Claude API")
+	}
+
+	// VM-side: the list and the rules that point at it.
+	if got := h.vmFile(t, "/etc/squid/allowed.d/demo.txt"); got != string(body) {
+		t.Error("the pushed per-VM list differs from the host's")
+	}
+	rules := h.vmFile(t, proxy.VMAccessPath)
+	for _, want := range []string{
+		"acl vm_demo_port localport 8889",
+		`acl vm_demo_domains dstdomain "/etc/squid/allowed.d/demo.txt"`,
+		"http_access allow from_forward CONNECT vm_demo_port vm_demo_domains",
+		"http_access deny vm_demo_port",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("the pushed rules are missing %q:\n%s", want, rules)
+		}
+	}
+
+	// Sandbox churn is an ACL-level change: reload, never the restart that
+	// severs every live tunnel.
+	h.assertCalled(t, `sudo squid -k reconfigure`)
+	h.assertNotCalled(t, `systemctl restart`)
+}
+
+func TestAnExistingPerVMAllowlistIsUsedNotReseeded(t *testing.T) {
+	h := newHarness(t)
+	h.mustEnsure(t)
+	if err := os.MkdirAll(config.VMAllowlistDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config.VMAllowlistPath("demo"), []byte("only.example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.vmFile(t, "/etc/squid/allowed.d/demo.txt"); got != "only.example.com\n" {
+		t.Errorf("the VM serves %q, want the user's own list untouched", got)
+	}
+}
+
+func TestADeletedPerVMAllowlistIsReseededNotAParseError(t *testing.T) {
+	// The generated rules reference the file, so a mapped VM without one
+	// would stop squid on its next restart - which is every sandbox's
+	// network. Deleting the file is documented as the reset to template.
+	h := newHarness(t)
+	h.mustEnsure(t)
+	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(config.VMAllowlistPath("demo")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(config.VMAllowlistPath("demo")); err != nil {
+		t.Errorf("the deleted list was not re-seeded: %v", err)
+	}
+}
+
+func TestARejectedSyncRollsBackThePerVMFilesToo(t *testing.T) {
+	h := newHarness(t)
+	h.mustEnsure(t)
+	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	previousRules := h.vmFile(t, proxy.VMAccessPath)
+	h.fake.SquidParseFails = true
+	h.fake.Reset()
+
+	result, err := h.Sync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != proxy.Rejected {
+		t.Fatalf("Sync = %v, want Rejected", result)
+	}
+	// The rules were restored and the file that did not exist before is gone
+	// again: a later squid restart in the VM must meet the state we knew was
+	// good.
+	if got := h.vmFile(t, proxy.VMAccessPath); got != previousRules {
+		t.Errorf("the per-VM rules were not restored:\n%s", got)
+	}
+	if _, ok := h.fake.ReadFile(config.ProxyVM, "/etc/squid/allowed.d/demo.txt"); ok {
+		t.Error("a rejected per-VM list was left in the VM")
+	}
+	h.assertNotCalled(t, `squid -k reconfigure`)
+}
+
+func TestARemovedAllocationRetiresItsRules(t *testing.T) {
+	h := newHarness(t)
+	h.mustEnsure(t)
+	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.ReleasePort("demo"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if rules := h.vmFile(t, proxy.VMAccessPath); strings.Contains(rules, "vm_demo") {
+		t.Errorf("a removed VM's rules linger:\n%s", rules)
+	}
+	// The host-side list survives: it is what makes a re-create reproducible.
+	if _, err := os.Stat(config.VMAllowlistPath("demo")); err != nil {
+		t.Errorf("the host-side list did not survive the removal: %v", err)
+	}
+}
+
 // --- stopping ----------------------------------------------------------------
 
 // --- verification ------------------------------------------------------------

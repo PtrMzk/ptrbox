@@ -18,6 +18,7 @@ import (
 
 	ptrbox "github.com/PtrMzk/ptrbox"
 	"github.com/PtrMzk/ptrbox/internal/config"
+	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/rendertest"
 )
 
@@ -376,6 +377,108 @@ func TestTheSquidConfigDeniesTunnelsIntoPrivateAddressSpace(t *testing.T) {
 	}
 	if allow != -1 && deny > allow {
 		t.Error("the to_internal deny sits below the allow rule, where an allowlisted name has already matched")
+	}
+}
+
+// --- per-VM allowlists -------------------------------------------------------
+// Each sandbox's egress is decided by its own list, keyed on the port that is
+// its identity. The rules that make that true are partly template and partly
+// generated; both halves get asserted, because generated config is config.
+
+func TestTheVMAccessIncludeSitsBetweenTheInwardDenyAndTheBaseAllow(t *testing.T) {
+	// Above the include, to_internal must already have denied - otherwise a
+	// per-VM list could tunnel into the Mac's LAN, undoing item 34 for every
+	// sandbox with its own list. Below it must come the base-port allow, so a
+	// sandbox port's verdict is settled by its own rules first.
+	conf := asset(t, "host/squid.conf.in")
+	deny, include, firstAllow := -1, -1, -1
+	for i, line := range strings.Split(conf, "\n") {
+		switch {
+		case strings.HasPrefix(line, "http_access deny to_internal"):
+			deny = i
+		case strings.HasPrefix(line, "include /etc/squid/vm_access.conf"):
+			include = i
+		case strings.HasPrefix(line, "http_access allow") && firstAllow == -1:
+			firstAllow = i
+		}
+	}
+	if include == -1 {
+		t.Fatal("the squid config no longer includes the per-VM rules")
+	}
+	if deny == -1 || include < deny {
+		t.Error("the per-VM include sits above the to_internal deny, where a per-VM list can tunnel inward")
+	}
+	if firstAllow != -1 && include > firstAllow {
+		t.Error("an allow rule sits above the per-VM include, so it would win over a VM's own rules")
+	}
+}
+
+func TestEveryTemplateAllowIsScopedToTheBasePort(t *testing.T) {
+	// Unscoped, the template's allow would grant every sandbox the template's
+	// domains on top of its own list - the exact leak per-VM lists close.
+	conf := asset(t, "host/squid.conf.in")
+	mustMatch(t, conf, `(?m)^acl base_port localport __PROXY_PORT__$`,
+		"there is no base_port ACL to scope the template allow with")
+	for _, line := range strings.Split(conf, "\n") {
+		if strings.HasPrefix(line, "http_access allow") && !strings.Contains(line, "base_port") {
+			t.Errorf("a template allow rule is not scoped to the base port: %q", line)
+		}
+	}
+}
+
+func TestGeneratedPerVMRulesAllowOnlyAVMsOwnListAndThenCapItsPort(t *testing.T) {
+	generated := proxy.VMAccessConf(map[string]int{"demo": 8889, "my-api": 8890})
+
+	var rules []string
+	for _, line := range strings.Split(generated, "\n") {
+		if strings.HasPrefix(line, "http_access") {
+			rules = append(rules, line)
+		}
+	}
+	// Exactly one allow and one deny per VM, the deny DIRECTLY after its
+	// allow: the deny is the hard cap that keeps a VM's egress decided by its
+	// own list whatever rules follow, and anything between them would be a
+	// rule that beat the cap.
+	want := []string{
+		"http_access allow from_forward CONNECT vm_demo_port vm_demo_domains",
+		"http_access deny vm_demo_port",
+		"http_access allow from_forward CONNECT vm_my-api_port vm_my-api_domains",
+		"http_access deny vm_my-api_port",
+	}
+	if strings.Join(rules, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the generated rules are not the shape this design argues for.\ngot:\n%s\nwant:\n%s",
+			strings.Join(rules, "\n"), strings.Join(want, "\n"))
+	}
+
+	// The lists the rules point at are the pushed per-VM files, nowhere else.
+	mustMatch(t, generated, `acl vm_demo_domains dstdomain "/etc/squid/allowed\.d/demo\.txt"`,
+		"a VM's domain ACL does not point at its pushed list")
+	mustNotMatch(t, generated, `allowed_domains\.txt`,
+		"a generated rule references the template list")
+}
+
+func TestPerVMAllowlistsLiveBesideTheMainConfigAndNeverInARepo(t *testing.T) {
+	// Invariant 3, same argument as the per-VM config files: the repo is
+	// mounted into the sandbox, so an allowlist living there would let the
+	// agent grant its own egress.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	os.Unsetenv("PTRBOX_CONFIG")
+	t.Setenv("PTRBOX_REPO_ROOT", filepath.Join(home, "code"))
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, vm := range []string{"demo", "my-api"} {
+		path := config.VMAllowlistPath(vm)
+		if !strings.HasPrefix(path, config.Dir()+string(filepath.Separator)) {
+			t.Errorf("per-VM allowlist for %q is not under the config directory: %s", vm, path)
+		}
+		if strings.HasPrefix(path, cfg.RepoRoot+string(filepath.Separator)) {
+			t.Errorf("per-VM allowlist for %q is under the repo root: %s", vm, path)
+		}
 	}
 }
 
