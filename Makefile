@@ -53,8 +53,9 @@ golden: ## Regenerate the golden rendered VM configs - then READ THE DIFF
 clean: ## Remove build output
 	@rm -rf dist
 
-smoke: build ## Real VM cycle on macOS (destroys/recreates the sandbox-test VM)
+smoke: build ## Real VM cycle on macOS (sandbox-test VM; removed on success, kept on failure)
 	@[ "$$(uname -s)" = "Darwin" ] || { echo "smoke: macOS only" >&2; exit 1; }
 	$(BIN) install
 	-$(BIN) rm sandbox-test
 	$(BIN) new sandbox-test
+	$(BIN) rm sandbox-test
