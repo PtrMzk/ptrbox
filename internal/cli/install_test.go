@@ -337,6 +337,23 @@ func TestADeadPortForwardFailsTheInstall(t *testing.T) {
 	}
 }
 
+func TestAForwardStillReappearingAfterTheSquidRestartIsWaitedFor(t *testing.T) {
+	// Ensure restarts squid whenever the pushed config changed, and Lima
+	// re-publishes the forward only once squid is listening again - so right
+	// after the restart, the honest answer at the host port is "not yet".
+	// That must read as a beat of patience, not a failed install: the
+	// one-shot version of this check failed a healthy proxy on the first
+	// smoke run whose config actually changed.
+	h := newHarness(t)
+	calls := 0
+	h.portInUse = func(int) bool { calls++; return calls > 3 }
+
+	h.mustRun("install")
+	if calls <= 3 {
+		t.Fatalf("portInUse answered %d times, so the wait was never exercised", calls)
+	}
+}
+
 func TestAnInstallWithNothingToDoStillVerifies(t *testing.T) {
 	// "already set up" is a claim about the egress path too, and the run that
 	// changes nothing is the one people make when something is wrong.

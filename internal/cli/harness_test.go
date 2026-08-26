@@ -136,7 +136,12 @@ func newHarness(t *testing.T) *harness {
 		return h.fake.VMStatus(config.ProxyVM) == lima.StatusRunning
 	}
 	portInUse = func(port int) bool { return h.portInUse(port) }
-	t.Cleanup(func() { lookPath, portInUse = realLookPath, realPortInUse })
+
+	// waitForPort's polling must not spend its deadline in real time when a
+	// test holds the port down; the loop still runs, the clock does not.
+	realSleep := sleep
+	sleep = func(time.Duration) {}
+	t.Cleanup(func() { lookPath, portInUse, sleep = realLookPath, realPortInUse, realSleep })
 
 	return h
 }

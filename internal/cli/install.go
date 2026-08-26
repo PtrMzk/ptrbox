@@ -377,8 +377,10 @@ func reportAllowlist(env *Env) error {
 func verifyEgress(env *Env) error {
 	// The host's entire share of the proxy is this forward. Nothing listening
 	// means Lima never published it, and every sandbox's traffic would go to a
-	// closed port however healthy squid is on the other side.
-	if !portInUse(env.Cfg.ProxyPort) {
+	// closed port however healthy squid is on the other side. Waited for
+	// rather than probed once, because the squid restart Ensure may just have
+	// issued takes the forward down with it - see waitForPort.
+	if !waitForPort(env.Cfg.ProxyPort, forwardDeadline) {
 		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: limactl list",
 			env.Cfg.ProxyPort, config.ProxyVM)
 	}
