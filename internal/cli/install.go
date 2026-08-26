@@ -108,7 +108,7 @@ func cmdInstall(env *Env, args []string) error {
 		"next: ptrbox new <repo>",
 		"",
 		fmt.Sprintf("proxy     %s, reached at 127.0.0.1:%d", config.ProxyVM, env.Cfg.ProxyPort),
-		fmt.Sprintf("allowlist %s", config.AllowlistPath()),
+		fmt.Sprintf("template  %s (what new VMs may reach)", config.AllowlistPath()),
 		fmt.Sprintf("settings  %s", config.Path()),
 		fmt.Sprintf("per VM    %s/<vm-name>", config.VMDir()),
 	)

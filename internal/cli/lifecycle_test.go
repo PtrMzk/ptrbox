@@ -305,12 +305,12 @@ func TestStartPushesAllowlistEditsMadeWhileTheProxyWasDown(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("new", "demo")
 	h.mustRun("stop", "demo")
-	h.mustRun("allow", "deferred.example.com") // saved host-side only
-	if containsLine(h.proxyFile("/etc/squid/allowed_domains.txt"), "deferred.example.com") {
+	h.mustRun("allow", "demo", "deferred.example.com") // saved host-side only
+	if containsLine(h.proxyFile("/etc/squid/allowed.d/demo.txt"), "deferred.example.com") {
 		t.Fatal("the edit reached a stopped proxy")
 	}
 	h.mustRun("start", "demo")
-	if !containsLine(h.proxyFile("/etc/squid/allowed_domains.txt"), "deferred.example.com") {
+	if !containsLine(h.proxyFile("/etc/squid/allowed.d/demo.txt"), "deferred.example.com") {
 		t.Error("the deferred edit was not pushed on start")
 	}
 }

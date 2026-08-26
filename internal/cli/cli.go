@@ -83,6 +83,7 @@ func (e *Env) now() time.Time {
 var needsConfig = map[string]bool{
 	"install": true, "new": true, "rm": true, "save": true,
 	"start": true, "stop": true, "logs": true, "allow": true,
+	"sync-proxy": true,
 }
 
 // ErrUsage is returned for an unknown command: exit status 2, distinct from a
@@ -124,6 +125,8 @@ func Run(env *Env, args []string) error {
 		return cmdLogs(env, args)
 	case "allow":
 		return cmdAllow(env, args)
+	case "sync-proxy":
+		return cmdSyncProxy(env, args)
 	case "save":
 		return cmdSave(env, args)
 	case "help", "-h", "--help":
@@ -153,8 +156,12 @@ COMMANDS
   start <repo|vm>    boot an already-provisioned VM (seconds, not minutes)
   stop <repo|vm>     power a VM off, keeping its disk and state
   logs [--denied]    tail the proxy log; --denied shows blocked requests only
-  allow [domain...]  add domains to the egress allowlist, or open it in
-                     $EDITOR with no arguments; reloads squid afterwards
+  allow <vm> [domain...]
+                     add domains to that sandbox's egress allowlist, or open
+                     it in $EDITOR with no domains; --list prints it. Each VM
+                     has its own list, seeded from the template on first touch
+  sync-proxy         push hand-edited allowlists/config to the proxy now
+                     (the other commands do this themselves as they run)
   save <repo|vm>     archive the VM's Claude transcripts onto the host
                      (rm does this for you before destroying anything)
 
@@ -172,7 +179,7 @@ EXAMPLES
   ptrbox new ~/src/existing       # explicit path, existing repo used as-is
   ssh lima-my-api                 # then: cd /workspace && claude
   ptrbox logs --denied            # find the domain your build needs
-  ptrbox allow files.example.com  # ...then grant it
+  ptrbox allow my-api files.example.com   # ...then grant it to that sandbox
 
 CONFIGURATION
   ~/.config/ptrbox/config (see config/ptrbox.conf.example). Every key can also

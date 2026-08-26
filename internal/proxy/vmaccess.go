@@ -63,6 +63,19 @@ func VMAccessConf(ports map[string]int) string {
 	return out
 }
 
+// EnsureVMAllowlist seeds a VM's allowlist from the template when it is
+// absent, and returns its contents either way. `ptrbox allow` goes through
+// this so the first touch of a VM's list starts from the template - a file
+// holding one hand-added domain and nothing else would boot a sandbox that
+// can reach it and nothing else, including Anthropic.
+func (p *Proxy) EnsureVMAllowlist(name string) (string, error) {
+	template, err := os.ReadFile(config.AllowlistPath())
+	if err != nil {
+		return "", fmt.Errorf("no allowlist at %s - run 'ptrbox install' first", config.AllowlistPath())
+	}
+	return p.ensureVMAllowlist(name, template)
+}
+
 // ensureVMAllowlist returns a VM's host-side allowlist, seeding it from the
 // template when it is absent. Seeding here rather than only in `new` is what
 // makes a deleted file a RESET instead of a parse error: the generated rules

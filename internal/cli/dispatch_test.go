@@ -14,7 +14,7 @@ import (
 func TestHelpListsTheCommands(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("help")
-	for _, want := range []string{"ptrbox new", "ptrbox logs", "start", "stop"} {
+	for _, want := range []string{"ptrbox new", "ptrbox logs", "start", "stop", "sync-proxy"} {
 		if !strings.Contains(h.stdout, want) {
 			t.Errorf("help does not mention %q", want)
 		}
