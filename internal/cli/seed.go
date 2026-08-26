@@ -23,10 +23,13 @@ import (
 	"github.com/PtrMzk/ptrbox/internal/config"
 )
 
-// vmsREADME explains the per-VM directory to whoever opens it. Named in
-// capitals deliberately: config.VMName lowercases, so no VM can ever be called
-// "README" and this file can never be read as a per-VM config. A lowercase
-// name here would be a config file for a sandbox called readme.
+// vmsREADME explains the per-VM directory to whoever opens it. The file name
+// carries a dot deliberately: config.VMName strips everything outside
+// [a-z0-9-], so no VM's config lookup can ever land on a name containing one,
+// and this file can never be read as a per-VM config. It was "README" first,
+// unreachable-by-capitals - which held on Linux and not on the Mac, where the
+// filesystem case-folds and vms/readme resolved to vms/README. The charset
+// argument survives case folding; the case argument was the case argument.
 const vmsREADME = `Per-VM configuration overrides.
 
 One optional file per sandbox, named for its VM - the name ptrbox new prints
@@ -66,7 +69,7 @@ func seedConfigDir(env *Env) error {
 	}); err != nil {
 		return err
 	}
-	return seedFile(env, filepath.Join(config.VMDir(), "README"), func() ([]byte, error) {
+	return seedFile(env, filepath.Join(config.VMDir(), "README.txt"), func() ([]byte, error) {
 		return []byte(vmsREADME), nil
 	})
 }

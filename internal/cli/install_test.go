@@ -90,7 +90,7 @@ func TestInstallLeavesTheConfigDirectoryReadyToEdit(t *testing.T) {
 	for _, path := range []string{
 		config.Path(),
 		config.VMDir(),
-		filepath.Join(config.VMDir(), "README"),
+		filepath.Join(config.VMDir(), "README.txt"),
 	} {
 		if !h.exists(path) {
 			t.Errorf("%s was not created", path)
@@ -134,14 +134,14 @@ func TestInstallNeverOverwritesAnExistingConfigFile(t *testing.T) {
 	h := newHarness(t)
 	const mine = "PTRBOX_MEMORY=16GiB\n"
 	writeFile(t, config.Path(), mine)
-	writeFile(t, filepath.Join(config.VMDir(), "README"), "mine too\n")
+	writeFile(t, filepath.Join(config.VMDir(), "README.txt"), "mine too\n")
 
 	h.mustRun("install")
 
 	if got := readFile(t, config.Path()); got != mine {
 		t.Errorf("install rewrote the config file:\n%s", got)
 	}
-	if got := readFile(t, filepath.Join(config.VMDir(), "README")); got != "mine too\n" {
+	if got := readFile(t, filepath.Join(config.VMDir(), "README.txt")); got != "mine too\n" {
 		t.Errorf("install rewrote the per-VM README:\n%s", got)
 	}
 }
@@ -152,7 +152,7 @@ func TestTheSeededConfigDirIsRecordedInTheManifest(t *testing.T) {
 	h.mustRun("install", "--yes")
 
 	manifest := readFile(t, filepath.Join(config.Dir(), "install-manifest"))
-	for _, path := range []string{config.Path(), filepath.Join(config.VMDir(), "README")} {
+	for _, path := range []string{config.Path(), filepath.Join(config.VMDir(), "README.txt")} {
 		if !strings.Contains(manifest, "wrote "+path) {
 			t.Errorf("%s is not in the manifest:\n%s", path, manifest)
 		}
@@ -160,30 +160,39 @@ func TestTheSeededConfigDirIsRecordedInTheManifest(t *testing.T) {
 }
 
 // The README sits in the directory ptrbox looks up per-VM config files in, so
-// it must be impossible to read as one. VMName lowercases, so no VM can be
-// called README - which is why the name is in capitals rather than being
-// something like `_readme` that a strip rule might one day allow.
+// it must be impossible to read as one - on every filesystem. The first
+// construction ("VMName lowercases, so no VM can be called README") held only
+// where names are case-sensitive: on the Mac, APFS case-folds, vms/readme
+// resolved to vms/README, and a sandbox legitimately called readme choked on
+// prose as its config - which is how this test failed there and why the name
+// now carries a dot. VMName strips dots, so no legal VM name contains one,
+// and no amount of case folding puts one back.
 func TestTheVMsREADMEIsUnreachableAsAPerVMConfig(t *testing.T) {
 	h := newHarness(t)
 	h.noConfigFile()
 	h.mustRun("install")
 
-	name, err := config.VMName("README")
+	const readme = "README.txt"
+	if !h.exists(filepath.Join(config.VMDir(), readme)) {
+		t.Fatal("the README this test is about was not written")
+	}
+	// The load-bearing property, filesystem-independent: the name a VM would
+	// need to reach this file - its lowercased form, which is what a
+	// case-insensitive lookup treats as the same file - is not a name VMName
+	// can produce.
+	name, err := config.VMName(readme)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name == "README" {
-		t.Fatal("a VM can be named README, so the per-VM README would be read as its config")
-	}
-	if !h.exists(filepath.Join(config.VMDir(), "README")) {
-		t.Fatal("the README this test is about was not written")
+	if name == strings.ToLower(readme) {
+		t.Fatalf("VMName(%q) = %q: a VM of that name would read the README as its config", readme, name)
 	}
 	cfg := h.mustLoadConfig()
-	if _, err := cfg.Overlay("README"); err == nil {
-		t.Error("Overlay accepted README as a VM name")
+	if _, err := cfg.Overlay(readme); err == nil {
+		t.Error("Overlay accepted README.txt as a VM name")
 	}
-	// And the VM you would get from the argument "README" reads a different
-	// file, which does not exist - so it resolves to the defaults.
+	// And the VM you actually get from the argument "README.txt" reads a
+	// different file, which does not exist - so it resolves to the defaults.
 	overlaid, err := cfg.Overlay(name)
 	if err != nil {
 		t.Fatal(err)
