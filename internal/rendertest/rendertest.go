@@ -34,6 +34,8 @@ func Args() render.Values {
 		"DNS_NFT_SET":    "9.9.9.9, 1.1.1.1",
 		"DNS_LIST":       "9.9.9.9 1.1.1.1",
 		"EXTRA_PACKAGES": "",
+		"TOOLCHAIN":      "node uv",
+		"NODE_VERSION":   "lts",
 		"PROXY_HOST":     "192.168.5.2",
 		"PROXY_PORT":     "8888",
 		"GIT_USER_NAME":  "Example Dev",

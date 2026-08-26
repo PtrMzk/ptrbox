@@ -93,6 +93,8 @@ func cmdNew(env *Env, args []string) error {
 		"DNS_LIST":       cfg.DNSList(),
 		"DNS_NFT_SET":    cfg.DNSNftSet(),
 		"EXTRA_PACKAGES": cfg.ExtraPackageList(),
+		"TOOLCHAIN":      cfg.ToolchainList(),
+		"NODE_VERSION":   cfg.NodeVersion,
 		"CLAUDE_MODEL":   cfg.ClaudeModel,
 		"GIT_USER_NAME":  cfg.GitUserName,
 		"GIT_USER_EMAIL": cfg.GitUserEmail,
@@ -164,6 +166,14 @@ func cmdNew(env *Env, args []string) error {
 		fmt.Sprintf("distro   %s, %d CPUs, %s memory", env.Cfg.Distro, env.Cfg.CPUs, env.Cfg.Memory),
 		fmt.Sprintf("repo     %s, mounted at /workspace", repoDir),
 	}
+	// Always shown, unlike the extras: which runtimes a sandbox has is now a
+	// decision rather than a constant, and "none" is a valid answer somebody
+	// will want confirmed.
+	runtimes := env.Cfg.ToolchainList()
+	if runtimes == "" {
+		runtimes = "none (claude only)"
+	}
+	lines = append(lines, "runtime  "+runtimes)
 	if packages := env.Cfg.ExtraPackageList(); packages != "" {
 		lines = append(lines, "extra    "+packages)
 	}

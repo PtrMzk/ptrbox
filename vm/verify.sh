@@ -86,14 +86,27 @@ fi
 
 # --- toolchain ---------------------------------------------------------------
 
-missing=""
-for tool in node uv claude git; do
-  command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
-done
-if [ -z "$missing" ]; then
-  ok "toolchain"
+# claude and git are unconditional: the first is what the sandbox exists to
+# run, the second is how work leaves it. The language runtimes are whatever
+# PTRBOX_TOOLCHAIN asked for, which 30-toolchain.sh recorded here BEFORE it
+# installed any of them - so this compares the request against PATH rather
+# than against itself.
+#
+# A missing record is a failure, not an empty list. Without that, a
+# 30-toolchain.sh that never ran would quietly reduce this check to "claude
+# and git", which is the shape of hole this file exists to close.
+if [ ! -r "$HOME/.ptrbox/toolchain" ]; then
+  bad "toolchain" "30-toolchain.sh left no record of what was requested"
 else
-  bad "toolchain" "missing:$missing"
+  missing=""
+  for tool in claude git $(cat "$HOME/.ptrbox/toolchain"); do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+  done
+  if [ -z "$missing" ]; then
+    ok "toolchain"
+  else
+    bad "toolchain" "missing:$missing"
+  fi
 fi
 
 # The packages a user asked for by name. 15-extra-packages.sh writes this

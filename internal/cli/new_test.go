@@ -146,6 +146,44 @@ func TestAPerVMDistroChangesTheImageAndTheNarration(t *testing.T) {
 	}
 }
 
+// The toolchain reaches the guest script as a literal, and the summary says
+// which runtimes the VM ended up with.
+func TestAPerVMToolchainReachesTheGeneratedConfig(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_TOOLCHAIN=\"\"\n")
+	h.mustRun("new", "demo")
+
+	if !strings.Contains(h.generated("demo"), `TOOLCHAIN=""`) {
+		t.Error("the empty runtime list is not rendered as an empty literal")
+	}
+	if !strings.Contains(h.stderr, "none (claude only)") {
+		t.Errorf("the summary does not report the empty toolchain:\n%s", h.stderr)
+	}
+}
+
+func TestTheDefaultToolchainAndNodeVersionReachTheGeneratedConfig(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+
+	body := h.generated("demo")
+	if !strings.Contains(body, `TOOLCHAIN="node uv"`) {
+		t.Error("the default runtime list is not in the generated config")
+	}
+	if !strings.Contains(body, `NODE_VERSION="lts"`) {
+		t.Error("the default node version is not in the generated config")
+	}
+}
+
+func TestAnUnknownRuntimeAbortsNewBeforeAnyVMIsTouched(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_TOOLCHAIN=\"node deno\"\n")
+
+	if err := h.run("new", "demo"); err == nil {
+		t.Fatal("new accepted a runtime nothing installs")
+	}
+	h.assertNotCalled("start")
+}
+
 // Refused, not ignored, and refused before any VM state is touched.
 func TestAHostGlobalKeyInAPerVMFileFailsNewBeforeAnyVMIsTouched(t *testing.T) {
 	h := newHarness(t)

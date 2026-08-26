@@ -42,6 +42,8 @@ var perVMKeys = map[string]bool{
 	"DISTRO":         true,
 	"IMAGE_URL":      true,
 	"EXTRA_PACKAGES": true,
+	"TOOLCHAIN":      true,
+	"NODE_VERSION":   true,
 	"CLAUDE_MODEL":   true,
 	"GIT_USER_NAME":  true,
 	"GIT_USER_EMAIL": true,

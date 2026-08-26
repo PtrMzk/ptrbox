@@ -362,6 +362,55 @@ func TestPerVMConfigLivesBesideTheMainConfigAndNeverInARepo(t *testing.T) {
 	}
 }
 
+// The toolchain record is the same shape of contract as the package marker
+// below: 30-toolchain.sh writes it, vm/verify.sh reads it, and nothing
+// connects the two but the path. A typo on either side is invisible - the
+// writer still writes, the reader still prints a verdict - and the result is
+// a VM whose runtimes nobody checked.
+func TestTheToolchainRecordIsSpelledTheSameInBothScripts(t *testing.T) {
+	const record = ".ptrbox/toolchain"
+	for _, name := range []string{"vm/provision/30-toolchain.sh", "vm/verify.sh"} {
+		if !strings.Contains(asset(t, name), record) {
+			t.Errorf("%s does not mention %s", name, record)
+		}
+	}
+}
+
+// The runtime list is fixed on the host and substituted in, exactly like the
+// apt list. A list computed inside the guest - from a file, a command, or
+// anything under the repo mount - would let the agent choose what its own
+// sandbox contains on the next boot.
+func TestTheToolchainListIsFixedAtRenderTime(t *testing.T) {
+	rendered, _ := sandbox(t)
+	mustMatch(t, rendered, `TOOLCHAIN="node uv"`, "the fixture's runtime list is not rendered as a literal")
+	mustNotMatch(t, rendered, "TOOLCHAIN=.*(\\$\\(|`|<|cat |curl |workspace)",
+		"the runtime list is computed inside the guest")
+	mustNotMatch(t, rendered, "NODE_VERSION=.*(\\$\\(|`|<|cat |curl |workspace)",
+		"the node version is computed inside the guest")
+}
+
+// Claude Code is not part of the configurable list: a sandbox without it is
+// not a sandbox this project builds. The runtimes around it are optional; it
+// is not, and it must not become optional by accident when someone extends
+// config.Toolchains.
+func TestClaudeCodeIsInstalledUnconditionally(t *testing.T) {
+	script := asset(t, "vm/provision/30-toolchain.sh")
+	install := regexp.MustCompile(`(?m)^curl [^\n]*claude\.ai[^\n]*$`)
+	if !install.MatchString(script) {
+		t.Error("the Claude Code install is not at the top level of 30-toolchain.sh " +
+			"(indented means it sits inside a conditional)")
+	}
+	for _, tool := range config.Toolchains {
+		if tool == "claude" {
+			t.Error("claude is in config.Toolchains, which would make it optional")
+		}
+	}
+	// And verify.sh asks for it whatever the list says.
+	if !strings.Contains(asset(t, "vm/verify.sh"), "for tool in claude git") {
+		t.Error("vm/verify.sh does not check claude unconditionally")
+	}
+}
+
 func TestTheFailedPackageMarkerIsSpelledTheSameInBothScripts(t *testing.T) {
 	// 15-extra-packages.sh writes the marker and vm/verify.sh reads it, and
 	// nothing connects the two but the file name. A typo on either side is

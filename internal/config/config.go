@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -31,8 +32,19 @@ var Keys = []string{
 	"PROXY_HOST", "PROXY_PORT", "PROXY_CPUS", "PROXY_MEMORY", "PROXY_DISK",
 	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE", "SQUID_LOG",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
-	"EXTRA_PACKAGES",
+	"EXTRA_PACKAGES", "TOOLCHAIN", "NODE_VERSION",
 }
+
+// Toolchains are the language runtimes vm/provision/30-toolchain.sh knows how
+// to install, and the values PTRBOX_TOOLCHAIN accepts. Each name is also the
+// command vm/verify.sh looks for afterwards, which is what makes a requested
+// runtime that did not install a failed `ptrbox new` rather than a surprise
+// later.
+//
+// Claude Code is deliberately absent: it is installed unconditionally, being
+// the thing a sandbox exists to run. It is a native binary and needs neither
+// of these.
+var Toolchains = []string{"node", "uv"}
 
 // Guest images, one per supported distro. Both are apt-based on purpose: the
 // provisioning scripts install Debian package names, and since the time_t
@@ -87,6 +99,8 @@ type Config struct {
 	ImageURL        string
 	BinDir          string
 	ExtraPackages   []string
+	Toolchain       []string
+	NodeVersion     string
 
 	// Warnings are non-fatal notes from loading - an unrecognised key in the
 	// config file, say. The caller prints them; nothing here writes to a
@@ -126,6 +140,14 @@ func defaults() map[string]string {
 		// `ptrbox new` time, never read from inside a VM (a repo-provided
 		// list would let an agent install into its own sandbox).
 		"EXTRA_PACKAGES": "",
+		// Language runtimes to install alongside Claude Code, space
+		// separated. Empty is valid and means neither: a VM for a LaTeX
+		// document or a Go service has no use for node or uv, and every
+		// runtime installed is surface the agent can reach.
+		"TOOLCHAIN": "node uv",
+		// What `nvm install` is given. "lts" is the always-fresh default;
+		// a version pins a project to the runtime it needs.
+		"NODE_VERSION": "lts",
 	}
 }
 
@@ -259,6 +281,8 @@ func load(vm string) (*Config, error) {
 		ImageURL:      values["IMAGE_URL"],
 		BinDir:        values["BIN_DIR"],
 		ExtraPackages: strings.Fields(values["EXTRA_PACKAGES"]),
+		Toolchain:     strings.Fields(values["TOOLCHAIN"]),
+		NodeVersion:   values["NODE_VERSION"],
 		Warnings:      warnings,
 	}
 
@@ -291,6 +315,8 @@ var (
 	sizeRe    = regexp.MustCompile(`^[0-9].*(GiB|MiB)$`)
 	ipv4Re    = regexp.MustCompile(`^[0-9.]+$`)
 	packageRe = regexp.MustCompile(`^[a-z0-9][a-z0-9.+=:~-]*$`)
+	// nvm's version vocabulary, minus every shell metacharacter.
+	nodeVersionRe = regexp.MustCompile(`^[a-z0-9][a-z0-9./-]*$`)
 )
 
 func parseNumber(key, value string) (int, error) {
@@ -348,6 +374,27 @@ func (c *Config) validate() error {
 	// TLS, so plain http would be a supply-chain hole.
 	if !strings.HasPrefix(c.ImageURL, "https://") {
 		return fmt.Errorf("PTRBOX_IMAGE_URL must be https, got %q", c.ImageURL)
+	}
+
+	// Only runtimes 30-toolchain.sh knows how to install, because the name is
+	// also what vm/verify.sh looks for on PATH afterwards. A name nothing
+	// installs would be a check that can never pass.
+	for _, tool := range c.Toolchain {
+		if !slices.Contains(Toolchains, tool) {
+			return fmt.Errorf("PTRBOX_TOOLCHAIN: %q is not a runtime ptrbox installs (supported: %s)",
+				tool, strings.Join(Toolchains, " "))
+		}
+	}
+
+	// Interpolated into `nvm install "…"` inside the guest, so the charset is
+	// the whole check: no shell metacharacter may survive it. What passes is
+	// everything nvm understands - lts, node, lts/hydrogen, 22, 22.11.0 - and
+	// whether nvm actually has that version is a question only nvm can answer.
+	// It answers it on boot 1, and vm/verify.sh turns a runtime that is not on
+	// PATH into a failed `ptrbox new`.
+	if !nodeVersionRe.MatchString(c.NodeVersion) {
+		return fmt.Errorf("PTRBOX_NODE_VERSION must look like lts, 22 or 22.11.0, got %q",
+			c.NodeVersion)
 	}
 	return nil
 }

@@ -64,5 +64,10 @@ func (c *Config) DNSNftSet() string { return strings.Join(c.DNSServers, ", ") }
 // generated config: a single space-separated line.
 func (c *Config) ExtraPackageList() string { return strings.Join(c.ExtraPackages, " ") }
 
+// ToolchainList is the validated runtime list as it is substituted into the
+// generated config, and as vm/verify.sh reads it back: a single
+// space-separated line, empty when no runtime was asked for.
+func (c *Config) ToolchainList() string { return strings.Join(c.Toolchain, " ") }
+
 // DNSList is the resolver list as the guest's resolv.conf writer wants it.
 func (c *Config) DNSList() string { return strings.Join(c.DNSServers, " ") }
