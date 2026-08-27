@@ -151,7 +151,9 @@ USAGE
 COMMANDS
   install            set up the host: dependency checks, the squid proxy VM,
                      ssh config. Idempotent; safe to re-run.
-  new <repo>         create the repo (if needed) and provision its VM
+  new <repo>         create the repo (if needed) and provision its VM. Prints
+                     what it will build and offers to edit that VM's settings
+                     and allowlist first; --no-edit skips the offers
   rm <repo|vm>       destroy a VM. Never touches the repo on the host.
   start <repo|vm>    boot an already-provisioned VM (seconds, not minutes)
   stop <repo|vm>     power a VM off, keeping its disk and state
@@ -242,4 +244,19 @@ func confirm(env *Env, question string) bool {
 		return true
 	}
 	return false
+}
+
+// ask is confirm for an offer rather than a decision.
+//
+// confirm explains itself when it cannot ask, because the thing it guards is
+// something the command wanted to do - a symlink, a replaced file - and
+// silence there reads as "done" when it means "skipped". An offer to open your
+// editor is the opposite: with no terminal there is nothing to open, nobody to
+// read the explanation, and no --yes that would help. So it declines quietly,
+// which is what keeps `ptrbox new` in a script identical to what it was.
+func ask(env *Env, question string) bool {
+	if env.NoInput || !env.Interactive {
+		return false
+	}
+	return confirm(env, question)
 }

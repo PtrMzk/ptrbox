@@ -6,12 +6,20 @@ package cli
 //
 //	repo dir + git init    a brand-new project is one command
 //	neutralise git hooks   agent-written hooks must never run on the Mac
+//	the plan, and two offers  what this VM will be, while it can still change
 //	render + validate      fail before touching any VM state
 //	proxy VM up            the sandbox's only way out, once its wall is up
 //	boot 1 (open network)  installers need hosts that are not on the allowlist
 //	reboot                 sandbox-firewall.service starts; the wall goes up
 //	verify                 every security property, asserted
 //	token                  injected only into a VM that passed verification
+//
+// The offers are third for a reason. Both settings a sandbox has are frozen
+// into it at create time, so the only two moments they can be changed are
+// before this command and after a `ptrbox rm` - and the first of those
+// requires knowing that two files exist, in a directory, neither of which is
+// there yet on a first create. Asking here is the difference between a
+// decision and an archaeology exercise.
 
 import (
 	"errors"
@@ -28,11 +36,35 @@ import (
 	"github.com/PtrMzk/ptrbox/internal/render"
 )
 
+const newHelp = `ptrbox new - create a repo (if needed) and provision its sandbox VM
+
+  ptrbox new <repo-path | repo-name>
+
+      --no-edit  do not offer the configuration and allowlist editors; take
+                 the settings as they are
+`
+
 func cmdNew(env *Env, args []string) error {
-	if len(args) == 0 || args[0] == "" {
+	arg := ""
+	noEdit := false
+	for _, a := range args {
+		switch {
+		case a == "--no-edit":
+			noEdit = true
+		case a == "-h" || a == "--help":
+			fmt.Fprint(env.Stdout, newHelp)
+			return nil
+		case strings.HasPrefix(a, "-"):
+			return fmt.Errorf("new: unknown option %q", a)
+		case arg != "":
+			return fmt.Errorf("new: one repo at a time (got %q and %q)", arg, a)
+		default:
+			arg = a
+		}
+	}
+	if arg == "" {
 		return errors.New("usage: ptrbox new <repo-path | repo-name>")
 	}
-	arg := args[0]
 	if err := requireLima(env); err != nil {
 		return err
 	}
@@ -71,6 +103,14 @@ func cmdNew(env *Env, args []string) error {
 		if err := env.LoadVM(env, name); err != nil {
 			return err
 		}
+	}
+
+	// --- the plan, and the two offers ---------------------------------------
+	// Everything below this point is expensive or irreversible; everything
+	// above it is knowable now. This is the last moment either file can be
+	// edited without a re-create.
+	if err := reviewPlan(env, name, noEdit); err != nil {
+		return err
 	}
 
 	// --- generate the VM config ---------------------------------------------
@@ -198,6 +238,119 @@ func cmdNew(env *Env, args []string) error {
 		"push     from the host; the VM has no credentials but the Claude token")
 	env.Out.Summary(fmt.Sprintf("VM %q is ready", name), lines...)
 	return nil
+}
+
+// reviewPlan says what this VM will be and offers the two files that decide
+// it, configuration first: it is what chooses the runtimes, and the runtimes
+// are what the allowlist seed is filtered by, so asking in the other order
+// would show a list that the next answer could invalidate.
+//
+// Every path through here is a no-op without a terminal, which is what keeps
+// scripted and tested runs exactly what they were.
+func reviewPlan(env *Env, name string, noEdit bool) error {
+	printPlan(env, name)
+	if noEdit {
+		return nil
+	}
+
+	if ask(env, fmt.Sprintf("edit the configuration for %q first?", name)) {
+		if err := seedVMConfig(env, name); err != nil {
+			return err
+		}
+		if err := env.Editor(config.VMConfigPath(name)); err != nil {
+			return err
+		}
+		// Re-resolved rather than patched: a distro named here re-derives the
+		// image URL, and the plan printed below has to be the one that will
+		// be built, not the one that was offered.
+		if env.LoadVM != nil {
+			if err := env.LoadVM(env, name); err != nil {
+				return err
+			}
+		}
+		printPlan(env, name)
+	}
+
+	if ask(env, fmt.Sprintf("edit the egress allowlist for %q first?", name)) {
+		// The template first: this is the one thing here that runs BEFORE
+		// Proxy.Ensure(), which is what normally creates it, and `ptrbox new`
+		// has never required `ptrbox install` to have been run. Without this,
+		// accepting the offer on a fresh host fails with "run ptrbox install
+		// first" - for a file the next step was about to write anyway.
+		if _, err := env.Proxy.SeedAllowlist(); err != nil {
+			return err
+		}
+		// Then the VM's own list, so there is a file to open - seeded with the
+		// runtimes just settled above, so it holds the right groups.
+		if _, err := env.Proxy.EnsureVMAllowlist(name); err != nil {
+			return err
+		}
+		if err := env.Editor(config.VMAllowlistPath(name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// printPlan is what the VM will be, in the vocabulary the closing summary
+// uses. The same lines twice - once as a plan, once as a record - so that
+// "what did I ask for" and "what did I get" are comparable.
+func printPlan(env *Env, name string) {
+	cfg := env.Cfg
+	runtimes := cfg.ToolchainList()
+	if runtimes == "" {
+		runtimes = "none (claude only)"
+	}
+	env.Out.Say("VM %q will be built with:", name)
+	env.Out.Detail("distro   %s, %d CPUs, %s memory, %s disk",
+		cfg.Distro, cfg.CPUs, cfg.Memory, cfg.Disk)
+	env.Out.Detail("runtime  %s", runtimes)
+	if packages := cfg.ExtraPackageList(); packages != "" {
+		env.Out.Detail("extra    %s", packages)
+	}
+	settings := config.VMConfigPath(name)
+	if !config.HasVMConfig(name) {
+		settings += " (none yet)"
+	}
+	env.Out.Detail("config   %s", settings)
+	env.Out.Detail("egress   %s", config.VMAllowlistPath(name))
+}
+
+// vmConfigHeader introduces a per-VM file seeded from the shipped example. The
+// example is the whole key list on purpose - one document to learn rather than
+// two - and this says which half of it applies here, at the top of the file
+// somebody is about to read.
+const vmConfigHeader = `# Per-VM configuration for %q. Only the keys marked [vm] below may appear in
+# this file; the rest describe your Mac and belong in %s.
+#
+# Read once, when the VM is created. Editing it later takes effect on the next
+# ptrbox rm %s && ptrbox new %s.
+
+`
+
+// seedVMConfig makes sure there is a per-VM file to open. Create what is
+// absent, never touch what is present: an existing file holds settings
+// somebody typed, and this is the command that opens an editor on it.
+func seedVMConfig(env *Env, name string) error {
+	path := config.VMConfigPath(name)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	example, err := fs.ReadFile(env.Assets, "config/ptrbox.conf.example")
+	if err != nil {
+		return err
+	}
+	body := fmt.Sprintf(vmConfigHeader, name, config.Path(), name, name) + string(example)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return err
+	}
+	env.Out.Say("created %s", path)
+	return config.RecordManifest("wrote " + path)
 }
 
 // prepareRepoDir creates the repo if it is not there and neutralises git hooks

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
+	"github.com/PtrMzk/ptrbox/internal/ui"
 )
 
 func TestNewCreatesTheRepoDirectoryAndGitInitsIt(t *testing.T) {
@@ -190,6 +191,140 @@ func TestAnUnparsableRuntimeKeyAbortsNewBeforeAnyVMIsTouched(t *testing.T) {
 
 	if err := h.run("new", "demo"); err == nil {
 		t.Fatal("new accepted a runtime key that is not a boolean")
+	}
+	h.assertNotCalled("start")
+}
+
+// --- the plan, and the two offers --------------------------------------------
+
+// What the VM will be, said before it is built rather than after. Both
+// settings are frozen at create time, so this is the last moment the answer
+// can change without a re-create.
+func TestNewPrintsThePlanBeforeBuildingAnything(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_UV=true\nPTRBOX_MEMORY=4GiB\n")
+	h.mustRun("new", "demo")
+
+	plan := ui.Plain(h.stderr)
+	if !strings.Contains(plan, `VM "demo" will be built with:`) {
+		t.Errorf("no plan was printed:\n%s", plan)
+	}
+	for _, want := range []string{"4GiB", "runtime  uv", config.VMAllowlistPath("demo")} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("the plan does not mention %q:\n%s", want, plan)
+		}
+	}
+	// And it came before the VM did.
+	if strings.Index(plan, "will be built with") > strings.Index(plan, "provisioning demo") {
+		t.Error("the plan was printed after the provisioning started")
+	}
+}
+
+// Without a terminal there is nothing to open an editor on and nobody to
+// answer, so the offers are silent no-ops - which is what keeps every other
+// test in this file, and every scripted run, exactly what it was.
+func TestTheOffersAreSilentWithoutATerminal(t *testing.T) {
+	h := newHarness(t)
+	opened := 0
+	h.editor = func(string) error { opened++; return nil }
+	h.mustRun("new", "demo")
+
+	if opened != 0 {
+		t.Errorf("an editor was opened %d times with no tty", opened)
+	}
+	if strings.Contains(h.stderr, "edit the configuration") {
+		t.Errorf("a question was asked with nobody to answer it:\n%s", h.stderr)
+	}
+}
+
+// Yes to the configuration offer: the per-VM file is created from the shipped
+// example, opened, and what it says is what gets built - the re-resolution is
+// the point, not the editor.
+func TestAnsweringYesEditsTheConfigAndTheEditTakesEffect(t *testing.T) {
+	h := newHarness(t)
+	h.tty = true
+	h.stdin = "y\nn\n" // config: yes. allowlist: no.
+	h.editor = func(path string) error {
+		if path != config.VMConfigPath("demo") {
+			t.Errorf("the editor opened %s, want demo's config", path)
+			return nil
+		}
+		// The seeded file is the shipped example, so it must arrive with
+		// every key in it, commented out and inert.
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(body), "#PTRBOX_UV=false") {
+			t.Errorf("the seeded per-VM file is not the shipped example:\n%s", body)
+		}
+		return appendToFile(path, "PTRBOX_UV=true\nPTRBOX_MEMORY=4GiB\n")
+	}
+	h.mustRun("new", "demo")
+
+	body := h.generated("demo")
+	if !strings.Contains(body, `TOOLCHAIN="uv"`) {
+		t.Error("the runtime chosen in the editor did not reach the VM")
+	}
+	if !strings.Contains(body, `memory: "4GiB"`) {
+		t.Error("the memory chosen in the editor did not reach the VM")
+	}
+	// The plan is printed again after the edit: what was asked for and what
+	// will be built have to be comparable.
+	if strings.Count(ui.Plain(h.stderr), "will be built with") != 2 {
+		t.Errorf("the plan was not re-printed after the edit:\n%s", h.stderr)
+	}
+}
+
+// Yes to the allowlist offer: the file is seeded (filtered to this VM's
+// runtimes) before the editor opens, so there is something to edit.
+func TestAnsweringYesEditsTheAllowlist(t *testing.T) {
+	h := newHarness(t)
+	h.tty = true
+	h.stdin = "n\ny\n" // config: no. allowlist: yes.
+	edited := ""
+	h.editor = func(path string) error {
+		edited = path
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(body), "api.anthropic.com") {
+			t.Errorf("the allowlist was opened before it was seeded:\n%s", body)
+		}
+		return appendToFile(path, "files.example.com\n")
+	}
+	h.mustRun("new", "demo")
+
+	if edited != config.VMAllowlistPath("demo") {
+		t.Errorf("the editor opened %q, want demo's allowlist", edited)
+	}
+	if !containsLine(h.proxyFile("/etc/squid/allowed.d/demo.txt"), "files.example.com") {
+		t.Error("the domain added at create time did not reach the proxy")
+	}
+}
+
+// --no-edit is for a terminal that does not want to be asked.
+func TestNoEditSkipsTheOffersButKeepsThePlan(t *testing.T) {
+	h := newHarness(t)
+	h.tty = true
+	h.stdin = "y\ny\n"
+	opened := 0
+	h.editor = func(string) error { opened++; return nil }
+	h.mustRun("new", "demo", "--no-edit")
+
+	if opened != 0 {
+		t.Error("--no-edit still opened an editor")
+	}
+	if !strings.Contains(ui.Plain(h.stderr), "will be built with") {
+		t.Error("--no-edit suppressed the plan as well as the offers")
+	}
+}
+
+func TestNewRejectsAnUnknownOption(t *testing.T) {
+	h := newHarness(t)
+	if err := h.run("new", "demo", "--dangerously-everything"); err == nil {
+		t.Fatal("new accepted an unknown option")
 	}
 	h.assertNotCalled("start")
 }
