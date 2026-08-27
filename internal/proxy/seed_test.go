@@ -192,7 +192,7 @@ func TestTurningARuntimeOffDoesNotRewriteAnExistingList(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(config.VMDir(), "demo"), []byte("PTRBOX_NODE=true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+	if _, err := proxy.AllocatePort("demo"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.Sync(); err != nil {

@@ -68,7 +68,7 @@ func PortAllocations() (map[string]int, error) {
 // one it already holds. The sidecar is written before the caller renders
 // anything, so the rendered firewall and the recorded allocation cannot
 // disagree.
-func AllocatePort(cfg *config.Config, name string) (int, error) {
+func AllocatePort(name string) (int, error) {
 	held, err := PortAllocations()
 	if err != nil {
 		return 0, err
@@ -81,7 +81,7 @@ func AllocatePort(cfg *config.Config, name string) (int, error) {
 	for _, port := range held {
 		inUse[port] = true
 	}
-	for port := cfg.SandboxPortMin(); port <= cfg.SandboxPortMax(); port++ {
+	for port := config.SandboxPortMin(); port <= config.SandboxPortMax(); port++ {
 		if inUse[port] {
 			continue
 		}
@@ -110,9 +110,9 @@ func ReleasePort(name string) error {
 // listener per sandbox slot, pinned open statically so that VM churn never
 // changes the listener set (and with it the lima forwards, and with them the
 // need to restart anything).
-func sandboxHTTPPorts(cfg *config.Config) string {
+func sandboxHTTPPorts() string {
 	var lines []string
-	for port := cfg.SandboxPortMin(); port <= cfg.SandboxPortMax(); port++ {
+	for port := config.SandboxPortMin(); port <= config.SandboxPortMax(); port++ {
 		lines = append(lines, fmt.Sprintf("http_port %d", port))
 	}
 	return strings.Join(lines, "\n")

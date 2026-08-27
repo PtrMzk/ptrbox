@@ -14,12 +14,17 @@ import (
 // pin is bookkeeping with a security consequence: two VMs sharing a port
 // would share an allowlist, and a leaked slot is a sandbox that cannot be
 // created.
+//
+// newHarness is called for its side effects alone here - a throwaway HOME and
+// an environment with no PTRBOX_* in it. The allocator reads the port block
+// from constants and the sidecars from that HOME, so there is nothing to hold
+// on to.
 
 func TestPortsAreAllocatedLowestFirst(t *testing.T) {
-	h := newHarness(t)
+	newHarness(t)
 	for i, want := range []int{8889, 8890, 8891} {
 		name := []string{"one", "two", "three"}[i]
-		port, err := proxy.AllocatePort(h.Cfg, name)
+		port, err := proxy.AllocatePort(name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,12 +37,12 @@ func TestPortsAreAllocatedLowestFirst(t *testing.T) {
 func TestAnAllocationIsStableAcrossRetries(t *testing.T) {
 	// A `new` that failed partway holds its sidecar; the re-run must get the
 	// same port back rather than leak the slot and take a second one.
-	h := newHarness(t)
-	first, err := proxy.AllocatePort(h.Cfg, "demo")
+	newHarness(t)
+	first, err := proxy.AllocatePort("demo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := proxy.AllocatePort(h.Cfg, "demo")
+	again, err := proxy.AllocatePort("demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,16 +59,16 @@ func TestAnAllocationIsStableAcrossRetries(t *testing.T) {
 }
 
 func TestAReleasedPortIsReusedByTheNextAllocation(t *testing.T) {
-	h := newHarness(t)
+	newHarness(t)
 	for _, name := range []string{"one", "two", "three"} {
-		if _, err := proxy.AllocatePort(h.Cfg, name); err != nil {
+		if _, err := proxy.AllocatePort(name); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := proxy.ReleasePort("one"); err != nil {
 		t.Fatal(err)
 	}
-	port, err := proxy.AllocatePort(h.Cfg, "four")
+	port, err := proxy.AllocatePort("four")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,13 +86,13 @@ func TestReleasingAnUnallocatedPortIsFine(t *testing.T) {
 }
 
 func TestAFullRangeRefusesTheSeventeenthSandbox(t *testing.T) {
-	h := newHarness(t)
+	newHarness(t)
 	for i := 0; i < config.SandboxProxyPorts; i++ {
-		if _, err := proxy.AllocatePort(h.Cfg, string(rune('a'+i))+"-vm"); err != nil {
+		if _, err := proxy.AllocatePort(string(rune('a'+i))+"-vm"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, err := proxy.AllocatePort(h.Cfg, "one-too-many")
+	_, err := proxy.AllocatePort("one-too-many")
 	if err == nil || !strings.Contains(err.Error(), "ptrbox rm") {
 		t.Errorf("err = %v, want a refusal that says what to do about it", err)
 	}
@@ -96,7 +101,7 @@ func TestAFullRangeRefusesTheSeventeenthSandbox(t *testing.T) {
 func TestRenderedConfigsDoNotCountAsAllocations(t *testing.T) {
 	// The generated dir holds the rendered yamls too; only the sidecars are
 	// allocations.
-	h := newHarness(t)
+	newHarness(t)
 	if err := os.MkdirAll(config.GeneratedDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +115,7 @@ func TestRenderedConfigsDoNotCountAsAllocations(t *testing.T) {
 	if len(held) != 0 {
 		t.Errorf("a rendered config was read as an allocation: %v", held)
 	}
-	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+	if _, err := proxy.AllocatePort("demo"); err != nil {
 		t.Fatal(err)
 	}
 }

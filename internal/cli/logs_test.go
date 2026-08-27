@@ -119,14 +119,15 @@ func TestLogsValidatesTheLineCount(t *testing.T) {
 	}
 }
 
-func TestLogsReadsTheConfiguredInVMPath(t *testing.T) {
+// The log path is fixed: it is a file inside a VM this project builds, so
+// pointing ptrbox at another one was never a setting anyone needed.
+func TestLogsReadsTheFixedInVMPath(t *testing.T) {
 	h := newHarness(t)
-	t.Setenv("PTRBOX_SQUID_LOG", "/custom/access.log")
 	h.fake.AddVM(config.ProxyVM, lima.StatusRunning)
-	h.fake.WriteFile(config.ProxyVM, "/custom/access.log", "custom line TCP_DENIED\n")
+	h.fake.WriteFile(config.ProxyVM, config.SquidLog, "a line TCP_DENIED\n")
 
 	h.mustRun("logs")
-	if !strings.Contains(h.stdout, "custom line") {
+	if !strings.Contains(h.stdout, "a line") {
 		t.Errorf("stdout = %q", h.stdout)
 	}
 }

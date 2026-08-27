@@ -28,11 +28,41 @@ const Version = "0.1.0"
 // both a PTRBOX_<key> environment variable and a config-file key.
 var Keys = []string{
 	"REPO_ROOT", "CPUS", "MEMORY", "DISK", "PORT_MIN", "PORT_MAX",
-	"PROXY_HOST", "PROXY_PORT", "PROXY_CPUS", "PROXY_MEMORY", "PROXY_DISK",
-	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE", "SQUID_LOG",
+	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
 	"EXTRA_PACKAGES", "GO", "NODE", "NODE_VERSION", "UV",
 }
+
+// The egress proxy VM, fixed rather than configured.
+//
+// These were settings once, for no better reason than that the config file
+// used to be sourced by bash, so every internal value was already a variable.
+// None of them is a decision anyone makes:
+//
+//   - the sizing is the answer to a measurement, not a preference. Item 25
+//     settled CPUs at their floor and established that a smaller disk frees
+//     nothing (Lima's diffdisk is sparse); the memory is a project decision
+//     pending item 28, and getting it wrong OOM-kills squid, which takes the
+//     network away from every running sandbox at once. A knob whose
+//     documentation says "leave this alone" is a comment wearing a key's
+//     clothes.
+//   - ProxyHost is Lima usernet's gateway. If a Lima release ever moves it,
+//     every ptrbox on earth breaks the same way on the same day, and the fix
+//     is a release, not a line each of us edits.
+//   - the log path is inside a VM this project builds. If Debian's squid
+//     moves it, that is a code change too.
+//
+// ProxyPort was the last plausible one - a conflict on 8888 is real - but a
+// process holding that port is something to stop, not something to route
+// around, and preflightProxyPort says so with the lsof line that finds it.
+const (
+	ProxyHost   = "192.168.5.2"
+	ProxyPort   = 8888
+	ProxyCPUs   = 1
+	ProxyMemory = "512MiB"
+	ProxyDisk   = "4GiB"
+	SquidLog    = "/var/log/squid/access.log"
+)
 
 // SandboxProxyPorts is how many sandbox VMs can hold a proxy port at once.
 // Squid sees every client as 127.0.0.1 (the usernet relay and the loopback
@@ -44,12 +74,12 @@ var Keys = []string{
 // sandboxes, not on repos - ports free on `ptrbox rm`.
 const SandboxProxyPorts = 16
 
-// SandboxPortMin is the first per-sandbox proxy port. PROXY_PORT itself stays
+// SandboxPortMin is the first per-sandbox proxy port. ProxyPort itself stays
 // the base port: the Mac's own way into squid, and what install verifies.
-func (c *Config) SandboxPortMin() int { return c.ProxyPort + 1 }
+func SandboxPortMin() int { return ProxyPort + 1 }
 
 // SandboxPortMax is the last per-sandbox proxy port.
-func (c *Config) SandboxPortMax() int { return c.ProxyPort + SandboxProxyPorts }
+func SandboxPortMax() int { return ProxyPort + SandboxProxyPorts }
 
 // Toolchains are the language runtimes vm/provision/30-toolchain.sh knows how
 // to install, in the order it installs them. Each name carries three jobs, and
@@ -113,15 +143,9 @@ type Config struct {
 	Disk            string
 	PortMin         int
 	PortMax         int
-	ProxyHost       string
-	ProxyPort       int
-	ProxyCPUs       int
-	ProxyMemory     string
-	ProxyDisk       string
 	DNSServers      []string
 	ClaudeModel     string
 	KeychainService string
-	SquidLog        string
 	GitUserName     string
 	GitUserEmail    string
 	Distro          string
@@ -146,16 +170,6 @@ func defaults() map[string]string {
 		"DISK":      "50GiB",
 		"PORT_MIN":  "3000",
 		"PORT_MAX":  "9000",
-		// Where a sandbox VM reaches the proxy: Lima usernet's conventional
-		// gateway address, which relays to 127.0.0.1 on the host - where the
-		// proxy VM's port forward listens. If `ip route | grep default`
-		// inside a VM shows something else, override here.
-		"PROXY_HOST": "192.168.5.2",
-		"PROXY_PORT": "8888",
-		// The proxy VM runs squid and nothing else; it stays deliberately tiny.
-		"PROXY_CPUS":   "1",
-		"PROXY_MEMORY": "512MiB",
-		"PROXY_DISK":   "4GiB",
 		// Quad9 + Cloudflare. Quad9 also blocks known-malicious domains at
 		// resolution time, a bonus filter layer.
 		"DNS_SERVERS":      "9.9.9.9 1.1.1.1",
@@ -261,12 +275,6 @@ func load(vm string) (*Config, error) {
 
 	// Derived defaults, resolved after every layer has had its say.
 
-	// A path INSIDE the proxy VM (Debian squid's default), read via
-	// limactl shell.
-	if values["SQUID_LOG"] == "" {
-		values["SQUID_LOG"] = "/var/log/squid/access.log"
-	}
-
 	// Distro -> image URL, unless an explicit URL was configured. The
 	// override is an escape hatch for pinning a build or trying another
 	// apt-based image; you are on your own for package names if the image is
@@ -300,13 +308,9 @@ func load(vm string) (*Config, error) {
 		RepoRoot:        values["REPO_ROOT"],
 		Memory:          values["MEMORY"],
 		Disk:            values["DISK"],
-		ProxyHost:       values["PROXY_HOST"],
-		ProxyMemory:     values["PROXY_MEMORY"],
-		ProxyDisk:       values["PROXY_DISK"],
 		DNSServers:      strings.Fields(values["DNS_SERVERS"]),
 		ClaudeModel:     values["CLAUDE_MODEL"],
 		KeychainService: values["KEYCHAIN_SERVICE"],
-		SquidLog:        values["SQUID_LOG"],
 		// Double quotes and backslashes are stripped: these values are
 		// interpolated into a shell assignment inside the guest.
 		GitUserName:   stripQuoting(values["GIT_USER_NAME"]),
@@ -340,10 +344,8 @@ func load(vm string) (*Config, error) {
 		field *int
 	}{
 		{"CPUS", &cfg.CPUs},
-		{"PROXY_CPUS", &cfg.ProxyCPUs},
 		{"PORT_MIN", &cfg.PortMin},
 		{"PORT_MAX", &cfg.PortMax},
-		{"PROXY_PORT", &cfg.ProxyPort},
 	} {
 		n, err := parseNumber(num.key, values[num.key])
 		if err != nil {
@@ -402,8 +404,6 @@ func (c *Config) validate() error {
 	for _, size := range []struct{ key, value string }{
 		{"MEMORY", c.Memory},
 		{"DISK", c.Disk},
-		{"PROXY_MEMORY", c.ProxyMemory},
-		{"PROXY_DISK", c.ProxyDisk},
 	} {
 		if !sizeRe.MatchString(size.value) {
 			return fmt.Errorf("PTRBOX_%s must look like 8GiB or 512MiB, got %q",
@@ -411,16 +411,9 @@ func (c *Config) validate() error {
 		}
 	}
 
-	// The sandbox ports sit directly above the base port, so the whole block
-	// has to fit under the port ceiling.
-	if c.ProxyPort < 1 || c.ProxyPort+SandboxProxyPorts > 65535 {
-		return fmt.Errorf("PTRBOX_PROXY_PORT must leave room for %d sandbox ports above it, got %d",
-			SandboxProxyPorts, c.ProxyPort)
-	}
-
-	if !ipv4Re.MatchString(c.ProxyHost) {
-		return fmt.Errorf("PTRBOX_PROXY_HOST must be an IPv4 address, got %q", c.ProxyHost)
-	}
+	// The proxy's address and port block used to be validated here. They are
+	// constants now, so there is no input to reject - what was a run-time
+	// check is a test over the constants instead (TestTheFixedProxySettings).
 	for _, ns := range c.DNSServers {
 		if !ipv4Re.MatchString(ns) {
 			return fmt.Errorf("PTRBOX_DNS_SERVERS must be an IPv4 address, got %q", ns)

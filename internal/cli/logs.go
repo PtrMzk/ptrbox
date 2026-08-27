@@ -72,7 +72,7 @@ func cmdLogs(env *Env, args []string) error {
 	if follow {
 		tail = append(tail, "-f")
 	}
-	tail = append(tail, env.Cfg.SquidLog)
+	tail = append(tail, config.SquidLog)
 	argv := lima.ShellArgs(config.ProxyVM, tail...)
 
 	if follow {
@@ -91,7 +91,7 @@ func cmdLogs(env *Env, args []string) error {
 
 	var buf bytes.Buffer
 	if err := env.Lima.Stream(&buf, argv...); err != nil {
-		return fmt.Errorf("no proxy log at %s in the proxy VM - has any request been made?", env.Cfg.SquidLog)
+		return fmt.Errorf("no proxy log at %s in the proxy VM - has any request been made?", config.SquidLog)
 	}
 
 	out := buf.String()
@@ -110,7 +110,7 @@ func cmdLogs(env *Env, args []string) error {
 	}
 
 	if strings.TrimSpace(out) == "" {
-		env.Out.Say("no matching lines in %s", env.Cfg.SquidLog)
+		env.Out.Say("no matching lines in %s", config.SquidLog)
 		return nil
 	}
 	fmt.Fprint(env.Stdout, out)

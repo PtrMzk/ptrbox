@@ -121,7 +121,7 @@ func cmdInstall(env *Env, args []string) error {
 	env.Out.Summary(headline,
 		"next: ptrbox new <repo>",
 		"",
-		fmt.Sprintf("proxy     %s, reached at 127.0.0.1:%d", config.ProxyVM, env.Cfg.ProxyPort),
+		fmt.Sprintf("proxy     %s, reached at 127.0.0.1:%d", config.ProxyVM, config.ProxyPort),
 		fmt.Sprintf("template  %s (what new VMs may reach)", config.AllowlistPath()),
 		fmt.Sprintf("settings  %s", config.Path()),
 		fmt.Sprintf("per VM    %s/<vm-name>", config.VMDir()),
@@ -402,17 +402,17 @@ func verifyEgress(env *Env) error {
 	// closed port however healthy squid is on the other side. Waited for
 	// rather than probed once, because the squid restart Ensure may just have
 	// issued takes the forward down with it - see waitForPort.
-	if !waitForPort(env.Cfg.ProxyPort, forwardDeadline) {
+	if !waitForPort(config.ProxyPort, forwardDeadline) {
 		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: limactl list",
-			env.Cfg.ProxyPort, config.ProxyVM)
+			config.ProxyPort, config.ProxyVM)
 	}
 	// The sandbox range is a second lima forward, published independently of
 	// the base port's - so the base being up says nothing about it, and it is
 	// the one the sandboxes actually dial. The first port stands in for the
 	// block: they are one forwarding rule, live or not together.
-	if !waitForPort(env.Cfg.SandboxPortMin(), forwardDeadline) {
+	if !waitForPort(config.SandboxPortMin(), forwardDeadline) {
 		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s sandbox port range (%d-%d) is not forwarded, so no sandbox could reach the proxy. Check it with: limactl list",
-			env.Cfg.SandboxPortMin(), config.ProxyVM, env.Cfg.SandboxPortMin(), env.Cfg.SandboxPortMax())
+			config.SandboxPortMin(), config.ProxyVM, config.SandboxPortMin(), config.SandboxPortMax())
 	}
 
 	return env.Proxy.Verify()
@@ -500,10 +500,10 @@ func preflightProxyPort(env *Env) error {
 	// VM's egress, so a foreign listener on any of it silently owns one
 	// sandbox's network instead of all of them - smaller blast radius, same
 	// failure class, harder to spot.
-	for port := env.Cfg.ProxyPort; port <= env.Cfg.SandboxPortMax(); port++ {
+	for port := config.ProxyPort; port <= config.SandboxPortMax(); port++ {
 		if portInUse(port) {
-			return fmt.Errorf("something else is already listening on 127.0.0.1:%d, which is where a %s port forward has to go (ports %d-%d) - sandboxes would reach that instead of ptrbox's proxy. Find it with: lsof -nP -iTCP:%d -sTCP:LISTEN (a squid left running on the Mac from before the proxy moved into a VM is the usual answer), or set PTRBOX_PROXY_PORT to move the whole block",
-				port, config.ProxyVM, env.Cfg.ProxyPort, env.Cfg.SandboxPortMax(), port)
+			return fmt.Errorf("something else is already listening on 127.0.0.1:%d, which is where a %s port forward has to go (ports %d-%d) - sandboxes would reach that instead of ptrbox's proxy. Find it with: lsof -nP -iTCP:%d -sTCP:LISTEN (a squid left running on the Mac from before the proxy moved into a VM is the usual answer) and stop it; the port block is fixed, so there is nothing to move it to",
+				port, config.ProxyVM, config.ProxyPort, config.SandboxPortMax(), port)
 		}
 	}
 	return nil

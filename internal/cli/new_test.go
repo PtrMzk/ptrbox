@@ -332,13 +332,13 @@ func TestNewRejectsAnUnknownOption(t *testing.T) {
 // Refused, not ignored, and refused before any VM state is touched.
 func TestAHostGlobalKeyInAPerVMFileFailsNewBeforeAnyVMIsTouched(t *testing.T) {
 	h := newHarness(t)
-	h.writeVMConfig("demo", "PTRBOX_PROXY_PORT=9999\n")
+	h.writeVMConfig("demo", "PTRBOX_REPO_ROOT=/tmp/elsewhere\n")
 
 	err := h.run("new", "demo")
 	if err == nil {
 		t.Fatal("new accepted a host-wide setting in a per-VM file")
 	}
-	if !strings.Contains(err.Error(), "PROXY_PORT") {
+	if !strings.Contains(err.Error(), "REPO_ROOT") {
 		t.Errorf("error = %v, want it to name the offending key", err)
 	}
 	h.assertNotCalled("start")

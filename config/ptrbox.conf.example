@@ -61,14 +61,6 @@
 # Where `ptrbox install` offers to symlink the CLI. Declinable.
 #PTRBOX_BIN_DIR="$HOME/bin"
 
-# The egress proxy: where a sandbox reaches it (Lima usernet's gateway, which
-# relays to 127.0.0.1 on the Mac), and the shared proxy VM's own sizing.
-# Sizing applies when the proxy VM is next re-created.
-#PTRBOX_PROXY_HOST=192.168.5.2
-#PTRBOX_PROXY_PORT=8888
-#PTRBOX_PROXY_CPUS=1
-#PTRBOX_PROXY_MEMORY=512MiB
-#PTRBOX_PROXY_DISK=4GiB
-
-# The squid access log, as a path INSIDE the proxy VM.
-#PTRBOX_SQUID_LOG=/var/log/squid/access.log
+# The egress proxy VM is not configurable: one shared VM, and its address,
+# port, sizing and log path are decided in internal/config rather than here.
+# A conflict on its port is a process to stop, not a setting.

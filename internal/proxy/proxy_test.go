@@ -387,7 +387,7 @@ func TestSyncWithoutAnAllowlistPointsAtInstall(t *testing.T) {
 func TestSyncSeedsAndPushesAnAllocatedVMsAllowlist(t *testing.T) {
 	h := newHarness(t)
 	h.mustEnsure(t)
-	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+	if _, err := proxy.AllocatePort("demo"); err != nil {
 		t.Fatal(err)
 	}
 	h.fake.Reset()
@@ -437,7 +437,7 @@ func TestAnExistingPerVMAllowlistIsUsedNotReseeded(t *testing.T) {
 	if err := os.WriteFile(config.VMAllowlistPath("demo"), []byte("only.example.com\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+	if _, err := proxy.AllocatePort("demo"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -455,7 +455,7 @@ func TestADeletedPerVMAllowlistIsReseededNotAParseError(t *testing.T) {
 	// network. Deleting the file is documented as the reset to template.
 	h := newHarness(t)
 	h.mustEnsure(t)
-	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+	if _, err := proxy.AllocatePort("demo"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.Sync(); err != nil {
@@ -476,7 +476,7 @@ func TestADeletedPerVMAllowlistIsReseededNotAParseError(t *testing.T) {
 func TestARejectedSyncRollsBackThePerVMFilesToo(t *testing.T) {
 	h := newHarness(t)
 	h.mustEnsure(t)
-	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+	if _, err := proxy.AllocatePort("demo"); err != nil {
 		t.Fatal(err)
 	}
 	previousRules := h.vmFile(t, proxy.VMAccessPath)
@@ -505,7 +505,7 @@ func TestARejectedSyncRollsBackThePerVMFilesToo(t *testing.T) {
 func TestARemovedAllocationRetiresItsRules(t *testing.T) {
 	h := newHarness(t)
 	h.mustEnsure(t)
-	if _, err := proxy.AllocatePort(h.Cfg, "demo"); err != nil {
+	if _, err := proxy.AllocatePort("demo"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.Sync(); err != nil {

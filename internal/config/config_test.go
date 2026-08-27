@@ -82,16 +82,37 @@ func TestDefaultsApplyWithNoConfigFile(t *testing.T) {
 	if cfg.CPUs != 4 {
 		t.Errorf("CPUs = %d, want 4", cfg.CPUs)
 	}
-	if cfg.ProxyHost != "192.168.5.2" {
-		t.Errorf("ProxyHost = %q, want 192.168.5.2", cfg.ProxyHost)
-	}
 	if got := strings.Join(cfg.DNSServers, " "); got != "9.9.9.9 1.1.1.1" {
 		t.Errorf("DNSServers = %q, want \"9.9.9.9 1.1.1.1\"", got)
 	}
-	// The proxy VM stays tiny: squid is the only thing running in it.
-	if cfg.ProxyCPUs != 1 || cfg.ProxyMemory != "512MiB" || cfg.ProxyDisk != "4GiB" {
-		t.Errorf("proxy sizing = %d/%s/%s, want 1/512MiB/4GiB",
-			cfg.ProxyCPUs, cfg.ProxyMemory, cfg.ProxyDisk)
+}
+
+// The shared proxy VM is not configured, it is decided - so what used to be
+// load-time validation of six settings is a test over six constants. The
+// numbers matter to more than taste: the port block has to fit under the
+// ceiling, and the sizing is what item 28 will revisit with a measurement.
+func TestTheFixedProxySettings(t *testing.T) {
+	if !ipv4Re.MatchString(ProxyHost) {
+		t.Errorf("ProxyHost = %q, want an IPv4 address", ProxyHost)
+	}
+	if ProxyPort < 1 || ProxyPort+SandboxProxyPorts > 65535 {
+		t.Errorf("ProxyPort = %d leaves no room for %d sandbox ports", ProxyPort, SandboxProxyPorts)
+	}
+	if SandboxPortMin() != ProxyPort+1 || SandboxPortMax() != ProxyPort+SandboxProxyPorts {
+		t.Errorf("sandbox port block = %d-%d, want %d above the base port",
+			SandboxPortMin(), SandboxPortMax(), SandboxProxyPorts)
+	}
+	if ProxyCPUs < 1 {
+		t.Errorf("ProxyCPUs = %d", ProxyCPUs)
+	}
+	for _, size := range []string{ProxyMemory, ProxyDisk} {
+		if !sizeRe.MatchString(size) {
+			t.Errorf("proxy size %q does not look like 8GiB or 512MiB", size)
+		}
+	}
+	// A path inside the proxy VM, read over limactl shell.
+	if !strings.HasPrefix(SquidLog, "/") {
+		t.Errorf("SquidLog = %q, want an absolute path in the proxy VM", SquidLog)
 	}
 }
 
@@ -143,18 +164,6 @@ func TestRejectsMalformedMemory(t *testing.T) {
 	setup(t)
 	t.Setenv("PTRBOX_MEMORY", "8GB")
 	loadErr(t, "PTRBOX_MEMORY")
-}
-
-func TestRejectsMalformedProxySizing(t *testing.T) {
-	setup(t)
-	t.Setenv("PTRBOX_PROXY_MEMORY", "lots")
-	loadErr(t, "PTRBOX_PROXY_MEMORY")
-}
-
-func TestRejectsNonIPv4ProxyHost(t *testing.T) {
-	setup(t)
-	t.Setenv("PTRBOX_PROXY_HOST", "evil.example.com")
-	loadErr(t, "PTRBOX_PROXY_HOST must be an IPv4")
 }
 
 func TestRejectsDNSServerThatIsNotAnAddress(t *testing.T) {
@@ -280,13 +289,6 @@ func TestPlainHTTPImageURLIsRefused(t *testing.T) {
 	setup(t)
 	t.Setenv("PTRBOX_IMAGE_URL", "http://example.com/custom-arm64.qcow2")
 	loadErr(t, "must be https")
-}
-
-func TestSquidLogDefaultsToDebianPathInsideTheProxyVM(t *testing.T) {
-	setup(t)
-	if cfg := mustLoad(t); cfg.SquidLog != "/var/log/squid/access.log" {
-		t.Errorf("SquidLog = %q", cfg.SquidLog)
-	}
 }
 
 // --- names and paths ---------------------------------------------------------

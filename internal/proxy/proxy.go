@@ -149,8 +149,8 @@ func (p *Proxy) Sync() (SyncResult, error) {
 		return Unchanged, err
 	}
 	err = render.RenderFile(renderedPath, p.Assets, "host/squid.conf.in", "host", render.Values{
-		"PROXY_PORT":         fmt.Sprint(p.Cfg.ProxyPort),
-		"SANDBOX_HTTP_PORTS": sandboxHTTPPorts(p.Cfg),
+		"PROXY_PORT":         fmt.Sprint(config.ProxyPort),
+		"SANDBOX_HTTP_PORTS": sandboxHTTPPorts(),
 	})
 	if err != nil {
 		return Unchanged, err
@@ -323,12 +323,12 @@ func (p *Proxy) Ensure() (changed bool, err error) {
 	configPath := config.GeneratedConfig(config.ProxyVM)
 	err = render.RenderFile(configPath, p.Assets, "vm/proxy.yaml", "vm", render.Values{
 		"IMAGE_URL":        p.Cfg.ImageURL,
-		"PROXY_CPUS":       fmt.Sprint(p.Cfg.ProxyCPUs),
-		"PROXY_MEMORY":     p.Cfg.ProxyMemory,
-		"PROXY_DISK":       p.Cfg.ProxyDisk,
-		"PROXY_PORT":       fmt.Sprint(p.Cfg.ProxyPort),
-		"SANDBOX_PORT_MIN": fmt.Sprint(p.Cfg.SandboxPortMin()),
-		"SANDBOX_PORT_MAX": fmt.Sprint(p.Cfg.SandboxPortMax()),
+		"PROXY_CPUS":       fmt.Sprint(config.ProxyCPUs),
+		"PROXY_MEMORY":     config.ProxyMemory,
+		"PROXY_DISK":       config.ProxyDisk,
+		"PROXY_PORT":       fmt.Sprint(config.ProxyPort),
+		"SANDBOX_PORT_MIN": fmt.Sprint(config.SandboxPortMin()),
+		"SANDBOX_PORT_MAX": fmt.Sprint(config.SandboxPortMax()),
 	})
 	if err != nil {
 		return changed, err

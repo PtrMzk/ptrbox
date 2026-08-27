@@ -173,11 +173,12 @@ func TestExtraPackagesAreReplacedNotAppended(t *testing.T) {
 
 // --- what a per-VM file may say ----------------------------------------------
 
-// Refused rather than ignored: a per-VM PROXY_PORT would point one sandbox at
-// a proxy that is not there, and that surfaces minutes later as "the agent
-// has no network" - the failure class item 20 existed to kill.
+// Refused rather than ignored: these describe the Mac - one repo root, one
+// Keychain - and a per-VM value for one is meaningless at best. (The proxy
+// keys that used to head this list are not keys at all any more; the proxy
+// VM's address, port and sizing are constants in this package.)
 func TestAHostGlobalKeyInAPerVMFileIsAnError(t *testing.T) {
-	for _, key := range []string{"PROXY_PORT", "PROXY_HOST", "REPO_ROOT", "KEYCHAIN_SERVICE", "DNS_SERVERS", "BIN_DIR"} {
+	for _, key := range []string{"REPO_ROOT", "KEYCHAIN_SERVICE", "DNS_SERVERS", "BIN_DIR"} {
 		t.Run(key, func(t *testing.T) {
 			setup(t)
 			writeVMConfig(t, "thesis", "PTRBOX_"+key+"=8\n")
@@ -214,9 +215,7 @@ func TestEveryPerVMKeyIsAcceptedInAPerVMFile(t *testing.T) {
 // describes the host - one proxy, one Keychain, one repo root - may be in it.
 func TestPerVMKeysAreOnlyTheCreateTimeOnes(t *testing.T) {
 	hostWide := map[string]bool{
-		"REPO_ROOT": true, "PROXY_HOST": true, "PROXY_PORT": true,
-		"PROXY_CPUS": true, "PROXY_MEMORY": true, "PROXY_DISK": true,
-		"KEYCHAIN_SERVICE": true, "SQUID_LOG": true, "BIN_DIR": true,
+		"REPO_ROOT": true, "KEYCHAIN_SERVICE": true, "BIN_DIR": true,
 		// Technically per-VM, deliberately not settable: it is rendered into
 		// the guest's nftables ruleset, so it is an invariant-2 decision.
 		"DNS_SERVERS": true,

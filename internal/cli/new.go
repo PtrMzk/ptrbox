@@ -121,7 +121,7 @@ func cmdNew(env *Env, args []string) error {
 	// The VM's own proxy port: its identity at squid, baked into the firewall
 	// ruleset below. Allocated before the render so the sidecar and the
 	// rendered config can never disagree.
-	proxyPort, err := proxy.AllocatePort(env.Cfg, name)
+	proxyPort, err := proxy.AllocatePort(name)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func cmdNew(env *Env, args []string) error {
 		"DISK":           cfg.Disk,
 		"PORT_MIN":       fmt.Sprint(cfg.PortMin),
 		"PORT_MAX":       fmt.Sprint(cfg.PortMax),
-		"PROXY_HOST":     cfg.ProxyHost,
+		"PROXY_HOST":     config.ProxyHost,
 		"PROXY_PORT":     fmt.Sprint(proxyPort),
 		"DNS_LIST":       cfg.DNSList(),
 		"DNS_NFT_SET":    cfg.DNSNftSet(),

@@ -148,7 +148,7 @@ func TestExampleConfigParses(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Errorf("the example config names settings that do not exist: %v", warnings)
 	}
-	if values["DISTRO"] != "debian13" || values["PROXY_PORT"] != "8888" {
+	if values["DISTRO"] != "debian13" || values["CPUS"] != "4" {
 		t.Errorf("example config parsed oddly: %v", values)
 	}
 }
