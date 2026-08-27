@@ -119,10 +119,12 @@ func TestAddingADomainTwiceDoesNotDuplicateIt(t *testing.T) {
 	}
 }
 
+// api.anthropic.com rather than a runtime's domain: the seeded list carries
+// only the groups this VM's runtimes justify, and the default VM has none.
 func TestADomainAlreadySeededFromTheTemplateIsRecognised(t *testing.T) {
 	h := withVM(t)
 	h.fake.Reset()
-	h.mustRun("allow", "demo", "pypi.org")
+	h.mustRun("allow", "demo", "api.anthropic.com")
 	h.assertOutputContains("already allowed")
 	h.assertNotCalled("squid -k reconfigure")
 }

@@ -63,15 +63,20 @@ else
   bad "firewall active" "sandbox-firewall.service is not active"
 fi
 
+# The probe domain is api.anthropic.com because it is the one entry every
+# seeded allowlist keeps: the runtime-gated groups (pypi, npm) exist only
+# in VMs that asked for the runtime, but a sandbox that cannot reach Anthropic
+# cannot run the agent the token below is about to be injected for.
+
 # Bypassing the proxy must fail: that is the kernel-level wall doing its job.
-if curl -sm 5 --noproxy '*' https://pypi.org -o /dev/null; then
+if curl -sm 5 --noproxy '*' https://api.anthropic.com -o /dev/null; then
   bad "direct egress blocked" "reached the internet without the proxy"
 else
   ok "direct egress blocked"
 fi
 
 # Through the proxy, an allowlisted domain must work.
-if curl -sm 15 https://pypi.org -o /dev/null; then
+if curl -sm 15 https://api.anthropic.com -o /dev/null; then
   ok "proxy egress works"
 else
   bad "proxy egress works" "allowlisted domain unreachable (check the squid log)"

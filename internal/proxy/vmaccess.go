@@ -17,11 +17,15 @@ package proxy
 // and nothing else.
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
@@ -73,16 +77,137 @@ func (p *Proxy) EnsureVMAllowlist(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("no allowlist at %s - run 'ptrbox install' first", config.AllowlistPath())
 	}
-	return p.ensureVMAllowlist(name, template)
+
+	seed, err := p.vmSeed(name, template)
+	if err != nil {
+		return "", err
+	}
+	return p.ensureVMAllowlist(name, seed)
 }
 
-// ensureVMAllowlist returns a VM's host-side allowlist, seeding it from the
-// template when it is absent. Seeding here rather than only in `new` is what
-// makes a deleted file a RESET instead of a parse error: the generated rules
-// reference the file, so a mapped VM without one would stop squid, which is
-// every sandbox's network. Create what is absent, never touch what is
-// present.
-func (p *Proxy) ensureVMAllowlist(name string, template []byte) (string, error) {
+// vmSeed renders the template into the list one VM starts from.
+//
+// The runtimes are THIS VM's, not the host's defaults: `ptrbox allow <vm>`
+// before the VM exists must seed the same bytes `ptrbox new` would, and that
+// answer lives in that VM's own config file. A per-VM file that does not parse
+// fails here rather than quietly seeding a list built from someone else's
+// settings.
+func (p *Proxy) vmSeed(name string, template []byte) ([]byte, error) {
+	cfg, err := p.Cfg.Overlay(name)
+	if err != nil {
+		return nil, fmt.Errorf("seeding the allowlist for %q: %w", name, err)
+	}
+	seed, err := SeedFor(template, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", config.AllowlistPath(), err)
+	}
+	return seed, nil
+}
+
+// Group markers in the template. Everything outside a group is copied
+// unchanged; a group survives if the VM has ANY of the runtimes named on its
+// marker, which is what lets a tool driven from either runtime (Playwright)
+// say so in one line.
+const (
+	requiresMarker = "@requires"
+	endMarker      = "@end"
+)
+
+// SeedFor renders the template into the list one VM starts from: the groups
+// whose runtimes that VM does not have are replaced by a line saying they were
+// left out, and the markers themselves do not survive - a VM's list is a plain
+// list, and nothing re-reads it against the config later. Exported for the
+// invariants test, which reads the seeded result rather than the template.
+//
+// A marker naming something that is not a runtime is an ERROR, not a group
+// silently kept or silently dropped: the template is a file people edit, and
+// both quiet answers are wrong in a way nobody would notice - one grants
+// domains nothing can use, the other takes away domains somebody asked for.
+func SeedFor(template []byte, cfg *config.Config) ([]byte, error) {
+	var out bytes.Buffer
+	scanner := bufio.NewScanner(bytes.NewReader(template))
+	group, keep := "", true
+
+	for line := 1; scanner.Scan(); line++ {
+		text := scanner.Text()
+		directive, argument := parseMarker(text)
+		switch directive {
+		case requiresMarker:
+			if group != "" {
+				return nil, fmt.Errorf("line %d: %s inside the %q group - groups do not nest",
+					line, requiresMarker, group)
+			}
+			runtimes := strings.Fields(argument)
+			if len(runtimes) == 0 {
+				return nil, fmt.Errorf("line %d: %s names no runtime (expected one of: %s)",
+					line, requiresMarker, strings.Join(config.Toolchains, " "))
+			}
+			for _, runtime := range runtimes {
+				if !slices.Contains(config.Toolchains, runtime) {
+					return nil, fmt.Errorf("line %d: %q is not a runtime (expected one of: %s)",
+						line, runtime, strings.Join(config.Toolchains, " "))
+				}
+			}
+			group, keep = argument, slices.ContainsFunc(runtimes, cfg.Wants)
+			if !keep {
+				fmt.Fprintf(&out, "# (omitted: this VM has no %s)\n", strings.Join(runtimes, " or "))
+			}
+		case endMarker:
+			if group == "" {
+				return nil, fmt.Errorf("line %d: %s with no %s above it", line, endMarker, requiresMarker)
+			}
+			group, keep = "", true
+		case "":
+		default:
+			// A directive nobody implements, which in practice is one of the
+			// two above misspelled - and a misspelled @requires is a group
+			// that silently applies to everyone, which is the failure this
+			// whole filter exists to remove.
+			return nil, fmt.Errorf("line %d: unknown directive %s (expected %s or %s)",
+				line, directive, requiresMarker, endMarker)
+		}
+		// Markers do not survive into a VM's list: nothing re-reads that file
+		// against the config, so a marker in it would claim a relationship
+		// that no longer exists.
+		if directive == "" && keep {
+			out.WriteString(text)
+			out.WriteByte('\n')
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if group != "" {
+		return nil, fmt.Errorf("the %q group is never closed with %s", group, endMarker)
+	}
+	return out.Bytes(), nil
+}
+
+// parseMarker reads a `# @directive args` comment. Anything else - a domain, a
+// blank line, an ordinary comment - comes back with an empty directive and is
+// copied verbatim.
+func parseMarker(line string) (directive, argument string) {
+	text := strings.TrimSpace(line)
+	if !strings.HasPrefix(text, "#") {
+		return "", ""
+	}
+	text = strings.TrimSpace(strings.TrimPrefix(text, "#"))
+	if !strings.HasPrefix(text, "@") {
+		return "", ""
+	}
+	directive, argument, _ = strings.Cut(text, " ")
+	return directive, strings.TrimSpace(argument)
+}
+
+// ensureVMAllowlist returns a VM's host-side allowlist, writing seed there
+// when it is absent. Seeding here rather than only in `new` is what makes a
+// deleted file a RESET instead of a parse error: the generated rules reference
+// the file, so a mapped VM without one would stop squid, which is every
+// sandbox's network. Create what is absent, never touch what is present -
+// which is also why the runtime filter cannot reach an existing file: from the
+// moment it is written it is the user's, and turning a runtime off later
+// changes what the next VM starts from, not what this one may reach.
+func (p *Proxy) ensureVMAllowlist(name string, seed []byte) (string, error) {
 	path := config.VMAllowlistPath(name)
 	if body, err := os.ReadFile(path); err == nil {
 		return string(body), nil
@@ -93,7 +218,7 @@ func (p *Proxy) ensureVMAllowlist(name string, template []byte) (string, error) 
 	body := fmt.Sprintf("# Egress allowlist for VM %q, seeded from allowed_domains.txt on %s.\n"+
 		"# This file alone decides what this VM may CONNECT to - edit it with\n"+
 		"# `ptrbox allow %s`, or delete it to re-seed from the template.\n\n",
-		name, time.Now().Format("2006-01-02"), name) + string(template)
+		name, time.Now().Format("2006-01-02"), name) + string(seed)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}

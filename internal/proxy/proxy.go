@@ -180,7 +180,11 @@ func (p *Proxy) Sync() (SyncResult, error) {
 		{AllowlistPath, string(hostAllow)},
 	}
 	for _, name := range names {
-		body, err := p.ensureVMAllowlist(name, hostAllow)
+		seed, err := p.vmSeed(name, hostAllow)
+		if err != nil {
+			return Unchanged, err
+		}
+		body, err := p.ensureVMAllowlist(name, seed)
 		if err != nil {
 			return Unchanged, err
 		}

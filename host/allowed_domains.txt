@@ -2,6 +2,13 @@
 # TEMPLATE egress allowlist: what a NEW sandbox starts out allowed to reach.
 # One domain per line. Leading dot = domain AND subdomains.
 #
+# Groups between `# @requires <runtime>` and `# @end` are copied into a VM's
+# list only when that VM has the runtime (PTRBOX_NODE, PTRBOX_UV). A sandbox
+# with no node cannot run npm, so granting it the npm registry grants a
+# capability nothing in the VM can use - and every line here is a capability.
+# The markers are read only in THIS file; a VM's own list is plain, with a
+# note where a group was left out.
+#
 # Scope: `ptrbox new` copies this file into the VM's own list
 # (~/.config/ptrbox/allowed_domains.d/<vm>.txt), and from then on that file
 # ALONE decides that VM's egress - editing this one changes no existing
@@ -26,12 +33,18 @@ platform.claude.com        # OAuth
 claude.com                 # OAuth
 downloads.claude.ai        # installer + self-updates
 code.claude.com            # docs fetched by the built-in guide agent
-registry.npmjs.org         # Claude plugins/MCP installs AND your TS deps
 
-# --- Python toolchain ---
+# --- JavaScript, when PTRBOX_NODE is on ---
+# @requires node
+registry.npmjs.org         # npm/npx: your JS deps, and npx-based MCP servers
+# @end
+
+# --- Python, when PTRBOX_UV is on ---
+# @requires uv
 pypi.org                   # package index
 files.pythonhosted.org     # actual package downloads
-astral.sh                  # uv installer script
+astral.sh                  # uv's installer and self-updates
+# @end
 
 # --- GitHub / git over HTTPS ---
 # Also the classic exfiltration route: anything a compromised agent can read,
@@ -46,8 +59,13 @@ codeload.github.com        # tarball/zip downloads (pip-from-github uses it)
 # --- Agent-driven browser testing (Playwright) ---
 # Browser binary downloads. The matching OS libraries are baked into the VM
 # template's apt list (no root post-provision, so they can't be added later).
+# Playwright is driven from either runtime, and from neither there is nothing
+# to drive it with - hence both names on the marker: any one of them keeps the
+# group.
+# @requires node uv
 cdn.playwright.dev
 playwright.download.prss.microsoft.com
+# @end
 
 # --- Deliberately absent ---
 # Telemetry (statsig.anthropic.com, sentry.io, datadog intake): instead the
