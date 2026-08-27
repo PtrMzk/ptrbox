@@ -146,40 +146,50 @@ func TestAPerVMDistroChangesTheImageAndTheNarration(t *testing.T) {
 	}
 }
 
-// The toolchain reaches the guest script as a literal, and the summary says
-// which runtimes the VM ended up with.
-func TestAPerVMToolchainReachesTheGeneratedConfig(t *testing.T) {
+// The default: no runtime is installed unless a key asked for it, and the
+// summary says so rather than leaving "what is in this VM" to be discovered
+// by running something.
+func TestNoRuntimeReachesTheGeneratedConfigByDefault(t *testing.T) {
 	h := newHarness(t)
-	h.writeVMConfig("demo", "PTRBOX_TOOLCHAIN=\"\"\n")
 	h.mustRun("new", "demo")
 
-	if !strings.Contains(h.generated("demo"), `TOOLCHAIN=""`) {
+	body := h.generated("demo")
+	if !strings.Contains(body, `TOOLCHAIN=""`) {
 		t.Error("the empty runtime list is not rendered as an empty literal")
+	}
+	// Rendered even when node is off: the guest script decides at run time.
+	if !strings.Contains(body, `NODE_VERSION="lts"`) {
+		t.Error("the default node version is not in the generated config")
 	}
 	if !strings.Contains(h.stderr, "none (claude only)") {
 		t.Errorf("the summary does not report the empty toolchain:\n%s", h.stderr)
 	}
 }
 
-func TestTheDefaultToolchainAndNodeVersionReachTheGeneratedConfig(t *testing.T) {
+// Two keys, one list in the guest, in Toolchains order.
+func TestPerVMRuntimeKeysReachTheGeneratedConfig(t *testing.T) {
 	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_UV=true\nPTRBOX_NODE=true\nPTRBOX_NODE_VERSION=22.11.0\n")
 	h.mustRun("new", "demo")
 
 	body := h.generated("demo")
 	if !strings.Contains(body, `TOOLCHAIN="node uv"`) {
-		t.Error("the default runtime list is not in the generated config")
+		t.Error("the requested runtimes are not in the generated config")
 	}
-	if !strings.Contains(body, `NODE_VERSION="lts"`) {
-		t.Error("the default node version is not in the generated config")
+	if !strings.Contains(body, `NODE_VERSION="22.11.0"`) {
+		t.Error("the pinned node version is not in the generated config")
+	}
+	if !strings.Contains(h.stderr, "node uv") {
+		t.Errorf("the summary does not report the runtimes:\n%s", h.stderr)
 	}
 }
 
-func TestAnUnknownRuntimeAbortsNewBeforeAnyVMIsTouched(t *testing.T) {
+func TestAnUnparsableRuntimeKeyAbortsNewBeforeAnyVMIsTouched(t *testing.T) {
 	h := newHarness(t)
-	h.writeVMConfig("demo", "PTRBOX_TOOLCHAIN=\"node deno\"\n")
+	h.writeVMConfig("demo", "PTRBOX_NODE=ture\n")
 
 	if err := h.run("new", "demo"); err == nil {
-		t.Fatal("new accepted a runtime nothing installs")
+		t.Fatal("new accepted a runtime key that is not a boolean")
 	}
 	h.assertNotCalled("start")
 }

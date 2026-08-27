@@ -88,7 +88,7 @@ fi
 
 # claude and git are unconditional: the first is what the sandbox exists to
 # run, the second is how work leaves it. The language runtimes are whatever
-# PTRBOX_TOOLCHAIN asked for, which 30-toolchain.sh recorded here BEFORE it
+# the PTRBOX_<runtime> keys asked for, which 30-toolchain.sh recorded BEFORE it
 # installed any of them - so this compares the request against PATH rather
 # than against itself.
 #

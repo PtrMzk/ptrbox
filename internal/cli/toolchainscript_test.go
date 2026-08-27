@@ -4,11 +4,12 @@ package cli
 // run for real - the same treatment 15-extra-packages.sh gets next door, and
 // for the same reason: a guest assertion nothing executes is a comment.
 //
-// What is new here is that the script now branches. PTRBOX_TOOLCHAIN decides
-// which runtimes are installed, so the thing worth executing is that asking
-// for one runtime does not quietly install the other, that Claude Code is
-// installed either way, and that a runtime which was requested but did not
-// appear is a failed check rather than a VM that looks ready.
+// What is new here is that the script branches. The host resolves one boolean
+// per runtime (PTRBOX_NODE, PTRBOX_UV) into the list rendered in below, so the
+// thing worth executing is that asking for one runtime does not quietly
+// install the other, that Claude Code is installed either way, and that a
+// runtime which was requested but did not appear is a failed check rather than
+// a VM that looks ready. The empty list is now the DEFAULT, not an edge case.
 //
 // The stubs stand in for three `curl | bash` installers. Each one produces the
 // artifact the real installer produces - nvm's nvm.sh, a uv binary, a claude
@@ -121,7 +122,7 @@ func logOf(t *testing.T, dir, name string) string {
 	return string(body)
 }
 
-func TestTheDefaultToolchainInstallsNodeAndUvAndClaude(t *testing.T) {
+func TestAskingForNodeAndUvInstallsBothPlusClaude(t *testing.T) {
 	dir := toolchainScript(t, "node uv", "lts")
 
 	out, ok := installToolchain(t, dir)

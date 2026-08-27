@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -192,7 +193,7 @@ func TestEveryPerVMKeyIsAcceptedInAPerVMFile(t *testing.T) {
 		"PORT_MIN": "4000", "PORT_MAX": "5000",
 		"DISTRO": "ubuntu2404", "IMAGE_URL": "https://example.com/x.qcow2",
 		"EXTRA_PACKAGES": "latexmk", "CLAUDE_MODEL": "opus",
-		"TOOLCHAIN": "node", "NODE_VERSION": "22",
+		"NODE": "true", "UV": "true", "NODE_VERSION": "22",
 		"GIT_USER_NAME": "Someone", "GIT_USER_EMAIL": "someone@example.com",
 	}
 	for _, key := range PerVMKeys() {
@@ -346,44 +347,87 @@ func TestTheExampleConfigSetsNothingAsShipped(t *testing.T) {
 
 // --- language runtimes -------------------------------------------------------
 
-// The toolchain is a per-VM decision in practice: a document repo wants
-// neither runtime, a JS project wants node pinned. This is the case the
-// feature exists for.
-func TestToolchainAndNodeVersionAreSettablePerVM(t *testing.T) {
-	_, configPath := setup(t)
-	writeConfig(t, configPath, "PTRBOX_TOOLCHAIN=\"node uv\"\n")
-	writeVMConfig(t, "thesis", "PTRBOX_TOOLCHAIN=\"\"\n")
-	writeVMConfig(t, "webapp", "PTRBOX_TOOLCHAIN=node\nPTRBOX_NODE_VERSION=22.11.0\n")
+// The contract Toolchains carries: one name, three uses. Upper-cased it must
+// be a real key, and a per-VM settable one - a runtime that could only be
+// turned on host-wide would be a runtime every sandbox gets.
+func TestEveryRuntimeHasAPerVMConfigKey(t *testing.T) {
+	for _, tool := range Toolchains {
+		key := toolchainKey(tool)
+		if !slices.Contains(Keys, key) {
+			t.Errorf("runtime %q has no PTRBOX_%s in config.Keys", tool, key)
+		}
+		if !perVMKeys[key] {
+			t.Errorf("PTRBOX_%s is not settable per VM", key)
+		}
+	}
+}
 
+// A sandbox that asks for nothing gets nothing: this is the default the
+// runtimes were moved off, and the reason the two keys exist.
+func TestNoRuntimeIsInstalledUnlessAskedFor(t *testing.T) {
+	setup(t)
+	cfg := mustLoad(t)
+	if got := cfg.ToolchainList(); got != "" {
+		t.Errorf("default runtimes = %q, want none", got)
+	}
+	if cfg.Wants("node") || cfg.Wants("uv") {
+		t.Error("a runtime is on by default")
+	}
+	if cfg.NodeVersion != "lts" {
+		t.Errorf("default node version = %q, want lts (it applies once node is on)", cfg.NodeVersion)
+	}
+}
+
+// Each runtime is its own key, and the pair resolves to the list the guest
+// gets - in Toolchains order, not the order the file happens to mention them.
+func TestEachRuntimeIsItsOwnKeyAndSettablePerVM(t *testing.T) {
+	_, configPath := setup(t)
+	writeConfig(t, configPath, "PTRBOX_UV=true\n")
+	writeVMConfig(t, "thesis", "PTRBOX_UV=false\n")
+	writeVMConfig(t, "webapp", "PTRBOX_UV=false\nPTRBOX_NODE=true\nPTRBOX_NODE_VERSION=22.11.0\n")
+	writeVMConfig(t, "both", "PTRBOX_NODE=yes\n")
+
+	if got := mustLoad(t).ToolchainList(); got != "uv" {
+		t.Errorf("main config runtimes = %q, want uv alone", got)
+	}
 	if got := mustOverlay(t, "thesis").ToolchainList(); got != "" {
-		t.Errorf("thesis toolchain = %q, want none", got)
+		t.Errorf("thesis runtimes = %q, want none - a per-VM false must beat a global true", got)
 	}
 	webapp := mustOverlay(t, "webapp")
 	if got := webapp.ToolchainList(); got != "node" {
-		t.Errorf("webapp toolchain = %q, want node alone", got)
+		t.Errorf("webapp runtimes = %q, want node alone", got)
 	}
 	if webapp.NodeVersion != "22.11.0" {
 		t.Errorf("webapp node version = %q, want the pin", webapp.NodeVersion)
 	}
-	// And a sandbox that says nothing still gets both, at LTS.
-	base := mustLoad(t)
-	if got := base.ToolchainList(); got != "node uv" {
-		t.Errorf("default toolchain = %q, want both", got)
-	}
-	if base.NodeVersion != "lts" {
-		t.Errorf("default node version = %q, want lts", base.NodeVersion)
+	// uv falls through from the main config, node comes from the per-VM file:
+	// the list is assembled from two layers and still lands in install order.
+	if got := mustOverlay(t, "both").ToolchainList(); got != "node uv" {
+		t.Errorf("both runtimes = %q, want \"node uv\" in Toolchains order", got)
 	}
 }
 
-// Only runtimes 30-toolchain.sh knows how to install. A name nothing installs
-// would become a vm/verify.sh check that can never pass, which is a VM that
-// can never be created and no way to tell why from the message.
-func TestAnUnknownRuntimeIsRefused(t *testing.T) {
-	for _, name := range []string{"python", "rust", "npm", "Node"} {
-		t.Run(name, func(t *testing.T) {
+// The spellings someone writing a shell-ish config file would reach for. A
+// value outside them is an error rather than a falsy default: PTRBOX_NODE=ture
+// meaning "no node" is the quiet wrong answer.
+func TestRuntimeKeysTakeTheUsualBooleanSpellings(t *testing.T) {
+	for value, want := range map[string]bool{
+		"true": true, "yes": true, "on": true, "1": true, "TRUE": true,
+		"false": false, "no": false, "off": false, "0": false, "": false,
+	} {
+		t.Run(value, func(t *testing.T) {
 			setup(t)
-			writeVMConfig(t, "thesis", "PTRBOX_TOOLCHAIN="+name+"\n")
-			overlayErr(t, "thesis", "is not a runtime ptrbox installs")
+			writeVMConfig(t, "thesis", "PTRBOX_NODE=\""+value+"\"\n")
+			if got := mustOverlay(t, "thesis").Wants("node"); got != want {
+				t.Errorf("PTRBOX_NODE=%q -> %v, want %v", value, got, want)
+			}
+		})
+	}
+	for _, bad := range []string{"ture", "maybe", "node", "2", "y"} {
+		t.Run("bad/"+bad, func(t *testing.T) {
+			setup(t)
+			writeVMConfig(t, "thesis", "PTRBOX_NODE="+bad+"\n")
+			overlayErr(t, "thesis", "must be true or false")
 		})
 	}
 }

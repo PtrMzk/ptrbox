@@ -44,21 +44,21 @@
 #PTRBOX_EXTRA_PACKAGES="ripgrep sqlite3"
 
 # --- Language runtimes [per-VM] ----------------------------------------------
-# Which runtimes are installed alongside Claude Code, space separated.
-# Supported: node (via nvm) and uv (Python). Empty installs neither.
+# One boolean per runtime, all off by default: node (via nvm) and uv (Python).
 #
-# Claude Code itself is always installed and is not in this list - it is a
+# Claude Code itself is always installed and is not gated here - it is a
 # native binary and needs neither of them. What node buys you is npm/npx, so
-# dropping it also drops npx-based MCP servers and any JS tooling; a VM for a
-# LaTeX document or a Go service has no use for either runtime, and every
-# runtime present is more surface the agent can reach.
+# leaving it off also leaves out npx-based MCP servers and any JS tooling; a
+# VM for a LaTeX document or a Go service has no use for either runtime, and
+# every runtime present is more surface the agent can reach.
 #
 # Applies at VM creation, like the package list: re-create to change it. A
 # requested runtime that fails to install fails `ptrbox new` - vm/verify.sh
-# checks each name in this list is on PATH.
-#PTRBOX_TOOLCHAIN="node uv"
+# checks each requested runtime is on PATH.
+#PTRBOX_NODE=false
+#PTRBOX_UV=false
 #
-# What `nvm install` is given, when node is in the list above. "lts" tracks
+# What `nvm install` is given, when node is on above. "lts" tracks
 # the current LTS, which is the always-fresh default; a version pins a
 # project to the runtime it needs. Anything nvm understands works: lts, node,
 # lts/hydrogen, 22, 22.11.0.

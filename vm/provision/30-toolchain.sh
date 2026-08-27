@@ -2,7 +2,8 @@
 # =============================================================================
 # 30-toolchain.sh - developer toolchain. Runs as the unprivileged agent user.
 #
-# Which language runtimes land here is host-side config (PTRBOX_TOOLCHAIN),
+# Which language runtimes land here is host-side config (one boolean per
+# runtime: PTRBOX_NODE, PTRBOX_UV, all off by default), resolved into the list
 # rendered in below and validated on the host first - the same rule as the apt
 # list in 15-extra-packages.sh, and for the same reason: a runtime list read
 # from the repo mount would let the agent decide what its own sandbox contains.
