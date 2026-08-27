@@ -14,8 +14,19 @@ package cli
 // never touch what is present, say what was written and record it in the
 // manifest. Re-running install must be a no-op, because it is idempotent by
 // contract and people re-run it after every rebuild.
+//
+// "Never touch what is present" is right about not clobbering settings and
+// wrong about the case that actually happens: the person re-running install is
+// usually the one who upgraded ptrbox, and their config was seeded by an older
+// build. So a file that exists AND differs from the shipped one is offered
+// rather than skipped - the current version kept as a timestamped .bak, the
+// path said out loud, and nothing written without an explicit yes. An
+// identical file stays silent, which is what keeps the no-op a no-op.
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -52,33 +63,41 @@ This file is not a config file and is never read as one.
 // seedConfigDir makes ~/.config/ptrbox/ ready to edit: the directory, the
 // per-VM directory, and the annotated config file if there is not one already.
 // It reports what it created, so install's summary can point at it.
-func seedConfigDir(env *Env) error {
+func seedConfigDir(env *Env, update bool) error {
 	for _, dir := range []string{config.Dir(), config.VMDir()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
-	if err := seedFile(env, config.Path(), func() ([]byte, error) {
+	if err := seedFile(env, config.Path(), "settings file", update, func() ([]byte, error) {
 		return fs.ReadFile(env.Assets, "config/ptrbox.conf.example")
 	}); err != nil {
 		return err
 	}
-	return seedFile(env, filepath.Join(config.VMDir(), "README.txt"), func() ([]byte, error) {
-		return []byte(vmsREADME), nil
-	})
+	return seedFile(env, filepath.Join(config.VMDir(), "README.txt"), "per-VM README", update,
+		func() ([]byte, error) { return []byte(vmsREADME), nil })
 }
 
-// seedFile writes path from body if nothing is there yet. An existing file is
-// left exactly as it is - it is the user's, and install is not a command that
-// edits your settings.
-func seedFile(env *Env, path string, body func() ([]byte, error)) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	}
+// seedFile writes path from body if nothing is there yet, and offers to bring
+// it up to date if what is there differs. what names the file in the offer:
+// "replace your settings file?" and "replace your allowlist template?" are
+// different questions, and only one of them can lose something you typed.
+func seedFile(env *Env, path, what string, update bool, body func() ([]byte, error)) error {
 	content, err := body()
 	if err != nil {
 		return err
 	}
+	current, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if bytes.Equal(current, content) {
+			return nil // the no-op case, and it stays silent
+		}
+		return offerUpdate(env, path, what, current, content, update)
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -87,4 +106,43 @@ func seedFile(env *Env, path string, body func() ([]byte, error)) error {
 	}
 	env.Out.Say("installed %s", path)
 	return config.RecordManifest("wrote " + path)
+}
+
+// offerUpdate handles a seeded file that exists and differs from the version
+// this binary carries.
+//
+// Three answers, in the order they are asked: --update was given, so replace
+// it; there is someone to ask, so ask; or there is not, in which case say what
+// is available and change nothing. A scripted install must never rewrite
+// settings, which is why --update is its own flag rather than something -y
+// implies - "yes to every prompt" is about the things install was going to do
+// anyway.
+func offerUpdate(env *Env, path, what string, current, shipped []byte, update bool) error {
+	env.Out.Say("your %s differs from the one this ptrbox ships: %s", what, path)
+
+	switch {
+	case update:
+		// --update: asked for on the command line, which is the answer.
+	case env.Interactive && !env.NoInput:
+		if !confirm(env, fmt.Sprintf("replace it with the shipped %s? (yours is kept as a .bak)", what)) {
+			env.Out.Say("keeping yours")
+			return nil
+		}
+	default:
+		env.Out.Detail("keeping yours; `ptrbox install --update` replaces it, with a backup")
+		return nil
+	}
+
+	// The backup is written before the replacement and named in the output:
+	// this is the one place install can cost someone settings they typed, and
+	// an undo they have to go looking for is not an undo.
+	backup := path + ".bak-" + env.now().Format("20060102-150405")
+	if err := os.WriteFile(backup, current, 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, shipped, 0o644); err != nil {
+		return err
+	}
+	env.Out.Say("replaced %s; your version is at %s", path, backup)
+	return config.RecordManifest("replaced " + path + " (backup at " + backup + ")")
 }

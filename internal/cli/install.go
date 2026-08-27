@@ -27,15 +27,26 @@ const installHelp = `ptrbox install - set up the host
 
   -y, --yes      answer yes to every prompt
       --no-input never prompt; decline anything that would need an answer
+      --update    replace seeded files (config, per-VM README, allowlist
+                  template) that differ from the ones this ptrbox ships,
+                  keeping each current version as a timestamped .bak
 `
 
 func cmdInstall(env *Env, args []string) error {
+	// Deliberately not implied by --yes. Everything else -y answers is
+	// something install was going to do anyway; this one can replace a file
+	// you edited, so a scripted install must not be able to trigger it by
+	// accident.
+	update := false
+
 	for _, arg := range args {
 		switch arg {
 		case "-y", "--yes":
 			env.AssumeYes = true
 		case "--no-input":
 			env.NoInput = true
+		case "--update":
+			update = true
 		case "-h", "--help":
 			fmt.Fprint(env.Stdout, installHelp)
 			return nil
@@ -63,7 +74,13 @@ func cmdInstall(env *Env, args []string) error {
 	}
 	// The config directory is left ready to edit, not merely present: see
 	// seed.go for why an empty directory is not "set up".
-	if err := seedConfigDir(env); err != nil {
+	if err := seedConfigDir(env, update); err != nil {
+		return err
+	}
+	// Before Ensure, not after: Ensure pushes the template into the proxy VM,
+	// so an update decided afterwards would leave the VM serving the version
+	// that was just replaced until something else synced.
+	if err := reportAllowlist(env, update); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".ssh", "config.d"), 0o700); err != nil {
@@ -79,9 +96,6 @@ func cmdInstall(env *Env, args []string) error {
 	steps.Next("bringing up the egress proxy")
 	changed, err := env.Proxy.Ensure()
 	if err != nil {
-		return err
-	}
-	if err := reportAllowlist(env); err != nil {
 		return err
 	}
 
@@ -330,12 +344,20 @@ func onPath(dir string) bool {
 
 // --- allowlist reporting -----------------------------------------------------
 
-// The allowlist is the user's living capability list: seeded once, then never
-// overwritten - only reported on.
-func reportAllowlist(env *Env) error {
+// The allowlist template is the user's living capability list: seeded once,
+// then reported on - and, since it is the file a ptrbox upgrade is most likely
+// to have moved on from, offered as an update like the rest.
+//
+// Replacing it is the mildest of the three offers: it is the TEMPLATE new
+// sandboxes are seeded from, so no running VM's egress changes either way.
+func reportAllowlist(env *Env, update bool) error {
 	target := config.AllowlistPath()
 	current, err := os.ReadFile(target)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
+		// A first install: there is nothing to compare against yet, and
+		// Ensure is about to seed the shipped file below.
+		return nil
+	} else if err != nil {
 		return err
 	}
 	shipped, err := fs.ReadFile(env.Assets, "host/allowed_domains.txt")
@@ -345,11 +367,11 @@ func reportAllowlist(env *Env) error {
 	if bytes.Equal(current, shipped) {
 		return nil
 	}
-	env.Out.Say("%s differs from the shipped allowlist (yours is kept).", target)
 
 	// The shipped list is embedded, so there is no file to diff against any
 	// more. Naming the entries you are missing is what the diff was for
-	// anyway: a ptrbox upgrade that adds a domain should be visible.
+	// anyway: a ptrbox upgrade that adds a domain should be visible, and it is
+	// what makes the offer that follows a decision rather than a coin toss.
 	var missing []string
 	for _, entry := range allowEntries(shipped) {
 		if !allowContains(current, entry) {
@@ -359,7 +381,7 @@ func reportAllowlist(env *Env) error {
 	if len(missing) > 0 {
 		env.Out.Say("shipped entries yours does not have: %s", strings.Join(missing, " "))
 	}
-	return nil
+	return offerUpdate(env, target, "allowlist template", current, shipped, update)
 }
 
 // --- egress verification -----------------------------------------------------

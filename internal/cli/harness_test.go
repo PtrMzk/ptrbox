@@ -47,7 +47,8 @@ type harness struct {
 	repos   string
 	exe     string
 	editor  func(path string) error
-	tty     bool
+	tty     bool            // whether prompts can be asked at all
+	stdin   string          // what answers them when they can
 	missing map[string]bool // tools this host pretends not to have
 
 	// portInUse answers for the host's TCP ports; see newHarness.
@@ -147,6 +148,10 @@ func newHarness(t *testing.T) *harness {
 }
 
 // run executes one ptrbox invocation against a freshly built Env.
+//
+// tty and stdin default to "no terminal, nothing typed", which is the path a
+// script takes and what nearly every case here wants: an offer that cannot be
+// made changes nothing, so adding one must not move a single existing test.
 func (h *harness) run(args ...string) error {
 	h.t.Helper()
 	stderr, stdout := &bytes.Buffer{}, &bytes.Buffer{}
@@ -160,7 +165,7 @@ func (h *harness) run(args ...string) error {
 		Assets:      ptrbox.Assets,
 		Out:         ui.Printer{W: stderr},
 		Stdout:      stdout,
-		Stdin:       strings.NewReader(""),
+		Stdin:       strings.NewReader(h.stdin),
 		Keychain:    h.keychain,
 		Exe:         h.exe,
 		Interactive: h.tty,

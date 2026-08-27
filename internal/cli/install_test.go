@@ -146,6 +146,104 @@ func TestInstallNeverOverwritesAnExistingConfigFile(t *testing.T) {
 	}
 }
 
+// ...but not overwriting is not the same as hiding. The person re-running
+// install is usually the one who just upgraded ptrbox, and the newer shipped
+// file is otherwise unreachable without knowing the path.
+func TestInstallSaysWhenASeededFileIsOutOfDate(t *testing.T) {
+	h := newHarness(t)
+	writeFile(t, config.Path(), "PTRBOX_MEMORY=16GiB\n")
+	h.mustRun("install")
+
+	if !strings.Contains(h.stderr, "differs from the one this ptrbox ships") {
+		t.Errorf("install said nothing about the older config:\n%s", h.stderr)
+	}
+	if !strings.Contains(h.stderr, "--update") {
+		t.Errorf("install did not say how to update it:\n%s", h.stderr)
+	}
+}
+
+// An identical file says nothing at all: install is idempotent by contract and
+// people re-run it after every rebuild.
+func TestASecondInstallSaysNothingAboutTheFilesItSeeded(t *testing.T) {
+	h := newHarness(t)
+	h.noConfigFile()
+	h.mustRun("install")
+	h.mustRun("install")
+
+	for _, unwanted := range []string{"differs", "--update", "installed " + config.Path()} {
+		if strings.Contains(h.stderr, unwanted) {
+			t.Errorf("the second install mentioned %q:\n%s", unwanted, h.stderr)
+		}
+	}
+}
+
+// --update is what the developer wanted: the shipped file, with the current
+// one kept beside it. Deliberately not implied by --yes - everything else -y
+// answers is something install was going to do anyway.
+func TestUpdateReplacesTheSeededFilesAndKeepsABackup(t *testing.T) {
+	h := newHarness(t)
+	const mine = "PTRBOX_MEMORY=16GiB\n"
+	writeFile(t, config.Path(), mine)
+	h.mustRun("install", "--update")
+
+	shipped, err := fs.ReadFile(ptrbox.Assets, "config/ptrbox.conf.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, config.Path()); got != string(shipped) {
+		t.Error("--update did not install the shipped config file")
+	}
+
+	// The backup exists, holds what was there, and was named out loud: this
+	// is the one place install can cost someone settings they typed.
+	backup := config.Path() + ".bak-20260817-204500"
+	if got := readFile(t, backup); got != mine {
+		t.Errorf("the backup holds %q, want the previous config", got)
+	}
+	if !strings.Contains(h.stderr, backup) {
+		t.Errorf("the backup path was not reported:\n%s", h.stderr)
+	}
+}
+
+// The allowlist template gets the same treatment - it is the file a ptrbox
+// upgrade is most likely to have moved on from. No running VM's egress changes
+// either way: this is the TEMPLATE new sandboxes are seeded from.
+func TestUpdateReplacesTheAllowlistTemplate(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("install")
+	writeFile(t, config.AllowlistPath(), "only.example.com\n")
+	h.mustRun("install", "--update")
+
+	if !strings.Contains(h.allowlist(), "api.anthropic.com") {
+		t.Error("--update did not restore the shipped allowlist template")
+	}
+	if got := readFile(t, config.AllowlistPath()+".bak-20260817-204500"); got != "only.example.com\n" {
+		t.Errorf("the previous template was not backed up, got %q", got)
+	}
+}
+
+// A yes on a terminal does the same thing, and a no leaves the file alone.
+func TestTheUpdateOfferIsAQuestionOnATerminal(t *testing.T) {
+	for _, tc := range []struct {
+		answer  string
+		replace bool
+	}{{"y\n", true}, {"n\n", false}} {
+		t.Run(tc.answer, func(t *testing.T) {
+			h := newHarness(t)
+			h.tty = true
+			h.stdin = tc.answer
+			const mine = "PTRBOX_MEMORY=16GiB\n"
+			writeFile(t, config.Path(), mine)
+			h.mustRun("install")
+
+			replaced := readFile(t, config.Path()) != mine
+			if replaced != tc.replace {
+				t.Errorf("answer %q -> replaced=%v, want %v", tc.answer, replaced, tc.replace)
+			}
+		})
+	}
+}
+
 func TestTheSeededConfigDirIsRecordedInTheManifest(t *testing.T) {
 	h := newHarness(t)
 	h.noConfigFile()
@@ -457,7 +555,7 @@ func TestAnExistingAllowlistIsNeverOverwrittenByInstall(t *testing.T) {
 	if h.allowlist() != "my.private.registry\n" {
 		t.Errorf("the allowlist was rewritten: %q", h.allowlist())
 	}
-	h.assertOutputContains("differs from the shipped allowlist")
+	h.assertOutputContains("differs from the one this ptrbox ships")
 	// ...and the user's version is what reaches the proxy VM.
 	if !containsLine(h.proxyFile("/etc/squid/allowed_domains.txt"), "my.private.registry") {
 		t.Error("the user's allowlist did not reach the VM")
