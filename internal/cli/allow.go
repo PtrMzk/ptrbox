@@ -13,11 +13,12 @@ package cli
 // every domain must, so a domain in first position is a diagnosable mistake
 // rather than an ambiguity.
 //
-// The first touch of a VM's list seeds it from the template. The VM does not
-// have to exist yet: the file outliving the VM is what makes declaring
-// egress before `ptrbox new` - and reproducing it after `ptrbox rm` - work,
-// so an unknown name gets a warning (it is also the typo detector), not an
-// error.
+// The first touch of a VM's list seeds it from the template, filtered to that
+// VM's runtimes. The VM does not have to exist yet - the file outliving the VM
+// is what makes declaring egress before `ptrbox new`, and reproducing it after
+// `ptrbox rm`, work - but creating a list for a name nothing answers to is
+// asked about first (`--force` to skip the question), because that is also
+// exactly what a typo looks like and a typo must not leave state behind.
 //
 // The lists live on the HOST and are the source of truth; the proxy package
 // pushes them into the proxy VM, where squid validates the result and
@@ -44,6 +45,7 @@ const allowHelp = `ptrbox allow - manage a sandbox's egress allowlist
   ptrbox allow <vm> <domain>...   append domains (a leading dot covers subdomains)
   ptrbox allow <vm>               open the VM's allowlist in $EDITOR
   ptrbox allow <vm> --list        print the VM's allowlist
+  ptrbox allow --force <vm> ...   start a list for a VM that does not exist yet
 
 Each sandbox has its own list; the first touch seeds it from the template.
 What FUTURE sandboxes start with is the template itself -
@@ -54,12 +56,14 @@ connections; after editing files by hand, apply them with: ptrbox sync-proxy
 
 func cmdAllow(env *Env, args []string) error {
 	var positional []string
-	list := false
+	list, force := false, false
 
 	for _, arg := range args {
 		switch {
 		case arg == "--list":
 			list = true
+		case arg == "--force":
+			force = true
 		case arg == "-h" || arg == "--help":
 			fmt.Fprint(env.Stdout, allowHelp)
 			return nil
@@ -90,11 +94,25 @@ func cmdAllow(env *Env, args []string) error {
 		return listAllowlist(env, name, path)
 	}
 
-	// A name nothing answers to is almost always a typo, and this warning is
-	// the moment to catch it - but not an error: the file outliving the VM is
-	// what makes pre-create declaration and re-creates work.
-	if env.Lima.Available() && !env.Lima.Exists(name) {
-		env.Out.Warn("no VM named %q yet - this list takes effect when it is created", name)
+	// A name nothing answers to is almost always a typo. Creating a list for a
+	// VM that does not exist is still deliberate - declaring egress before
+	// `ptrbox new`, and keeping it across a re-create, are both real - but a
+	// typo must not leave state behind, so it is asked for rather than
+	// assumed.
+	//
+	// Only the CREATE is gated. A VM whose file already exists is edited
+	// without a question whether the VM is there or not, which is what keeps
+	// the re-create case quiet: the file outliving `ptrbox rm` is the feature.
+	if env.Lima.Available() && !env.Lima.Exists(name) && !hasVMAllowlist(name) {
+		env.Out.Warn("there is no VM named %q", name)
+		switch {
+		case force:
+		case env.Interactive && !env.NoInput &&
+			confirm(env, fmt.Sprintf("start an allowlist for %q anyway?", name)):
+			env.Out.Say("it takes effect when that VM is created")
+		default:
+			return fmt.Errorf("nothing written. Check the name, or declare egress for a VM that does not exist yet with: ptrbox allow --force %s", name)
+		}
 	}
 
 	// Seed-on-first-touch, from the template: the list must stay complete,
@@ -141,6 +159,15 @@ func cmdAllow(env *Env, args []string) error {
 	}
 	env.Out.Say("allowlist for %q reloaded (no tunnels dropped)", name)
 	return nil
+}
+
+// hasVMAllowlist reports whether this VM already has a list of its own. What
+// separates "declaring egress for a sandbox I am about to create" from a
+// mistyped name: the first is a file that does not exist yet, the second is
+// too, but only one of them was asked for.
+func hasVMAllowlist(name string) bool {
+	info, err := os.Stat(config.VMAllowlistPath(name))
+	return err == nil && !info.IsDir()
 }
 
 // listAllowlist prints what the VM may reach. Reads never seed: with no file

@@ -134,10 +134,11 @@ func TestADomainAlreadySeededFromTheTemplateIsRecognised(t *testing.T) {
 func TestTheFirstTouchSeedsTheListFromTheTemplate(t *testing.T) {
 	// Before the VM exists: `ptrbox allow` then `ptrbox new` is the
 	// declare-first workflow, and the seed is what keeps the resulting list
-	// complete rather than one domain long.
+	// complete rather than one domain long. --force is how that workflow says
+	// it meant the name, since the alternative reading is a typo.
 	h := installed(t)
-	h.mustRun("allow", "demo", "files.example.com")
-	h.assertOutputContains(`no VM named "demo" yet`)
+	h.mustRun("allow", "--force", "demo", "files.example.com")
+	h.assertOutputContains(`there is no VM named "demo"`)
 
 	list := h.vmList(t)
 	if !containsLine(list, "files.example.com") {
@@ -153,6 +154,53 @@ func TestTheFirstTouchSeedsTheListFromTheTemplate(t *testing.T) {
 	h.mustRun("new", "demo")
 	if !containsLine(h.pushedList(), "files.example.com") {
 		t.Error("the pre-declared grant did not reach the created VM")
+	}
+}
+
+// A mistyped VM name and a deliberate pre-declaration are the same input, so
+// the create is a question. Without a tty the answer is no, and the error says
+// how to mean it.
+func TestAnUnknownVMDoesNotSilentlyGetAList(t *testing.T) {
+	h := installed(t)
+	err := h.run("allow", "dmeo", "files.example.com")
+	if err == nil {
+		t.Fatal("a list was created for a VM that does not exist, unasked")
+	}
+	if !strings.Contains(err.Error(), "--force") {
+		t.Errorf("err = %v, want it to name --force", err)
+	}
+	if h.exists(config.VMAllowlistPath("dmeo")) {
+		t.Error("the refused name left a file behind")
+	}
+}
+
+// On a terminal it is a question, and yes creates the list.
+func TestAnUnknownVMIsAQuestionOnATerminal(t *testing.T) {
+	h := installed(t)
+	h.tty = true
+	h.stdin = "y\n"
+	h.mustRun("allow", "demo", "files.example.com")
+
+	if !containsLine(h.vmList(t), "files.example.com") {
+		t.Error("answering yes did not create the list")
+	}
+	h.assertOutputContains("takes effect when that VM is created")
+}
+
+// The question is only about CREATING a list. A VM that is gone but whose file
+// remains - which is every `ptrbox rm` - is edited without being asked about,
+// because that file is the whole point of surviving the rm.
+func TestARemovedVMsListIsStillEditedWithoutAQuestion(t *testing.T) {
+	h := withVM(t)
+	h.mustRun("rm", "demo")
+	h.fake.Reset()
+
+	h.mustRun("allow", "demo", "files.example.com")
+	if !containsLine(h.vmList(t), "files.example.com") {
+		t.Error("the surviving list was not edited")
+	}
+	if strings.Contains(h.stderr, "--force") {
+		t.Errorf("a list that already exists asked to be forced:\n%s", h.stderr)
 	}
 }
 
@@ -347,7 +395,9 @@ func TestListBeforeTheFirstTouchShowsTheTemplateAndSaysSo(t *testing.T) {
 // --- preconditions -----------------------------------------------------------
 
 func TestAMissingTemplatePointsAtInstall(t *testing.T) {
-	h := installed(t)
+	// An existing VM, so what this reaches is the missing template rather than
+	// the question about creating a list for a name nothing answers to.
+	h := withVM(t)
 	if err := os.Remove(config.AllowlistPath()); err != nil {
 		t.Fatal(err)
 	}

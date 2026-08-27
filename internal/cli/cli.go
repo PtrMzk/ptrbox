@@ -162,6 +162,7 @@ COMMANDS
                      add domains to that sandbox's egress allowlist, or open
                      it in $EDITOR with no domains; --list prints it. Each VM
                      has its own list, seeded from the template on first touch
+                     (--force starts one for a VM that does not exist yet)
   sync-proxy         push hand-edited allowlists/config to the proxy now
                      (the other commands do this themselves as they run)
   save <repo|vm>     archive the VM's Claude transcripts onto the host
