@@ -30,27 +30,21 @@ import (
 // unreachable-by-capitals - which held on Linux and not on the Mac, where the
 // filesystem case-folds and vms/readme resolved to vms/README. The charset
 // argument survives case folding; the case argument was the case argument.
-const vmsREADME = `Per-VM configuration overrides.
+const vmsREADME = `Per-VM configuration. One optional file per sandbox, named for its VM - the
+name ptrbox new prints and ssh lima-<name> uses.
 
-One optional file per sandbox, named for its VM - the name ptrbox new prints
-and ssh lima-<name> uses. Same format as ../config, and sparse in the same
-way: it states only what differs for that sandbox, and every key it does not
-mention falls through to ../config, and then to the built-in defaults.
+Same format as ../config, which lists every key and marks the ones legal here
+with [vm]. State only what differs; the rest falls through to ../config.
 
     $ cat > thesis <<'EOF'
-    PTRBOX_EXTRA_PACKAGES="texlive-latex-recommended texlive-latex-extra latexmk"
+    PTRBOX_EXTRA_PACKAGES="texlive-latex-recommended latexmk"
     PTRBOX_MEMORY=4GiB
     EOF
     $ ptrbox rm thesis && ptrbox new thesis
 
-Read once, at create time, and baked into the VM - so editing a file here does
-nothing until you re-create that sandbox. Keep the file when the VM goes away:
-it is what makes the next ptrbox new reproduce the same sandbox.
-
-Only settings a VM owns may appear: sizing, port range, distro, image, extra
-packages, Claude model, git identity. The rest describe your Mac - one proxy,
-one Keychain, one repo root - and ptrbox refuses the file rather than ignoring
-the line. ../config lists every key, with the per-VM ones marked.
+Read once, at create time: editing a file here does nothing until you
+re-create that sandbox. Keep it when the VM goes away - it is what makes the
+next ptrbox new reproduce the same sandbox.
 
 This file is not a config file and is never read as one.
 `
