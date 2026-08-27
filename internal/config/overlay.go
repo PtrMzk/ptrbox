@@ -42,6 +42,7 @@ var perVMKeys = map[string]bool{
 	"DISTRO":         true,
 	"IMAGE_URL":      true,
 	"EXTRA_PACKAGES": true,
+	"GO":             true,
 	"NODE":           true,
 	"NODE_VERSION":   true,
 	"UV":             true,

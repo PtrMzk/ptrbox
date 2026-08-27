@@ -44,17 +44,19 @@
 #PTRBOX_EXTRA_PACKAGES="ripgrep sqlite3"
 
 # --- Language runtimes [per-VM] ----------------------------------------------
-# One boolean per runtime, all off by default: node (via nvm) and uv (Python).
+# One boolean per runtime, all off by default: go (the upstream toolchain),
+# node (via nvm) and uv (Python).
 #
 # Claude Code itself is always installed and is not gated here - it is a
-# native binary and needs neither of them. What node buys you is npm/npx, so
-# leaving it off also leaves out npx-based MCP servers and any JS tooling; a
-# VM for a LaTeX document or a Go service has no use for either runtime, and
-# every runtime present is more surface the agent can reach.
+# native binary and needs none of them. What node buys you is npm/npx, so
+# leaving it off also leaves out npx-based MCP servers and any JS tooling;
+# every runtime present is more surface the agent can reach, and each one
+# costs its own group of allowlisted domains.
 #
 # Applies at VM creation, like the package list: re-create to change it. A
 # requested runtime that fails to install fails `ptrbox new` - vm/verify.sh
 # checks each requested runtime is on PATH.
+#PTRBOX_GO=false
 #PTRBOX_NODE=false
 #PTRBOX_UV=false
 #

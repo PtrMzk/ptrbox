@@ -30,8 +30,14 @@ export NO_PROXY="localhost,127.0.0.1"
 # Don't even attempt telemetry calls - their domains are deliberately off the
 # allowlist, so attempts would just spam TCP_DENIED in the squid log.
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-# Where the claude binary landed.
+# Where the claude binary landed - and, when PTRBOX_GO is on, the go symlink
+# 30-toolchain.sh puts beside it.
 export PATH="$HOME/.local/bin:$PATH"
+# Go's default GOBIN, where `go install` drops binaries. Named unconditionally,
+# like the nvm block above: a PATH entry for a directory that does not exist
+# costs nothing, and branching here would need this script to know the
+# toolchain.
+export PATH="$HOME/go/bin:$PATH"
 RC
 
 # Interactive-only quality of life. This one goes in ~/.bashrc, BELOW the

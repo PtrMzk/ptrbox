@@ -73,6 +73,22 @@ nvm() {
 NVMSH
 INSTALLER
   ;;
+*go.dev/VERSION*)
+  # What the real endpoint serves: the version on the first line, and more
+  # after it. head -n 1 in the script is what this is here to exercise.
+  printf 'go1.99.0\ntime 2026-08-01T00:00:00Z\n'
+  ;;
+*dl.google.com/go/*)
+  # A tarball shaped like Go's: a top-level go/ with bin/go and bin/gofmt.
+  # Shaped, because the script extracts it and symlinks into it - a stub that
+  # emitted nothing would leave "is go on PATH" answerable by neither.
+  unpacked="$(mktemp -d)"
+  mkdir -p "$unpacked/go/bin"
+  printf '#!/bin/sh\necho go\n' >"$unpacked/go/bin/go"
+  printf '#!/bin/sh\necho gofmt\n' >"$unpacked/go/bin/gofmt"
+  chmod 755 "$unpacked/go/bin/go" "$unpacked/go/bin/gofmt"
+  tar -C "$unpacked" -czf - go
+  ;;
 *astral.sh*)
   printf 'printf "#!/bin/sh\\necho uv\\n" >"$STUBS/uv"; chmod 755 "$STUBS/uv"\n'
   ;;
@@ -90,6 +106,10 @@ exit 0
 	writeScript(t, filepath.Join(stubs, "sudo"), "#!/bin/sh\nexit 1\n")
 	writeScript(t, filepath.Join(stubs, "systemctl"), "#!/bin/sh\nexit 1\n")
 	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
+	// The Go install reads the architecture rather than assuming arm64. dpkg
+	// exists in every guest and on no Mac, and `set -e` turns a missing one
+	// into a failed provision - so it is stubbed rather than depended on.
+	writeScript(t, filepath.Join(stubs, "dpkg"), "#!/bin/sh\necho arm64\n")
 
 	t.Setenv("HOME", dir)
 	t.Setenv("STUBS", stubs)
@@ -99,7 +119,12 @@ exit 0
 	// ~/.local/bin, which is exactly where a leak would come from. With the
 	// real PATH appended, "verify.sh fails when node is missing" passes on a
 	// bare CI box and fails on the laptop of anyone who has node.
-	t.Setenv("PATH", strings.Join([]string{stubs, "/usr/bin", "/bin"},
+	//
+	// This HOME's own .local/bin is on it, though: that is where the Go
+	// install symlinks, and in a real guest 40-userenv.sh puts it on PATH for
+	// every login shell. HOME here is the test's temp directory, so this
+	// cannot reach anything of the developer's.
+	t.Setenv("PATH", strings.Join([]string{stubs, filepath.Join(dir, ".local", "bin"), "/usr/bin", "/bin"},
 		string(os.PathListSeparator)))
 	t.Setenv("CURL_LOG", filepath.Join(dir, "curl.log"))
 	t.Setenv("NVM_LOG", filepath.Join(dir, "nvm.log"))
@@ -156,7 +181,7 @@ func TestAnEmptyToolchainInstallsOnlyClaudeCode(t *testing.T) {
 	if !strings.Contains(curl, "claude.ai") {
 		t.Errorf("Claude Code was not installed:\n%s", curl)
 	}
-	for _, unwanted := range []string{"nvm-sh/nvm", "astral.sh"} {
+	for _, unwanted := range []string{"nvm-sh/nvm", "astral.sh", "dl.google.com"} {
 		if strings.Contains(curl, unwanted) {
 			t.Errorf("%s was fetched for an empty toolchain:\n%s", unwanted, curl)
 		}
@@ -168,8 +193,39 @@ func TestAnEmptyToolchainInstallsOnlyClaudeCode(t *testing.T) {
 	}
 }
 
+// Go arrives as an unpacked tarball rather than an installer script, so what
+// is worth executing is the whole path: the version lookup, the architecture
+// read, the extraction, and the symlink that is what puts `go` where
+// vm/verify.sh looks.
+func TestGoIsInstalledFromTheOfficialTarball(t *testing.T) {
+	dir := toolchainScript(t, "go", "lts")
+
+	out, ok := installToolchain(t, dir)
+	if !ok {
+		t.Fatalf("provisioning failed:\n%s", out)
+	}
+	curl := logOf(t, dir, "curl.log")
+	if !strings.Contains(curl, "go.dev/VERSION") {
+		t.Errorf("the version was never asked for:\n%s", curl)
+	}
+	// The version and architecture both reach the URL: a hardcoded either
+	// would download the wrong thing on the machine that is not this one.
+	if !strings.Contains(curl, "dl.google.com/go/go1.99.0.linux-arm64.tar.gz") {
+		t.Errorf("the tarball URL is not built from the version and arch:\n%s", curl)
+	}
+	for _, want := range []string{".local/go/bin/go", ".local/bin/go"} {
+		if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
+			t.Errorf("%s is missing after the install: %v", want, err)
+		}
+	}
+	if line := verifyLine(t, dir, dir, "toolchain"); !strings.Contains(line, "OK") {
+		t.Errorf("verify.sh = %q, want OK", line)
+	}
+}
+
 func TestEachRuntimeCanBeAskedForAlone(t *testing.T) {
 	for _, tc := range []struct{ toolchain, fetched, skipped string }{
+		{"go", "dl.google.com", "nvm-sh/nvm"},
 		{"node", "nvm-sh/nvm", "astral.sh"},
 		{"uv", "astral.sh", "nvm-sh/nvm"},
 	} {

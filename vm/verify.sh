@@ -64,7 +64,7 @@ else
 fi
 
 # The probe domain is api.anthropic.com because it is the one entry every
-# seeded allowlist keeps: the runtime-gated groups (pypi, npm) exist only
+# seeded allowlist keeps: the runtime-gated groups (pypi, npm, go) exist only
 # in VMs that asked for the runtime, but a sandbox that cannot reach Anthropic
 # cannot run the agent the token below is about to be injected for.
 

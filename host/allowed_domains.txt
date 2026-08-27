@@ -3,9 +3,10 @@
 # One domain per line. Leading dot = domain AND subdomains.
 #
 # Groups between `# @requires <runtime>` and `# @end` are copied into a VM's
-# list only when that VM has the runtime (PTRBOX_NODE, PTRBOX_UV). A sandbox
-# with no node cannot run npm, so granting it the npm registry grants a
-# capability nothing in the VM can use - and every line here is a capability.
+# list only when that VM has the runtime (PTRBOX_NODE, PTRBOX_UV, PTRBOX_GO).
+# A sandbox with no node cannot run npm, so granting it the npm registry
+# grants a capability nothing in the VM can use - and every line here is a
+# capability.
 # The markers are read only in THIS file; a VM's own list is plain, with a
 # note where a group was left out.
 #
@@ -37,6 +38,16 @@ code.claude.com            # docs fetched by the built-in guide agent
 # --- JavaScript, when PTRBOX_NODE is on ---
 # @requires node
 registry.npmjs.org         # npm/npx: your JS deps, and npx-based MCP servers
+# @end
+
+# --- Go, when PTRBOX_GO is on ---
+# The module mirror and checksum database. `go build` needs neither for a
+# module with no dependencies, which is why ptrbox itself builds in a sandbox
+# without them - but anything with a require block does, and so does the
+# toolchain switch a newer go directive triggers.
+# @requires go
+proxy.golang.org
+sum.golang.org
 # @end
 
 # --- Python, when PTRBOX_UV is on ---

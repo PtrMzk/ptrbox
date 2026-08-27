@@ -3,7 +3,7 @@
 # 30-toolchain.sh - developer toolchain. Runs as the unprivileged agent user.
 #
 # Which language runtimes land here is host-side config (one boolean per
-# runtime: PTRBOX_NODE, PTRBOX_UV, all off by default), resolved into the list
+# runtime: PTRBOX_GO, PTRBOX_NODE, PTRBOX_UV, all off by default), resolved into the list
 # rendered in below and validated on the host first - the same rule as the apt
 # list in 15-extra-packages.sh, and for the same reason: a runtime list read
 # from the repo mount would let the agent decide what its own sandbox contains.
@@ -13,16 +13,16 @@
 # needs neither node nor Python.
 #
 # This must happen on the pre-firewall boot, and the done-marker guard is
-# therefore mandatory. The reason is narrower than it looks: three of the four
+# therefore mandatory. The reason is narrower than it looks: several of the
 # downloads below are from hosts that ARE on the allowlist
-# (.githubusercontent.com, astral.sh, claude.ai). The one that is not is
-# `nvm install`, which fetches the node tarball from nodejs.org - deliberately
-# absent from the allowlist, because provisioning is the only thing that needs
-# it. So a post-firewall re-run would get through most of this file and then
-# hang on node.
+# (.githubusercontent.com, astral.sh, claude.ai). The ones that are not are
+# `nvm install`, which fetches the node tarball from nodejs.org, and Go's
+# tarball from go.dev/dl.google.com - all deliberately absent from the
+# allowlist, because provisioning is the only thing that needs them. So a
+# post-firewall re-run would get through most of this file and then hang.
 #
-# The three installer URLs and the nvm pin are deliberately NOT config. They
-# are `curl | bash` sources; changing one should be an edit here, visible as a
+# The installer URLs and the nvm pin are deliberately NOT config. They are
+# `curl | bash` sources; changing one should be an edit here, visible as a
 # golden diff under tests/golden/, rather than a line in a config file.
 # =============================================================================
 set -eux
@@ -52,6 +52,23 @@ want() {
   *) return 1 ;;
   esac
 }
+
+if want go; then
+  # The official tarball rather than Debian's golang-go: this keeps Go
+  # user-owned under $HOME, like nvm and uv, in a VM that has no root after
+  # provisioning - and trixie's package trails upstream. The version is asked
+  # for rather than pinned (the same always-fresh argument as `nvm install
+  # --lts`), and the architecture is read rather than assumed.
+  go_version="$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -n 1)"
+  go_arch="$(dpkg --print-architecture)"
+  mkdir -p "$HOME/.local/bin"
+  curl -fsSL "https://dl.google.com/go/${go_version}.linux-${go_arch}.tar.gz" |
+    tar -C "$HOME/.local" -xzf -
+  # ~/.local/bin is on PATH for every login shell (40-userenv.sh), which is
+  # what puts go where vm/verify.sh looks for it.
+  ln -sf "$HOME/.local/go/bin/go" "$HOME/.local/bin/go"
+  ln -sf "$HOME/.local/go/bin/gofmt" "$HOME/.local/bin/gofmt"
+fi
 
 if want node; then
   # nvm is a shell function, not a binary, so after installing we must source

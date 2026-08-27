@@ -31,7 +31,7 @@ var Keys = []string{
 	"PROXY_HOST", "PROXY_PORT", "PROXY_CPUS", "PROXY_MEMORY", "PROXY_DISK",
 	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE", "SQUID_LOG",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
-	"EXTRA_PACKAGES", "NODE", "NODE_VERSION", "UV",
+	"EXTRA_PACKAGES", "GO", "NODE", "NODE_VERSION", "UV",
 }
 
 // SandboxProxyPorts is how many sandbox VMs can hold a proxy port at once.
@@ -70,7 +70,7 @@ func (c *Config) SandboxPortMax() int { return c.ProxyPort + SandboxProxyPorts }
 // Claude Code is deliberately absent - it is installed unconditionally, being
 // the thing a sandbox exists to run, and it is a native binary that needs
 // neither of these.
-var Toolchains = []string{"node", "uv"}
+var Toolchains = []string{"go", "node", "uv"}
 
 // toolchainKey is the config key that switches a runtime on.
 func toolchainKey(tool string) string { return strings.ToUpper(tool) }
@@ -176,6 +176,7 @@ func defaults() map[string]string {
 		// What node buys is npm/npx - so a sandbox without it also has no
 		// npx-based MCP servers, which is the one consequence of this default
 		// worth knowing before it surprises someone.
+		"GO":   "false",
 		"NODE": "false",
 		"UV":   "false",
 		// What `nvm install` is given. "lts" is the always-fresh default;
