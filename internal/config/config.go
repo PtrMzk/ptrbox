@@ -41,11 +41,15 @@ var Keys = []string{
 //
 //   - the sizing is the answer to a measurement, not a preference. Item 25
 //     settled CPUs at their floor and established that a smaller disk frees
-//     nothing (Lima's diffdisk is sparse); the memory is a project decision
-//     pending item 28, and getting it wrong OOM-kills squid, which takes the
-//     network away from every running sandbox at once. A knob whose
-//     documentation says "leave this alone" is a comment wearing a key's
-//     clothes.
+//     nothing (Lima's diffdisk is sparse); item 28 measured the memory:
+//     squid's cgroup memory.peak was 37.5 MiB under real load (live Claude
+//     sessions streaming through the tunnels, npm and Go module pulls;
+//     2026-08-28), with the VM as a whole at 123 MiB used of 470. 512 MiB is
+//     kept deliberately: there is no swap, so the failure mode of trimming
+//     is an OOM kill of squid - every running sandbox's network at once -
+//     and the 12x margin costs a few hundred MB of idle host RAM. A knob
+//     whose documentation says "leave this alone" is a comment wearing a
+//     key's clothes.
 //   - ProxyHost is Lima usernet's gateway. If a Lima release ever moves it,
 //     every ptrbox on earth breaks the same way on the same day, and the fix
 //     is a release, not a line each of us edits.
