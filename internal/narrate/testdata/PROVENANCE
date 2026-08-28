@@ -61,3 +61,44 @@ fixture's trustworthiness is worth less than nothing if it is untracked.
 limafake replays this file when a test asks it to (internal/cli/voice_test.go
 sets it as StartOutput), so the command-level tests and the translator's own
 tests run on identical bytes.
+
+
+limactl-start-reboot.log
+========================
+
+The second authority (TODO 27): the same command against an instance that
+already exists, which is the path `ptrbox new`'s reboot and every
+`ptrbox start` take - the common path, since a VM is created once and
+resumed many times.
+
+THIS COPY IS CAPTURED.
+
+    captured   2026-08-28
+    lima       the same install as the cold capture (2.2.0 on 2026-08-19);
+               the format is byte-compatible with it. If lima has been
+               upgraded and this line not corrected, re-read the version.
+    host       macOS, Apple Silicon
+    command    limactl stop scratch; limactl start scratch
+    state      instance existed and was provisioned; image cache warm and
+               irrelevant - a reboot never consults it, which is why this
+               file has no image lines at all
+
+Same editing rule: $HOME replaced by /Users/you, nothing else touched.
+
+What it justified: exactly one new pattern, `Using the existing instance` -
+every other line already appears, shape for shape, in the cold capture.
+TODO 27 predicted three shapes; the other two are NOT here and therefore
+still have no patterns:
+
+  - "Using cache" belongs to a warm-cache CREATE (lima logs "Attempting to
+    download the image" and then does not download). A reboot never reaches
+    that code. Capturing one means `limactl delete` + `ptrbox new` with the
+    cache intact, teeing the start.
+  - the waitless satisfied-requirement during shutdown belongs to `limactl
+    stop` output, which has never been captured. Its symptom is already
+    handled defensively (an unattached "satisfied" names its phase), but
+    the stop stream as a whole still renders verbatim.
+
+Both files are replayed: the translator's tests read each directly, and
+limafake serves the cold capture for a create (StartOutput) and this one for
+a restart (RestartOutput), which is the same split real lima makes.

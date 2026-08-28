@@ -27,14 +27,20 @@ import (
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
 
-func transcript(t *testing.T) string {
+func fixture(t *testing.T, name string) string {
 	t.Helper()
-	body, err := os.ReadFile("testdata/limactl-start.log")
+	body, err := os.ReadFile("testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(body)
 }
+
+// transcript is the cold-create capture; rebootTranscript is the start of an
+// instance that already exists. Two authorities, replayed separately: a
+// pattern only one of them justifies is asserted against that one.
+func transcript(t *testing.T) string       { return fixture(t, "limactl-start.log") }
+func rebootTranscript(t *testing.T) string { return fixture(t, "limactl-start-reboot.log") }
 
 // transcriptLine returns the one captured line containing needle. Tests use
 // it instead of quoting lima's wording inline, so a re-capture that reworded
@@ -125,15 +131,52 @@ func TestTheLongWaitIsTheOneThatIsTimed(t *testing.T) {
 
 func TestNothingIsDropped(t *testing.T) {
 	// The rule the whole design rests on: the filter narrows what is loud,
-	// never what is visible. One transcript line in, at least one line out.
-	s, buf := newStream(t)
-	text := transcript(t)
-	feed(s, text, nil)
+	// never what is visible. One transcript line in, at least one line out -
+	// on both captures.
+	for _, name := range []string{"limactl-start.log", "limactl-start-reboot.log"} {
+		t.Run(name, func(t *testing.T) {
+			s, buf := newStream(t)
+			text := fixture(t, name)
+			feed(s, text, nil)
 
-	in := len(lines(text))
-	got := len(lines(buf.String()))
-	if got < in {
-		t.Errorf("%d lines in, %d out - the filter is hiding things:\n%s", in, got, buf.String())
+			in := len(lines(text))
+			got := len(lines(buf.String()))
+			if got < in {
+				t.Errorf("%d lines in, %d out - the filter is hiding things:\n%s", in, got, buf.String())
+			}
+		})
+	}
+}
+
+// The second capture: lima 2.2.0 starting an instance that already exists,
+// which is `ptrbox new`'s reboot and every `ptrbox start`. What is new is the
+// first line; the rest must translate exactly as the cold boot does, and the
+// elapsed times below are differences between the reboot fixture's own
+// timestamps (11:39:22 to 11:39:30 - the whole resume is eight seconds).
+func TestTheRebootIsTranslatedToo(t *testing.T) {
+	s, buf := newStream(t)
+	feed(s, rebootTranscript(t), nil)
+	out := buf.String()
+
+	for _, want := range []string{
+		"using the existing instance scratch",
+		"ptrbox: booting the virtual machine",
+		"ptrbox: connecting (1/3): ssh [7s]",
+		"ptrbox: provisioning (1/1): toolchain ready [8s]",
+		"ptrbox: finishing (1/1): boot scripts must have finished [8s]",
+		"lima reports the instance ready [8s]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in the translation:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Using the existing instance") {
+		t.Errorf("lima's wording survived the translation:\n%s", out)
+	}
+	// A reboot never touches the image, so no download step may be invented -
+	// the wrong-step failure the first smoke run caught on the create path.
+	if strings.Contains(out, "downloading the") {
+		t.Errorf("a reboot claimed an image download:\n%s", out)
 	}
 }
 
@@ -467,8 +510,9 @@ func TestTheStructuredFieldsOfALineAreRead(t *testing.T) {
 
 func TestEveryCapturedLineIsEitherALogEntryOrKnownNotToBe(t *testing.T) {
 	// The parser is all-or-nothing on purpose, so this is the check that the
-	// fixture and the parser still agree about which lines are which. Exactly
-	// one captured line is not logrus: the download progress line.
+	// fixtures and the parser still agree about which lines are which. The
+	// cold capture has exactly one non-logrus line - the download progress
+	// line - and the reboot capture, which never touches the image, has none.
 	var plain []string
 	for _, line := range lines(transcript(t)) {
 		if _, ok := parseEntry(line); !ok {
@@ -477,6 +521,11 @@ func TestEveryCapturedLineIsEitherALogEntryOrKnownNotToBe(t *testing.T) {
 	}
 	if len(plain) != 1 || !strings.HasPrefix(plain[0], "Downloading the image (") {
 		t.Errorf("the non-log lines of the capture are %q, want just the download progress line", plain)
+	}
+	for _, line := range lines(rebootTranscript(t)) {
+		if _, ok := parseEntry(line); !ok {
+			t.Errorf("a reboot line is not a log entry: %q", line)
+		}
 	}
 }
 

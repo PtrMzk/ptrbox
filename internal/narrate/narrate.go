@@ -31,11 +31,14 @@
 // no elapsed counter at all - so not one line matched, every line fell
 // through to "shown verbatim", and the suite stayed green because the fixture
 // had been invented in the same sitting as the patterns. Hence the rule that
-// outlived it: a pattern is added by adding a line to
-// testdata/limactl-start.log first, and that file is a capture. Shapes lima
-// might emit but did not emit there - "Using the existing instance", say -
-// are deliberately absent below; guessing at them is what produced a
-// translator that never ran.
+// outlived it: a pattern is added by adding a line to a transcript in
+// testdata first, and those files are captures - limactl-start.log (a cold
+// create) and limactl-start-reboot.log (a start of an existing instance).
+// Shapes lima might emit but has not been captured emitting are deliberately
+// absent below; guessing at them is what produced a translator that never
+// ran. "Using the existing instance" sat on that list until the reboot
+// transcript carried it; "Using cache" still does, because a reboot never
+// touches the image and no warm-cache create has been captured yet.
 //
 // Elapsed times are differences between lima's own timestamps rather than a
 // clock this package starts. That keeps them honest across a slow start, and
@@ -158,8 +161,8 @@ func (s *Stream) keep(line string) {
 
 // --- the patterns ------------------------------------------------------------
 //
-// Every one of these is lima's wording, taken from the recorded transcript in
-// testdata. Add a pattern by adding a line to that transcript first.
+// Every one of these is lima's wording, taken from a recorded transcript in
+// testdata. Add a pattern by adding a line to a transcript first.
 
 var (
 	// "[hostagent] ", "[limactl] " and friends prefix the message inside msg.
@@ -195,6 +198,12 @@ var (
 	// be the same kind of wrong.
 	imageProgress   = regexp.MustCompile(`^Downloading the image \(`)
 	downloadedImage = regexp.MustCompile(`^Downloaded the image\b`)
+
+	// A start against an instance that already exists: the reboot inside
+	// `ptrbox new`, and every `ptrbox start` - the common path, since each VM
+	// is created once and resumed many times. The name is backtick-quoted the
+	// way a requirement's is.
+	usingExisting = regexp.MustCompile(`^Using the existing instance\s*(.*)$`)
 
 	startingInstance = regexp.MustCompile(`^Starting the instance\b`)
 	ready            = regexp.MustCompile(`^READY\b`)
@@ -285,6 +294,17 @@ func (s *Stream) translate(line string, e entry) {
 
 	case downloadedImage.MatchString(message):
 		s.Out.Detail("image downloaded%s", s.elapsed(e))
+
+	case usingExisting.MatchString(message):
+		// A detail rather than a heading: it arrives one line ahead of
+		// "Starting the instance", and what it adds is the reassurance that
+		// this is a resume - nothing is being created or downloaded.
+		m := usingExisting.FindStringSubmatch(message)
+		if name := unquote(m[1]); name != "" {
+			s.Out.Detail("using the existing instance %s", name)
+		} else {
+			s.Out.Detail("using the existing instance")
+		}
 
 	case startingInstance.MatchString(message):
 		s.Out.Say("booting the virtual machine")

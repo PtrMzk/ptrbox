@@ -115,6 +115,32 @@ func limaTranscript(t *testing.T) []byte {
 	return body
 }
 
+func limaRebootTranscript(t *testing.T) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "narrate", "testdata", "limactl-start-reboot.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func TestTheRebootIsNarratedFromItsOwnTranscript(t *testing.T) {
+	// `ptrbox new` starts the VM twice: a create, then a reboot of the
+	// now-existing instance. Real lima emits a different stream on the second
+	// path, so the fake replays the reboot capture there - and the narration
+	// of both invocations has to land in one run's output.
+	h := newHarness(t)
+	h.fake.StartOutput = limaTranscript(t)
+	h.fake.RestartOutput = limaRebootTranscript(t)
+
+	h.mustRun("new", "demo")
+	h.assertOutputContains("downloading the debian13 image (first boot only)")
+	h.assertOutputContains("using the existing instance")
+	if strings.Contains(h.output(), "Using the existing instance") {
+		t.Errorf("lima's wording for the resume survived the translation:\n%s", h.output())
+	}
+}
+
 func TestNewTranslatesTheBootIntoPtrboxsVoice(t *testing.T) {
 	h := newHarness(t)
 	h.fake.StartOutput = limaTranscript(t)

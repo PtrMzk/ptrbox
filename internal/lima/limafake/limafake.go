@@ -52,6 +52,13 @@ type Fake struct {
 	// transcript by the ones that exercise the output translator.
 	StartOutput []byte
 
+	// RestartOutput, when set, is what a start of an EXISTING instance
+	// (`start <name>`, no --name) writes instead - the real lima emits a
+	// different stream there ("Using the existing instance", no image
+	// lines), and `ptrbox new`'s reboot takes exactly that path. Unset, the
+	// restart replays StartOutput like everything else.
+	RestartOutput []byte
+
 	// Canned failures.
 	VerifyFails      bool // `bash -lc <verify.sh>` reports a failed sandbox
 	ProxyVerifyFails bool // `bash -lc <verify-proxy.sh>` reports dead egress
@@ -134,8 +141,12 @@ func (f *Fake) validate(c lima.Cmd) error {
 }
 
 func (f *Fake) start(c lima.Cmd) error {
-	if len(f.StartOutput) > 0 && c.Stderr != nil {
-		c.Stderr.Write(f.StartOutput)
+	output := f.StartOutput
+	if arg(c.Args, 1) != "--name" && len(f.RestartOutput) > 0 {
+		output = f.RestartOutput
+	}
+	if len(output) > 0 && c.Stderr != nil {
+		c.Stderr.Write(output)
 	}
 	if f.StartFails {
 		fmt.Fprintln(c.Stderr, "limactl: FATA start failed")
