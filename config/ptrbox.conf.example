@@ -31,6 +31,10 @@
 # [vm] What `nvm install` gets: lts, node, lts/hydrogen, 22, 22.11.0.
 #PTRBOX_NODE_VERSION=lts
 
+# [vm] Browser testing. Installs ~20 Chromium/GTK/X11 packages and allows the
+# Playwright CDNs. Needs node or uv to drive it. Off unless you test browsers.
+#PTRBOX_PLAYWRIGHT=false
+
 # [vm] Sizing. Disk is sparse; memory is the one to watch with several VMs.
 #PTRBOX_CPUS=4
 #PTRBOX_MEMORY=8GiB

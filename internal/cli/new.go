@@ -145,6 +145,7 @@ func cmdNew(env *Env, args []string) error {
 		"EXTRA_PACKAGES": cfg.ExtraPackageList(),
 		"TOOLCHAIN":      cfg.ToolchainList(),
 		"NODE_VERSION":   cfg.NodeVersion,
+		"PLAYWRIGHT":     fmt.Sprint(cfg.Playwright),
 		"CLAUDE_MODEL":   cfg.ClaudeModel,
 		"GIT_USER_NAME":  cfg.GitUserName,
 		"GIT_USER_EMAIL": cfg.GitUserEmail,

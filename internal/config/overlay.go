@@ -45,6 +45,7 @@ var perVMKeys = map[string]bool{
 	"GO":             true,
 	"NODE":           true,
 	"NODE_VERSION":   true,
+	"PLAYWRIGHT":     true,
 	"UV":             true,
 	"CLAUDE_MODEL":   true,
 	"GIT_USER_NAME":  true,

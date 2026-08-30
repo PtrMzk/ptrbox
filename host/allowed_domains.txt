@@ -67,13 +67,12 @@ codeload.github.com        # tarball/zip downloads (pip-from-github uses it)
 .githubusercontent.com     # raw content, release assets (uv's managed Pythons
                            #   redirect to objects.githubusercontent.com)
 
-# --- Agent-driven browser testing (Playwright) ---
-# Browser binary downloads. The matching OS libraries are baked into the VM
-# template's apt list (no root post-provision, so they can't be added later).
-# Playwright is driven from either runtime, and from neither there is nothing
-# to drive it with - hence both names on the marker: any one of them keeps the
-# group.
-# @requires node uv
+# --- Agent-driven browser testing (Playwright), when PTRBOX_PLAYWRIGHT is on ---
+# Browser binary downloads. The matching OS libraries are installed by
+# 10-base.sh under the same flag (no root post-provision, so they can't be
+# added later) - so this group and those ~20 packages turn on together, and a
+# VM that will never open a browser carries neither.
+# @requires playwright
 cdn.playwright.dev
 playwright.download.prss.microsoft.com
 # @end

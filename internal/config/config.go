@@ -30,7 +30,7 @@ var Keys = []string{
 	"REPO_ROOT", "CPUS", "MEMORY", "DISK", "PORT_MIN", "PORT_MAX",
 	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
-	"EXTRA_PACKAGES", "GO", "NODE", "NODE_VERSION", "UV",
+	"EXTRA_PACKAGES", "GO", "NODE", "NODE_VERSION", "PLAYWRIGHT", "UV",
 }
 
 // The egress proxy VM, fixed rather than configured.
@@ -109,6 +109,27 @@ var Toolchains = []string{"go", "node", "uv"}
 // toolchainKey is the config key that switches a runtime on.
 func toolchainKey(tool string) string { return strings.ToUpper(tool) }
 
+// featureOnly names capabilities that gate an allowlist group and a package
+// set but are NOT runtimes, so they cannot live in Toolchains.
+//
+// Playwright is the reason this list exists. It is driven from either runtime
+// and there is no `playwright` command on PATH - it is run as `npx playwright`
+// - so a Toolchains entry would make vm/verify.sh demand a binary that never
+// appears. It still needs a switch of its own, because the ~20 Chromium
+// runtime libraries it needs are the largest package set in the guest and
+// nothing else uses them.
+var featureOnly = []string{"playwright"}
+
+// Features are the names a `# @requires` marker in the allowlist template may
+// name: every runtime, plus the capabilities above. A marker naming anything
+// else is an error, which is what stops a misspelling from silently granting
+// a group to every VM.
+func Features() []string {
+	names := make([]string, 0, len(Toolchains)+len(featureOnly))
+	names = append(names, Toolchains...)
+	return append(names, featureOnly...)
+}
+
 // Guest images, one per supported distro. Both are apt-based on purpose: the
 // provisioning scripts install Debian package names, and since the time_t
 // transition those names are identical on trixie and noble. A dnf or pacman
@@ -158,6 +179,13 @@ type Config struct {
 	ExtraPackages   []string
 	Toolchain       []string
 	NodeVersion     string
+	Playwright      bool
+
+	// features is the resolved answer to `# @requires`: the runtimes in
+	// Toolchain plus any capability that is on. Separate from Toolchain
+	// because that list has a second job - the guest records it and
+	// vm/verify.sh requires every name in it to be a command on PATH.
+	features []string
 
 	// Warnings are non-fatal notes from loading - an unrecognised key in the
 	// config file, say. The caller prints them; nothing here writes to a
@@ -197,6 +225,11 @@ func defaults() map[string]string {
 		"GO":   "false",
 		"NODE": "false",
 		"UV":   "false",
+		// Browser testing. Off by default like the runtimes, and for a
+		// sharper reason: it is the only feature whose cost is ~20 apt
+		// packages of GTK, X11 and font libraries in every sandbox, whether
+		// or not anything will ever open a browser.
+		"PLAYWRIGHT": "false",
 		// What `nvm install` is given. "lts" is the always-fresh default;
 		// a version pins a project to the runtime it needs.
 		"NODE_VERSION": "lts",
@@ -340,6 +373,17 @@ func load(vm string) (*Config, error) {
 		if on {
 			cfg.Toolchain = append(cfg.Toolchain, tool)
 		}
+	}
+
+	// Capabilities that are not runtimes, resolved the same way. features is
+	// what the allowlist seed matches `# @requires` against, so it holds both.
+	cfg.Playwright, err = parseBoolean("PLAYWRIGHT", values["PLAYWRIGHT"])
+	if err != nil {
+		return nil, err
+	}
+	cfg.features = append(cfg.features, cfg.Toolchain...)
+	if cfg.Playwright {
+		cfg.features = append(cfg.features, "playwright")
 	}
 
 	// Numbers first, so a later range check has something to compare.

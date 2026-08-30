@@ -139,13 +139,13 @@ func SeedFor(template []byte, cfg *config.Config) ([]byte, error) {
 			}
 			runtimes := strings.Fields(argument)
 			if len(runtimes) == 0 {
-				return nil, fmt.Errorf("line %d: %s names no runtime (expected one of: %s)",
-					line, requiresMarker, strings.Join(config.Toolchains, " "))
+				return nil, fmt.Errorf("line %d: %s names no feature (expected one of: %s)",
+					line, requiresMarker, strings.Join(config.Features(), " "))
 			}
 			for _, runtime := range runtimes {
-				if !slices.Contains(config.Toolchains, runtime) {
-					return nil, fmt.Errorf("line %d: %q is not a runtime (expected one of: %s)",
-						line, runtime, strings.Join(config.Toolchains, " "))
+				if !slices.Contains(config.Features(), runtime) {
+					return nil, fmt.Errorf("line %d: %q is not a feature (expected one of: %s)",
+						line, runtime, strings.Join(config.Features(), " "))
 				}
 			}
 			group, keep = argument, slices.ContainsFunc(runtimes, cfg.Wants)

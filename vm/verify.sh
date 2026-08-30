@@ -125,6 +125,27 @@ else
   ok "extra packages"
 fi
 
+# Playwright's OS libraries, when PTRBOX_PLAYWRIGHT asked for them.
+# 10-base.sh writes the list before installing it, so this compares the
+# request against what dpkg actually holds rather than against itself. No
+# record means the flag was off, which is the default and not a failure.
+if [ -r "$state/playwright-packages" ]; then
+  missing=""
+  while read -r pkg; do
+    [ -n "$pkg" ] || continue
+    status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+    case "$status" in
+    *"install ok installed"*) ;;
+    *) missing="$missing $pkg" ;;
+    esac
+  done <"$state/playwright-packages"
+  if [ -z "$missing" ]; then
+    ok "playwright libraries"
+  else
+    bad "playwright libraries" "missing:$missing"
+  fi
+fi
+
 if [ "$fails" -ne 0 ]; then
   printf '\n%s check(s) FAILED - do not trust this VM\n' "$fails" >&2
   exit 1

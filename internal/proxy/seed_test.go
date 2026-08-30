@@ -174,10 +174,21 @@ func TestTheShippedTemplateFiltersBothWays(t *testing.T) {
 	}
 
 	both := seedFor(t, string(template), "PTRBOX_NODE=true\nPTRBOX_UV=true\n")
-	for _, want := range []string{"registry.npmjs.org", "pypi.org", "astral.sh", "cdn.playwright.dev"} {
+	for _, want := range []string{"registry.npmjs.org", "pypi.org", "astral.sh"} {
 		if !strings.Contains(both, want) {
 			t.Errorf("%s is missing from a VM that has both runtimes", want)
 		}
+	}
+	// Playwright is its own flag, not a consequence of having a runtime: the
+	// CDNs are useless without the Chromium packages, and those cost ~20 apt
+	// packages that only PTRBOX_PLAYWRIGHT installs. Both runtimes on is
+	// still not a browser-testing VM.
+	if strings.Contains(both, "cdn.playwright.dev") {
+		t.Error("the Playwright CDNs were granted to a VM that has no Chromium libraries")
+	}
+	withBrowser := seedFor(t, string(template), "PTRBOX_NODE=true\nPTRBOX_PLAYWRIGHT=true\n")
+	if !strings.Contains(withBrowser, "cdn.playwright.dev") {
+		t.Error("cdn.playwright.dev is missing from a VM that asked for Playwright")
 	}
 }
 

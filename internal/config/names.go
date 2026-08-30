@@ -70,10 +70,11 @@ func (c *Config) ExtraPackageList() string { return strings.Join(c.ExtraPackages
 // space-separated line, empty when no runtime was asked for.
 func (c *Config) ToolchainList() string { return strings.Join(c.Toolchain, " ") }
 
-// Wants reports whether a runtime was asked for. The allowlist seed asks this
-// (a runtime's package hosts are granted only to VMs that have the runtime),
-// and so does anything else that has to agree with what the guest will hold.
-func (c *Config) Wants(tool string) bool { return slices.Contains(c.Toolchain, tool) }
+// Wants reports whether a runtime or capability was asked for - any name in
+// Features. The allowlist seed asks this (a feature's hosts are granted only
+// to VMs that have the feature), and so does anything else that has to agree
+// with what the guest will hold.
+func (c *Config) Wants(name string) bool { return slices.Contains(c.features, name) }
 
 // DNSList is the resolver list as the guest's resolv.conf writer wants it.
 func (c *Config) DNSList() string { return strings.Join(c.DNSServers, " ") }

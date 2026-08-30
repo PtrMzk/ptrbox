@@ -195,6 +195,7 @@ func TestEveryPerVMKeyIsAcceptedInAPerVMFile(t *testing.T) {
 		"DISTRO": "ubuntu2404", "IMAGE_URL": "https://example.com/x.qcow2",
 		"EXTRA_PACKAGES": "latexmk", "CLAUDE_MODEL": "opus",
 		"GO": "true", "NODE": "true", "UV": "true", "NODE_VERSION": "22",
+		"PLAYWRIGHT": "true",
 		"GIT_USER_NAME": "Someone", "GIT_USER_EMAIL": "someone@example.com",
 	}
 	for _, key := range PerVMKeys() {
@@ -358,6 +359,56 @@ func TestEveryRuntimeHasAPerVMConfigKey(t *testing.T) {
 		if !perVMKeys[key] {
 			t.Errorf("PTRBOX_%s is not settable per VM", key)
 		}
+	}
+}
+
+// Every name a `# @requires` marker may use has to be answerable by Wants,
+// or a group in the template would gate on something no VM can ever have.
+// Features is wider than Toolchains: playwright is a capability, not a
+// runtime, because there is no `playwright` on PATH for verify.sh to find.
+func TestEveryFeatureIsAnsweredAndOnlyRuntimesAreToolchains(t *testing.T) {
+	setup(t)
+	cfg := mustLoad(t)
+	for _, name := range Features() {
+		if !slices.Contains(Keys, strings.ToUpper(name)) {
+			t.Errorf("feature %q has no PTRBOX_%s key", name, strings.ToUpper(name))
+		}
+		if !perVMKeys[strings.ToUpper(name)] {
+			t.Errorf("PTRBOX_%s is not settable per VM", strings.ToUpper(name))
+		}
+		if cfg.Wants(name) {
+			t.Errorf("feature %q is on by default", name)
+		}
+	}
+	for _, tool := range Toolchains {
+		if !slices.Contains(Features(), tool) {
+			t.Errorf("runtime %q is missing from Features", tool)
+		}
+	}
+	// ...and the capability is NOT a runtime: nothing writes it to
+	// ~/.ptrbox/toolchain, so vm/verify.sh never looks for it on PATH.
+	if slices.Contains(Toolchains, "playwright") {
+		t.Error("playwright is in Toolchains - verify.sh would demand a binary that never exists")
+	}
+}
+
+// Playwright gates two things that must agree: the Chromium packages in the
+// guest and the CDN group in the allowlist. One switch is what keeps them
+// from disagreeing about whether the VM can drive a browser.
+func TestPlaywrightIsItsOwnFlagAndSettablePerVM(t *testing.T) {
+	setup(t)
+	writeVMConfig(t, "webapp", "PTRBOX_PLAYWRIGHT=true\n")
+
+	if mustLoad(t).Playwright {
+		t.Error("playwright is on by default")
+	}
+	webapp := mustOverlay(t, "webapp")
+	if !webapp.Playwright || !webapp.Wants("playwright") {
+		t.Error("a per-VM PTRBOX_PLAYWRIGHT did not take effect")
+	}
+	// It is not a runtime, so it must not reach the guest's toolchain record.
+	if got := webapp.ToolchainList(); got != "" {
+		t.Errorf("playwright leaked into the runtime list: %q", got)
 	}
 }
 
