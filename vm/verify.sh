@@ -188,6 +188,42 @@ if [ -r "$state/playwright-packages" ]; then
   fi
 fi
 
+# --- credentials ---------------------------------------------------------------
+
+# Exactly one credential belongs in a sandbox: the OAuth token ptrbox injects
+# into ~/.profile from the Keychain, and only after everything above passes.
+# These two checks say that no OTHER one arrived.
+#
+# The one that matters is .credentials.json. Nothing in ptrbox creates it - it
+# is what Claude Code writes after an INTERACTIVE login, and it holds a refresh
+# token, which is a longer-lived and higher-value secret than the injected
+# access token. Two things make it reachable: ~/.claude exists and is
+# agent-writable, and the allowlist grants the OAuth domains, so a `claude
+# /login` run inside the VM completes over the proxy. Nothing else in this
+# project would ever notice, and 40-userenv.sh is done-guarded, so nothing
+# would clean it up either.
+if [ -e "$HOME/.claude/.credentials.json" ]; then
+  bad "no stored login" "an interactive login left a refresh token in this VM"
+else
+  ok "no stored login"
+fi
+
+# And nothing smuggled a second secret into the shell environment. Only the
+# Claude token may be exported from ~/.profile; anything else key-shaped is
+# either a credential ptrbox did not put there or one it put there twice.
+strays="$(grep -cE '^[[:space:]]*export[[:space:]]+[A-Za-z_]*(TOKEN|SECRET|PASSWORD|API_KEY)' \
+  "$HOME/.profile" 2>/dev/null || true)"
+tokens="$(grep -cE '^[[:space:]]*export[[:space:]]+CLAUDE_CODE_OAUTH_TOKEN=' \
+  "$HOME/.profile" 2>/dev/null || true)"
+# Note the token is injected AFTER this script runs on a fresh create, so zero
+# is the expected count then and one on any later run. More than one, or a
+# key-shaped export that is not the token, is what this is looking for.
+if [ "$strays" -eq "$tokens" ] && [ "$tokens" -le 1 ]; then
+  ok "one credential only"
+else
+  bad "one credential only" "~/.profile exports $strays key-shaped variables, $tokens of them the Claude token"
+fi
+
 if [ "$fails" -ne 0 ]; then
   printf '\n%s check(s) FAILED - do not trust this VM\n' "$fails" >&2
   exit 1

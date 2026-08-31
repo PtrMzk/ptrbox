@@ -782,7 +782,7 @@ func TestTheVerificationScriptChecksWhatMatters(t *testing.T) {
 	verify := asset(t, "vm/verify.sh")
 	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs",
 		"extra-packages.failed", "setuid stripped", "perm -4000",
-		"no multicast dns", "exit 1"} {
+		"no multicast dns", ".credentials.json", "no stored login", "exit 1"} {
 		if !strings.Contains(verify, want) {
 			t.Errorf("vm/verify.sh no longer checks %q", want)
 		}
