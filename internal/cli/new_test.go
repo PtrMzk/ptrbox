@@ -195,6 +195,39 @@ func TestAnUnparsableRuntimeKeyAbortsNewBeforeAnyVMIsTouched(t *testing.T) {
 	h.assertNotCalled("start")
 }
 
+// The two halves of a feature have to agree end to end, not just in the
+// seeding function. internal/proxy tests SeedFor against the SHIPPED template;
+// this goes through `ptrbox new` and reads what the proxy VM ends up serving,
+// which is the thing that decides what a sandbox may reach.
+func TestANewVMGetsPlaywrightDomainsOnlyWhenItAskedForPlaywright(t *testing.T) {
+	for _, tc := range []struct {
+		name, vmConfig string
+		want           bool
+	}{
+		{"off by default", "", false},
+		// The case the flag exists for: runtimes on, browser testing not asked
+		// for. Before item 48 the group was gated on node/uv, so this granted
+		// the CDNs to a VM with no Chromium libraries to use them.
+		{"runtimes but no playwright", "PTRBOX_NODE=true\nPTRBOX_UV=true\n", false},
+		{"asked for", "PTRBOX_PLAYWRIGHT=true\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.mustRun("install")
+			if tc.vmConfig != "" {
+				h.writeVMConfig("demo", tc.vmConfig)
+			}
+			h.mustRun("new", "demo")
+
+			pushed := h.proxyFile("/etc/squid/allowed.d/demo.txt")
+			if got := strings.Contains(pushed, "cdn.playwright.dev"); got != tc.want {
+				t.Errorf("playwright CDNs present = %v, want %v, in the list the proxy serves:\n%s",
+					got, tc.want, pushed)
+			}
+		})
+	}
+}
+
 // --- the plan, and the two offers --------------------------------------------
 
 // What the VM will be, said before it is built rather than after. Both
