@@ -75,6 +75,24 @@ func parseFile(path string) (map[string]string, []string, error) {
 	return values, warnings, nil
 }
 
+// AssignmentName reports which variable a single config line assigns to.
+//
+// Three outcomes, and callers need all three: an assignment (ok), a blank or
+// comment line (neither ok nor an error), and a line that is neither (an
+// error). `ptrbox install --update` uses it to find the settings a user has
+// actually made so it can carry them into a newer annotated example - and the
+// error case is why it can tell "you have set nothing here" apart from "this
+// file is not something I should be rewriting".
+//
+// The value is deliberately not returned. A merge copies the user's line
+// verbatim, so that `PTRBOX_REPO_ROOT="$HOME/code"` stays written that way
+// rather than being reserialised as the expanded path it happens to mean on
+// this machine today.
+func AssignmentName(line string) (name string, ok bool, err error) {
+	name, _, ok, err = parseAssignment(line, func(string) string { return "" })
+	return name, ok, err
+}
+
 // parseAssignment reads one line. ok is false for blank and comment lines.
 func parseAssignment(line string, lookup func(string) string) (name, value string, ok bool, err error) {
 	rest := strings.TrimLeft(line, " \t")

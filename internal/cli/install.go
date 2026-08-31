@@ -27,9 +27,10 @@ const installHelp = `ptrbox install - set up the host
 
   -y, --yes      answer yes to every prompt
       --no-input never prompt; decline anything that would need an answer
-      --update    replace seeded files (config, per-VM README, allowlist
-                  template) that differ from the ones this ptrbox ships,
-                  keeping each current version as a timestamped .bak
+      --update   bring seeded files up to date with the ones this ptrbox
+                 ships, keeping each current version as a timestamped .bak.
+                 Your settings are carried into the new config file; the
+                 allowlist template and per-VM README are replaced
 `
 
 func cmdInstall(env *Env, args []string) error {
@@ -381,7 +382,9 @@ func reportAllowlist(env *Env, update bool) error {
 	if len(missing) > 0 {
 		env.Out.Say("shipped entries yours does not have: %s", strings.Join(missing, " "))
 	}
-	return offerUpdate(env, target, "allowlist template", current, shipped, update)
+	// merge=false: a domain list has no separation between what ptrbox ships
+	// and what you added, so there is nothing to carry - see mergeconfig.go.
+	return offerUpdate(env, target, "allowlist template", current, shipped, update, false)
 }
 
 // --- egress verification -----------------------------------------------------

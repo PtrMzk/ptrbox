@@ -180,18 +180,30 @@ func TestASecondInstallSaysNothingAboutTheFilesItSeeded(t *testing.T) {
 // --update is what the developer wanted: the shipped file, with the current
 // one kept beside it. Deliberately not implied by --yes - everything else -y
 // answers is something install was going to do anyway.
-func TestUpdateReplacesTheSeededFilesAndKeepsABackup(t *testing.T) {
+// --update brings the shipped file's prose and keys, and carries the settings
+// the user had made into it. Both halves matter: the first is the reason to
+// update at all, and the second is what a real upgrade got wrong - it emptied
+// a live config, leaving the settings only in the .bak with nothing saying so.
+func TestUpdateBringsTheShippedFileAndKeepsYourSettings(t *testing.T) {
 	h := newHarness(t)
 	const mine = "PTRBOX_MEMORY=16GiB\n"
 	writeFile(t, config.Path(), mine)
 	h.mustRun("install", "--update")
 
-	shipped, err := fs.ReadFile(ptrbox.Assets, "config/ptrbox.conf.example")
-	if err != nil {
-		t.Fatal(err)
+	updated := readFile(t, config.Path())
+	if !strings.Contains(updated, "PTRBOX_MEMORY=16GiB") {
+		t.Errorf("--update lost a setting the user had made:\n%s", updated)
 	}
-	if got := readFile(t, config.Path()); got != string(shipped) {
-		t.Error("--update did not install the shipped config file")
+	// The shipped text arrived: a key added since their file was seeded.
+	if !strings.Contains(updated, "#PTRBOX_PLAYWRIGHT=false") {
+		t.Errorf("--update did not bring the shipped config file:\n%s", updated)
+	}
+	// And it still loads.
+	if _, err := config.Load(); err != nil {
+		t.Errorf("the updated config does not parse: %v", err)
+	}
+	if !strings.Contains(h.stderr, "carried over") {
+		t.Errorf("the update did not say what it carried:\n%s", h.stderr)
 	}
 
 	// The backup exists, holds what was there, and was named out loud: this

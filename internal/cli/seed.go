@@ -30,6 +30,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
 )
@@ -69,12 +70,12 @@ func seedConfigDir(env *Env, update bool) error {
 			return err
 		}
 	}
-	if err := seedFile(env, config.Path(), "settings file", update, func() ([]byte, error) {
+	if err := seedFile(env, config.Path(), "settings file", update, true, func() ([]byte, error) {
 		return fs.ReadFile(env.Assets, "config/ptrbox.conf.example")
 	}); err != nil {
 		return err
 	}
-	return seedFile(env, filepath.Join(config.VMDir(), "README.txt"), "per-VM README", update,
+	return seedFile(env, filepath.Join(config.VMDir(), "README.txt"), "per-VM README", update, false,
 		func() ([]byte, error) { return []byte(vmsREADME), nil })
 }
 
@@ -82,7 +83,7 @@ func seedConfigDir(env *Env, update bool) error {
 // it up to date if what is there differs. what names the file in the offer:
 // "replace your settings file?" and "replace your allowlist template?" are
 // different questions, and only one of them can lose something you typed.
-func seedFile(env *Env, path, what string, update bool, body func() ([]byte, error)) error {
+func seedFile(env *Env, path, what string, update, merge bool, body func() ([]byte, error)) error {
 	content, err := body()
 	if err != nil {
 		return err
@@ -93,7 +94,7 @@ func seedFile(env *Env, path, what string, update bool, body func() ([]byte, err
 		if bytes.Equal(current, content) {
 			return nil // the no-op case, and it stays silent
 		}
-		return offerUpdate(env, path, what, current, content, update)
+		return offerUpdate(env, path, what, current, content, update, merge)
 	case !errors.Is(err, fs.ErrNotExist):
 		return err
 	}
@@ -111,38 +112,70 @@ func seedFile(env *Env, path, what string, update bool, body func() ([]byte, err
 // offerUpdate handles a seeded file that exists and differs from the version
 // this binary carries.
 //
-// Three answers, in the order they are asked: --update was given, so replace
-// it; there is someone to ask, so ask; or there is not, in which case say what
-// is available and change nothing. A scripted install must never rewrite
+// Three answers, in the order they are asked: --update was given, so go ahead;
+// there is someone to ask, so ask; or there is not, in which case say what is
+// available and change nothing. A scripted install must never rewrite
 // settings, which is why --update is its own flag rather than something -y
 // implies - "yes to every prompt" is about the things install was going to do
 // anyway.
-func offerUpdate(env *Env, path, what string, current, shipped []byte, update bool) error {
+//
+// merge says whether this file's shape lets a user's choices be carried into
+// the new version. True for the settings file, which is KEY=value and where
+// the only lines that are the user's are the assignments. False for the
+// allowlist template and the README, which are prose and lists with no such
+// separation - there, replacing is the whole operation.
+func offerUpdate(env *Env, path, what string, current, shipped []byte, update, merge bool) error {
 	env.Out.Say("your %s differs from the one this ptrbox ships: %s", what, path)
 
 	switch {
 	case update:
 		// --update: asked for on the command line, which is the answer.
 	case env.Interactive && !env.NoInput:
-		if !confirm(env, fmt.Sprintf("replace it with the shipped %s? (yours is kept as a .bak)", what)) {
+		question := fmt.Sprintf("replace it with the shipped %s? (yours is kept as a .bak)", what)
+		if merge {
+			question = fmt.Sprintf("update the shipped %s, keeping your settings? (a .bak is kept either way)", what)
+		}
+		if !confirm(env, question) {
 			env.Out.Say("keeping yours")
 			return nil
 		}
 	default:
-		env.Out.Detail("keeping yours; `ptrbox install --update` replaces it, with a backup")
+		env.Out.Detail("keeping yours; `ptrbox install --update` updates it, with a backup")
 		return nil
 	}
 
-	// The backup is written before the replacement and named in the output:
-	// this is the one place install can cost someone settings they typed, and
-	// an undo they have to go looking for is not an undo.
+	// What actually gets written. A mergeable file keeps the user's active
+	// assignments at their key's place in the new text; anything else is
+	// replaced outright.
+	next, note := shipped, "replaced"
+	if merge {
+		if result, ok := mergeSettings(current, shipped); ok {
+			next = result.merged
+			note = "updated"
+			env.Out.Detail("%s", describeMerge(result))
+			if len(result.orphans) > 0 {
+				// Loud, because a setting with no home is the one thing an
+				// upgrade can silently take away.
+				env.Out.Warn("no current setting matches: %s", strings.Join(result.orphans, " "))
+				env.Out.Detail("kept, commented out, at the end of the file")
+			}
+		} else {
+			// Only reachable if the file stopped parsing since install loaded
+			// it. Say so rather than rewriting something unreadable.
+			env.Out.Warn("could not read your settings to carry them over; replacing instead")
+		}
+	}
+
+	// The backup is written before the change and named in the output: this is
+	// the one place install can cost someone settings they typed, and an undo
+	// they have to go looking for is not an undo.
 	backup := path + ".bak-" + env.now().Format("20060102-150405")
 	if err := os.WriteFile(backup, current, 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, shipped, 0o644); err != nil {
+	if err := os.WriteFile(path, next, 0o644); err != nil {
 		return err
 	}
-	env.Out.Say("replaced %s; your version is at %s", path, backup)
-	return config.RecordManifest("replaced " + path + " (backup at " + backup + ")")
+	env.Out.Say("%s %s; your version is at %s", note, path, backup)
+	return config.RecordManifest(note + " " + path + " (backup at " + backup + ")")
 }
