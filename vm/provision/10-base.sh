@@ -64,6 +64,7 @@ if [ "$PLAYWRIGHT" = "true" ]; then
   # self-report: if apt dies, `set -e` stops the script here and the file
   # still says these were wanted. vm/verify.sh reads it and checks each one
   # actually arrived - the same shape as the toolchain record next door.
+  # shellcheck disable=SC2086 # deliberate word splitting: one package per line
   printf '%s\n' $playwright_packages >"$state/playwright-packages"
   # shellcheck disable=SC2086 # deliberate word splitting: a package list
   apt-get install -y $playwright_packages

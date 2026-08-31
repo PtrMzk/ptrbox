@@ -221,7 +221,7 @@ tokens="$(grep -cE '^[[:space:]]*export[[:space:]]+CLAUDE_CODE_OAUTH_TOKEN=' \
 if [ "$strays" -eq "$tokens" ] && [ "$tokens" -le 1 ]; then
   ok "one credential only"
 else
-  bad "one credential only" "~/.profile exports $strays key-shaped variables, $tokens of them the Claude token"
+  bad "one credential only" "$HOME/.profile exports $strays key-shaped variables, $tokens of them the Claude token"
 fi
 
 if [ "$fails" -ne 0 ]; then
