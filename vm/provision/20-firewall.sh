@@ -16,7 +16,7 @@ if [ -f /var/lib/ptrbox/firewall.done ]; then
 fi
 
 # Root-owned + chmod 600 so the agent user can't read or edit it - which only
-# means something combined with the sudo removal in 90-nosudo.sh.
+# means something combined with the sudo removal in 90-harden.sh.
 cat >/etc/nftables-sandbox.nft <<'NFT'
 table inet sandbox {
   chain output {

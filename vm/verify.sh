@@ -55,6 +55,33 @@ else
   ok "sudo removed"
 fi
 
+# The other half of "no root": 90-harden.sh strips the setuid bit from every
+# binary that has no caller in a sandbox, because a setuid-root binary is the
+# mechanism that turns "no root" back into "root" whatever the sudoers file
+# says. This lists what is left and fails on anything unexpected.
+#
+# The real regression this catches is not somebody editing 90-harden.sh - it is
+# an apt upgrade reinstalling a package and restoring its bit. That is also why
+# 90-harden.sh has no done-marker: it re-strips on every boot, and this check
+# is what notices when a boot did not happen in between.
+#
+# Space-padded matching, the same idiom 30-toolchain.sh uses for its runtime
+# list: a bare substring test would accept /usr/bin/ssh because the expected
+# list happens to contain /usr/bin/ssh-agent. No path here contains a space.
+expected_setuid=" /usr/lib/dbus-1.0/dbus-daemon-launch-helper /usr/bin/ssh-agent /usr/sbin/unix_chkpwd "
+unexpected=""
+for binary in $(find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | sort); do
+  case "$expected_setuid" in
+  *" $binary "*) ;;
+  *) unexpected="$unexpected $binary" ;;
+  esac
+done
+if [ -z "$unexpected" ]; then
+  ok "setuid stripped"
+else
+  bad "setuid stripped" "unexpected setuid/setgid:$unexpected"
+fi
+
 # --- egress ------------------------------------------------------------------
 
 if systemctl is-active --quiet sandbox-firewall.service; then

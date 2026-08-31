@@ -163,8 +163,43 @@ func TestNothingGrantsNOPASSWDBack(t *testing.T) {
 func TestSudoRemovalIsNotSkippedOnLaterBoots(t *testing.T) {
 	// It deliberately has no done-marker guard, so it re-asserts every boot.
 	rendered, _ := sandbox(t)
-	mustNotMatch(t, rendered, `ptrbox/nosudo\.done|sudo\.done`,
-		"the sudo removal is guarded by a done-marker and so runs only once")
+	mustNotMatch(t, rendered, `ptrbox/nosudo\.done|sudo\.done|harden\.done`,
+		"the hardening is guarded by a done-marker and so runs only once")
+}
+
+// Removing the sudoers entry takes away the PERMISSION; the setuid bit is the
+// MECHANISM, and leaving it is a standing bet on sudo's CVE history in a VM
+// whose entire model is that the agent has no root. Same argument for every
+// other setuid binary with no caller in a sandbox.
+//
+// Changing this list is a security decision. Adding a name is fine; REMOVING
+// one means a binary regains the ability to escalate, and the diff to this
+// test is the argument for it.
+func TestEverySetuidBinaryWithNoCallerIsStripped(t *testing.T) {
+	// Comments stripped, so a path named only in the explanation above the
+	// loop cannot satisfy this - the name has to be in the list that runs.
+	_, stripped := sandbox(t)
+	for _, binary := range []string{
+		"/usr/bin/sudo", "/usr/bin/su", "/usr/bin/passwd",
+		"/usr/bin/chfn", "/usr/bin/chsh", "/usr/bin/gpasswd", "/usr/bin/newgrp",
+		"/usr/bin/chage", "/usr/bin/expiry",
+		"/usr/lib/openssh/ssh-keysign",
+		"/usr/lib/polkit-1/polkit-agent-helper-1",
+		"/usr/bin/mount", "/usr/bin/umount",
+	} {
+		mustMatch(t, stripped, regexp.QuoteMeta(binary),
+			"is not in the setuid strip list: "+binary)
+	}
+	mustMatch(t, stripped, `chmod u-s,g-s`, "nothing strips the setuid bit")
+}
+
+// The package stays; only the bit goes. Removing sudo outright would take
+// cloud-init with it - cloud-init depends on the package - and lima needs
+// cloud-init to provision at all.
+func TestTheSudoPackageIsNotRemoved(t *testing.T) {
+	rendered, _ := sandbox(t)
+	mustNotMatch(t, rendered, `apt-get (remove|purge)[^\n]*\bsudo\b`,
+		"the sudo package is removed, which would take cloud-init with it")
 }
 
 // --- default-deny egress -----------------------------------------------------
@@ -712,7 +747,7 @@ func TestTheVerificationScriptChecksWhatMatters(t *testing.T) {
 	// none.
 	verify := asset(t, "vm/verify.sh")
 	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs",
-		"extra-packages.failed", "exit 1"} {
+		"extra-packages.failed", "setuid stripped", "perm -4000", "exit 1"} {
 		if !strings.Contains(verify, want) {
 			t.Errorf("vm/verify.sh no longer checks %q", want)
 		}

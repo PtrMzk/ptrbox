@@ -115,7 +115,7 @@ ssh:
 # all "system" scripts (as root) first, then all "user" scripts (as the
 # unprivileged default user). Each script carries its own done-marker guard.
 #
-# Note the ordering consequence: 90-nosudo is mode:system, so it executes
+# Note the ordering consequence: 90-harden is mode:system, so it executes
 # BEFORE the user scripts - fine, since they never call sudo and all
 # root-level work is already done by then.
 
@@ -142,7 +142,7 @@ provision:
 
   - mode: system
     script: |
-      __INCLUDE:provision/90-nosudo.sh__
+      __INCLUDE:provision/90-harden.sh__
 
 # --- Readiness probe ---------------------------------------------------------
 # limactl start blocks until probes pass (or time out), so ptrbox knows
