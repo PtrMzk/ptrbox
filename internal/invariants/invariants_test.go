@@ -202,6 +202,40 @@ func TestTheSudoPackageIsNotRemoved(t *testing.T) {
 		"the sudo package is removed, which would take cloud-init with it")
 }
 
+// --- attack surface ----------------------------------------------------------
+
+// LLMNR and mDNS listen on every interface and resolve names by shouting on
+// the local segment. A sandbox resolves through pinned resolvers and reaches
+// everything else through the proxy, so both answer a question nobody asks -
+// while LLMNR response spoofing is a standard lateral-movement technique.
+func TestMulticastNameResolutionIsOff(t *testing.T) {
+	_, stripped := sandbox(t)
+	mustMatch(t, stripped, `LLMNR=no`, "LLMNR is not disabled")
+	mustMatch(t, stripped, `MulticastDNS=no`, "mDNS is not disabled")
+}
+
+// The apt machinery cannot reach the mirrors once the wall is up, so it wakes,
+// fails and sleeps as root. Masked rather than disabled because a package
+// upgrade is exactly what re-enables it.
+func TestTheAptTimersAreMasked(t *testing.T) {
+	_, stripped := sandbox(t)
+	for _, unit := range []string{
+		"unattended-upgrades.service", "apt-daily.timer", "apt-daily-upgrade.timer",
+	} {
+		mustMatch(t, stripped, regexp.QuoteMeta(unit), "is not masked: "+unit)
+	}
+	mustMatch(t, stripped, `systemctl mask`, "nothing is masked")
+}
+
+// The two deliberate keeps. AppArmor is the one service in that list actively
+// helping, and fstrim is what lets the Mac reclaim space from a sparse
+// diffdisk - turning either off would be a loss dressed as hardening.
+func TestApparmorAndFstrimSurviveTheTrim(t *testing.T) {
+	_, stripped := sandbox(t)
+	mustNotMatch(t, stripped, `(disable|mask|stop)[^\n]*\bapparmor`, "apparmor is turned off")
+	mustNotMatch(t, stripped, `(disable|mask|stop)[^\n]*\bfstrim`, "fstrim is turned off")
+}
+
 // --- default-deny egress -----------------------------------------------------
 
 func TestTheFirewallsDefaultVerdictIsDrop(t *testing.T) {
@@ -747,7 +781,8 @@ func TestTheVerificationScriptChecksWhatMatters(t *testing.T) {
 	// none.
 	verify := asset(t, "vm/verify.sh")
 	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs",
-		"extra-packages.failed", "setuid stripped", "perm -4000", "exit 1"} {
+		"extra-packages.failed", "setuid stripped", "perm -4000",
+		"no multicast dns", "exit 1"} {
 		if !strings.Contains(verify, want) {
 			t.Errorf("vm/verify.sh no longer checks %q", want)
 		}

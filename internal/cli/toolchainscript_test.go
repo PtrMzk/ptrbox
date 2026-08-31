@@ -106,6 +106,9 @@ exit 0
 	writeScript(t, filepath.Join(stubs, "sudo"), "#!/bin/sh\nexit 1\n")
 	writeScript(t, filepath.Join(stubs, "systemctl"), "#!/bin/sh\nexit 1\n")
 	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
+	// /usr/bin/ss is on this PATH, so without a stub verify.sh's multicast
+	// check would read the DEVELOPER's listening sockets.
+	writeScript(t, filepath.Join(stubs, "ss"), "#!/bin/sh\nexit 1\n")
 	// The Go install reads the architecture rather than assuming arm64. dpkg
 	// exists in every guest and on no Mac, and `set -e` turns a missing one
 	// into a failed provision - so it is stubbed rather than depended on.

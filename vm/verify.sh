@@ -90,6 +90,21 @@ else
   bad "firewall active" "sandbox-firewall.service is not active"
 fi
 
+# 25-services.sh turns off LLMNR and mDNS, which otherwise listen on every
+# interface and resolve names by shouting on the local segment. Checked as a
+# live socket rather than as a config file, because the drop-in taking effect
+# depends on the reboot having happened - and this runs after it.
+#
+# A missing `ss` is a failure, not a pass: a check that quietly succeeds when
+# it cannot look is worse than no check.
+if ! command -v ss >/dev/null 2>&1; then
+  bad "no multicast dns" "ss is not installed, so the listeners cannot be checked"
+elif ss -tulnH 2>/dev/null | grep -qE ':(5353|5355) '; then
+  bad "no multicast dns" "LLMNR or mDNS is still listening"
+else
+  ok "no multicast dns"
+fi
+
 # The probe domain is api.anthropic.com because it is the one entry every
 # seeded allowlist keeps: the runtime-gated groups (pypi, npm, go) exist only
 # in VMs that asked for the runtime, but a sandbox that cannot reach Anthropic

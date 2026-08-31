@@ -132,6 +132,10 @@ provision:
     script: |
       __INCLUDE:provision/20-firewall.sh__
 
+  - mode: system
+    script: |
+      __INCLUDE:provision/25-services.sh__
+
   - mode: user
     script: |
       __INCLUDE:provision/30-toolchain.sh__

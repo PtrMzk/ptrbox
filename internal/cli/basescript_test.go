@@ -70,7 +70,7 @@ printf 'install ok installed'
 	// verify.sh's other checks are not what these cases are about, and a test
 	// host is not a sandbox: without stubs the egress probes would spend
 	// half a minute discovering they have no proxy.
-	for _, name := range []string{"curl", "sudo", "systemctl"} {
+	for _, name := range []string{"curl", "sudo", "systemctl", "ss"} {
 		writeScript(t, filepath.Join(stubs, name), "#!/bin/sh\nexit 1\n")
 	}
 	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
