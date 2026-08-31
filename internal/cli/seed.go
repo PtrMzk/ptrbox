@@ -75,8 +75,87 @@ func seedConfigDir(env *Env, update bool) error {
 	}); err != nil {
 		return err
 	}
-	return seedFile(env, filepath.Join(config.VMDir(), "README.txt"), "per-VM README", update, false,
-		func() ([]byte, error) { return []byte(vmsREADME), nil })
+	if err := seedFile(env, filepath.Join(config.VMDir(), "README.txt"), "per-VM README", update, false,
+		func() ([]byte, error) { return []byte(vmsREADME), nil }); err != nil {
+		return err
+	}
+	return reviewVMConfigs(env, update)
+}
+
+// reviewVMConfigs does for ~/.config/ptrbox/vms/<name> what the block above
+// does for the main settings file.
+//
+// They go stale the same way and it costs more when they do. A per-VM file is
+// read only by `ptrbox new`, so a key that stopped existing does not fail
+// anything - it warns, once, in the middle of a multi-minute create, and the
+// VM comes up without whatever it asked for. And because the files are
+// per-VM, there was no way to ask "which of mine are out of date?" without
+// re-creating each sandbox to find out.
+//
+// So every file here is read at install time: settings that are no longer
+// keys are named out loud, and under --update a file that was seeded from the
+// shipped example is brought up to date the way the main config is.
+func reviewVMConfigs(env *Env, update bool) error {
+	entries, err := os.ReadDir(config.VMDir())
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(config.Keys))
+	for _, key := range config.Keys {
+		known[key] = true
+	}
+
+	for _, entry := range entries {
+		// README.txt is prose and, by the charset argument in its own text, a
+		// name no VM can have.
+		if entry.IsDir() || entry.Name() == "README.txt" {
+			continue
+		}
+		path := filepath.Join(config.VMDir(), entry.Name())
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		var stale []string
+		for _, line := range strings.Split(string(body), "\n") {
+			name, isAssignment, err := config.AssignmentName(line)
+			if err != nil || !isAssignment {
+				continue
+			}
+			if key, isPtrbox := strings.CutPrefix(name, "PTRBOX_"); isPtrbox && !known[key] {
+				stale = append(stale, name)
+			}
+		}
+		if len(stale) > 0 {
+			// Loud: this is a sandbox asking for something it will not get,
+			// and the only other place it is mentioned is a warning during a
+			// create that nobody is watching.
+			env.Out.Warn("%s sets %s, which is no longer a setting", path, strings.Join(stale, " "))
+			env.Out.Detail("that VM will not get it; fix the file and re-create the sandbox")
+		}
+
+		// Only files seeded from the shipped example are rewritten. A sparse
+		// hand-written one is the documented style for this directory ("state
+		// only what differs"), and inflating it into the full annotated
+		// example would be an unasked-for answer to a question nobody posed.
+		if !bytes.Contains(body, []byte(vmConfigMarker)) {
+			continue
+		}
+		example, err := fs.ReadFile(env.Assets, "config/ptrbox.conf.example")
+		if err != nil {
+			return err
+		}
+		name := entry.Name()
+		fresh := []byte(fmt.Sprintf(vmConfigHeader, name, config.Path(), name, name) + string(example))
+		if bytes.Equal(body, fresh) {
+			continue
+		}
+		if err := offerUpdate(env, path, "settings for VM "+name, body, fresh, update, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // seedFile writes path from body if nothing is there yet, and offers to bring

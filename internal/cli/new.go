@@ -321,6 +321,12 @@ func printPlan(env *Env, name string) {
 // example is the whole key list on purpose - one document to learn rather than
 // two - and this says which half of it applies here, at the top of the file
 // somebody is about to read.
+// vmConfigMarker is a line from that header, used to recognise a file this
+// seeded. It is what tells a seeded per-VM file - which install may bring up
+// to date - apart from a sparse hand-written one, where "state only what
+// differs" is the documented style and inflating it would be rude.
+const vmConfigMarker = "Only the keys marked [vm] below may appear in"
+
 const vmConfigHeader = `# Per-VM configuration for %q. Only the keys marked [vm] below may appear in
 # this file; the rest describe your Mac and belong in %s.
 #
