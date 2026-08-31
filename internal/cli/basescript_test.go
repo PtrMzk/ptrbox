@@ -76,6 +76,9 @@ printf 'install ok installed'
 	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
 
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// See guestscript_test.go: verify.sh reads $HOME, so the harness has to
+	// own it or the test reads the developer's real credential paths.
+	t.Setenv("HOME", dir)
 	t.Setenv("APT_LOG", filepath.Join(dir, "apt.log"))
 	t.Setenv("APT_ABSENT", absent)
 	return dir, state

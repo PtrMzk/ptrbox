@@ -104,6 +104,11 @@ printf 'installed'
 	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
 
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// HOME too, and not as a nicety: verify.sh reads $HOME/.profile and
+	// $HOME/.claude/.credentials.json. A harness that leaves the real one in
+	// place has a unit test inspecting the DEVELOPER's credential paths, which
+	// in this project of all projects is the wrong way round.
+	t.Setenv("HOME", dir)
 	t.Setenv("APT_LOG", filepath.Join(dir, "apt.log"))
 	t.Setenv("APT_KNOWN", strings.Join(apt.known, " "))
 	t.Setenv("APT_INSTALL_FAILS", apt.installFor)
