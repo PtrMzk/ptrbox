@@ -88,7 +88,8 @@ printf 'install ok installed'
 // features that were never asked for.
 func verifyLineIfAny(t *testing.T, dir, state, check string) string {
 	t.Helper()
-	out, _ := exec.Command("bash", filepath.Join(dir, "verify.sh"), state).CombinedOutput()
+	// dir as the setuid scan root; see verifyLine for why not "/".
+	out, _ := exec.Command("bash", filepath.Join(dir, "verify.sh"), state, dir).CombinedOutput()
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, check) {
 			return line

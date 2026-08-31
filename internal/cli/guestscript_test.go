@@ -139,7 +139,9 @@ func verifyLine(t *testing.T, dir, state, check string) string {
 	t.Helper()
 	// The exit status is deliberately ignored: on a test host the egress and
 	// privilege checks fail, and the line under test is printed regardless.
-	out, _ := exec.Command("bash", filepath.Join(dir, "verify.sh"), state).CombinedOutput()
+	// dir as the setuid scan root, not "/": this runs on the developer machine,
+	// and sweeping a real root filesystem takes minutes on a Mac.
+	out, _ := exec.Command("bash", filepath.Join(dir, "verify.sh"), state, dir).CombinedOutput()
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, check) {
 			return line

@@ -14,9 +14,14 @@
 # =============================================================================
 set -u
 
-# An argument with the real path as its default, purely so the test suite can
-# run this against a state directory it controls - ptrbox passes nothing.
+# Arguments with the real paths as their defaults, purely so the test suite can
+# run this against directories it controls - ptrbox passes neither.
 state="${1:-/var/lib/ptrbox}"
+# Where the setuid sweep starts. It has to be / in a guest, and it must NOT be
+# / under test: the suite runs this script on the developer machine, where a
+# sweep of the whole root filesystem takes minutes on a Mac rather than the
+# second it takes in a small VM.
+scan_root="${2:-/}"
 
 fails=0
 
@@ -70,10 +75,17 @@ fi
 # list happens to contain /usr/bin/ssh-agent. No path here contains a space.
 expected_setuid=" /usr/lib/dbus-1.0/dbus-daemon-launch-helper /usr/bin/ssh-agent /usr/sbin/unix_chkpwd "
 unexpected=""
-for binary in $(find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | sort); do
+for binary in $(find "$scan_root" -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | sort); do
+  # Compared as an absolute path. Under test the sweep starts somewhere in
+  # /tmp, so the prefix comes off first and the list above stays the real one
+  # rather than something the test could satisfy by accident.
+  case "$scan_root" in
+  /) found="$binary" ;;
+  *) found="/${binary#"$scan_root"/}" ;;
+  esac
   case "$expected_setuid" in
-  *" $binary "*) ;;
-  *) unexpected="$unexpected $binary" ;;
+  *" $found "*) ;;
+  *) unexpected="$unexpected $found" ;;
   esac
 done
 if [ -z "$unexpected" ]; then
