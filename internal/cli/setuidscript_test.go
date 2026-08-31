@@ -62,15 +62,8 @@ func setuidGuest(t *testing.T, suid, plain []string) (dir, scan string) {
 
 	// The egress probes are not what these cases are about, and a test host is
 	// not a sandbox: without stubs each run spends 25 seconds discovering it
-	// has no proxy.
-	stubs := filepath.Join(dir, "stubs")
-	if err := os.MkdirAll(stubs, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"curl", "sudo", "systemctl", "ss"} {
-		writeScript(t, filepath.Join(stubs, name), "#!/bin/sh\nexit 1\n")
-	}
-	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
+	// has no proxy. Shared; see stubs_test.go.
+	stubs := sharedStubs(t, "quiet", quietStubs)
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOME", dir)
 	return dir, scan

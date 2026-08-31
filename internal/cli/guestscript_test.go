@@ -60,11 +60,12 @@ func guestScripts(t *testing.T, packages string, apt aptStub) (dir, state string
 	// apt-get: `install --simulate <pkg>` resolves only known names; a real
 	// `install` fails only for installFor. Nothing here touches the network,
 	// which is the property the reboot depends on.
-	stubs := filepath.Join(dir, "stubs")
-	if err := os.MkdirAll(stubs, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeScript(t, filepath.Join(stubs, "apt-get"), `#!/bin/bash
+	// Shared across every test in this file rather than rebuilt per test; see
+	// stubs_test.go. Everything that varies between tests is an environment
+	// variable set below, so one copy serves all of them.
+	stubs := sharedStubs(t, "guest", func(dir string) {
+		quietStubs(dir)
+		mustWriteScript(filepath.Join(dir, "apt-get"), `#!/bin/bash
 # Log every invocation so a test can see what was, and was not, attempted.
 printf '%s\n' "$*" >>"$APT_LOG"
 simulate=""
@@ -86,7 +87,7 @@ for pkg in "${pkgs[@]}"; do
 done
 exit 0
 `)
-	writeScript(t, filepath.Join(stubs, "dpkg-query"), `#!/bin/bash
+		mustWriteScript(filepath.Join(dir, "dpkg-query"), `#!/bin/bash
 # Only the -W -f='${db:Status-Status}' <name> form ptrbox uses.
 name="${!#}"
 if [ "$name" = "$APT_ABSENT" ]; then
@@ -95,13 +96,7 @@ if [ "$name" = "$APT_ABSENT" ]; then
 fi
 printf 'installed'
 `)
-	// verify.sh's other checks are not what these cases are about, and a test
-	// host is not a sandbox: without stubs the curl probes would spend 35
-	// seconds discovering they have no proxy.
-	for _, name := range []string{"curl", "sudo", "systemctl", "ss"} {
-		writeScript(t, filepath.Join(stubs, name), "#!/bin/sh\nexit 1\n")
-	}
-	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
+	})
 
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// HOME too, and not as a nicety: verify.sh reads $HOME/.profile and

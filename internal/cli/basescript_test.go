@@ -51,15 +51,18 @@ func baseScript(t *testing.T, playwright bool, absent string) (dir, state string
 	writeScript(t, filepath.Join(dir, "base.sh"), buf.String())
 	writeScript(t, filepath.Join(dir, "verify.sh"), asset(t, "vm/verify.sh"))
 
-	stubs := filepath.Join(dir, "stubs")
-	if err := os.MkdirAll(stubs, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeScript(t, filepath.Join(stubs, "apt-get"), `#!/bin/bash
+	// Shared across every test in this file rather than rebuilt per test; see
+	// stubs_test.go. Everything that varies is an environment variable below.
+	// verify.sh's own checks are not what these cases are about either, and a
+	// test host is not a sandbox: without the quiet stubs the egress probes
+	// would spend half a minute discovering they have no proxy.
+	stubs := sharedStubs(t, "base", func(dir string) {
+		quietStubs(dir)
+		mustWriteScript(filepath.Join(dir, "apt-get"), `#!/bin/bash
 printf '%s\n' "$*" >>"$APT_LOG"
 exit 0
 `)
-	writeScript(t, filepath.Join(stubs, "dpkg-query"), `#!/bin/bash
+		mustWriteScript(filepath.Join(dir, "dpkg-query"), `#!/bin/bash
 name="${!#}"
 if [ "$name" = "$APT_ABSENT" ]; then
   echo "dpkg-query: no packages found matching $name" >&2
@@ -67,13 +70,7 @@ if [ "$name" = "$APT_ABSENT" ]; then
 fi
 printf 'install ok installed'
 `)
-	// verify.sh's other checks are not what these cases are about, and a test
-	// host is not a sandbox: without stubs the egress probes would spend
-	// half a minute discovering they have no proxy.
-	for _, name := range []string{"curl", "sudo", "systemctl", "ss"} {
-		writeScript(t, filepath.Join(stubs, name), "#!/bin/sh\nexit 1\n")
-	}
-	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
+	})
 
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// See guestscript_test.go: verify.sh reads $HOME, so the harness has to

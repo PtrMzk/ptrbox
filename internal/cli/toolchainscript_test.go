@@ -36,8 +36,12 @@ func toolchainScript(t *testing.T, toolchain, nodeVersion string) (dir string) {
 		t.Skip("bash is not available")
 	}
 	dir = t.TempDir()
-	stubs := filepath.Join(dir, "stubs")
-	if err := os.MkdirAll(stubs, 0o755); err != nil {
+	// Where the fake installers put what they produce - a node, a uv, a claude.
+	// Separate from the stub directory and per-test, which is what lets the
+	// stubs themselves be shared: they are pure, and everything that differs
+	// between tests is either an environment variable or lands here.
+	fakebin := filepath.Join(dir, "fakebin")
+	if err := os.MkdirAll(fakebin, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,10 +54,14 @@ func toolchainScript(t *testing.T, toolchain, nodeVersion string) (dir string) {
 	writeScript(t, filepath.Join(dir, "toolchain.sh"), buf.String())
 	writeScript(t, filepath.Join(dir, "verify.sh"), asset(t, "vm/verify.sh"))
 
+	// Shared across every test in this file rather than rebuilt per test; see
+	// stubs_test.go. This set has its own curl, so it cannot use quietStubs.
+	//
 	// curl: log the URL, then emit the installer that URL really serves. Each
 	// one leaves behind what the real thing leaves behind, so "is it on PATH"
 	// stays a question with a real answer.
-	writeScript(t, filepath.Join(stubs, "curl"), `#!/bin/bash
+	stubs := sharedStubs(t, "toolchain", func(sd string) {
+		mustWriteScript(filepath.Join(sd, "curl"), `#!/bin/bash
 printf '%s\n' "$*" >>"$CURL_LOG"
 case "$*" in
 *nvm-sh/nvm*)
@@ -66,8 +74,8 @@ cat >"$HOME/.nvm/nvm.sh" <<'NVMSH'
 nvm() {
   printf '%s\n' "$*" >>"$NVM_LOG"
   if [ "$1" = install ]; then
-    printf '#!/bin/sh\necho node\n' >"$STUBS/node"
-    chmod 755 "$STUBS/node"
+    printf '#!/bin/sh\necho node\n' >"$FAKEBIN/node"
+    chmod 755 "$FAKEBIN/node"
   fi
 }
 NVMSH
@@ -90,32 +98,34 @@ INSTALLER
   tar -C "$unpacked" -czf - go
   ;;
 *astral.sh*)
-  printf 'printf "#!/bin/sh\\necho uv\\n" >"$STUBS/uv"; chmod 755 "$STUBS/uv"\n'
+  printf 'printf "#!/bin/sh\\necho uv\\n" >"$FAKEBIN/uv"; chmod 755 "$FAKEBIN/uv"\n'
   ;;
 *claude.ai*)
-  printf 'printf "#!/bin/sh\\necho claude\\n" >"$STUBS/claude"; chmod 755 "$STUBS/claude"\n'
+  printf 'printf "#!/bin/sh\\necho claude\\n" >"$FAKEBIN/claude"; chmod 755 "$FAKEBIN/claude"\n'
   ;;
 esac
 exit 0
 `)
-	// verify.sh's other checks are not what these cases are about, and a test
-	// host is not a sandbox: without stubs the egress probes would spend
-	// seconds discovering they have no proxy. curl is already stubbed above,
-	// and answers those probes with success - harmless here, since the only
-	// line these tests read is the toolchain one.
-	writeScript(t, filepath.Join(stubs, "sudo"), "#!/bin/sh\nexit 1\n")
-	writeScript(t, filepath.Join(stubs, "systemctl"), "#!/bin/sh\nexit 1\n")
-	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
-	// /usr/bin/ss is on this PATH, so without a stub verify.sh's multicast
-	// check would read the DEVELOPER's listening sockets.
-	writeScript(t, filepath.Join(stubs, "ss"), "#!/bin/sh\nexit 1\n")
-	// The Go install reads the architecture rather than assuming arm64. dpkg
-	// exists in every guest and on no Mac, and `set -e` turns a missing one
-	// into a failed provision - so it is stubbed rather than depended on.
-	writeScript(t, filepath.Join(stubs, "dpkg"), "#!/bin/sh\necho arm64\n")
+		// verify.sh's other checks are not what these cases are about, and a
+		// test host is not a sandbox: without stubs the egress probes would
+		// spend seconds discovering they have no proxy. curl is already
+		// stubbed above, and answers those probes with success - harmless
+		// here, since the only line these tests read is the toolchain one.
+		mustWriteScript(filepath.Join(sd, "sudo"), "#!/bin/sh\nexit 1\n")
+		mustWriteScript(filepath.Join(sd, "systemctl"), "#!/bin/sh\nexit 1\n")
+		mustWriteScript(filepath.Join(sd, "mount"), "#!/bin/sh\nexit 0\n")
+		// /usr/bin/ss is on this PATH, so without a stub verify.sh's multicast
+		// check would read the DEVELOPER's listening sockets.
+		mustWriteScript(filepath.Join(sd, "ss"), "#!/bin/sh\nexit 1\n")
+		// The Go install reads the architecture rather than assuming arm64.
+		// dpkg exists in every guest and on no Mac, and `set -e` turns a
+		// missing one into a failed provision - so it is stubbed rather than
+		// depended on.
+		mustWriteScript(filepath.Join(sd, "dpkg"), "#!/bin/sh\necho arm64\n")
+	})
 
 	t.Setenv("HOME", dir)
-	t.Setenv("STUBS", stubs)
+	t.Setenv("FAKEBIN", fakebin)
 	// A PATH of the stubs plus the system directories, NOT the developer's.
 	// These tests ask whether a runtime is on PATH, and the machine running
 	// them may well have node and uv installed for real - in ~/.nvm and
@@ -127,7 +137,9 @@ exit 0
 	// install symlinks, and in a real guest 40-userenv.sh puts it on PATH for
 	// every login shell. HOME here is the test's temp directory, so this
 	// cannot reach anything of the developer's.
-	t.Setenv("PATH", strings.Join([]string{stubs, filepath.Join(dir, ".local", "bin"), "/usr/bin", "/bin"},
+	// fakebin first: what the installers produced must win over anything else,
+	// and it is the directory these tests are asking about.
+	t.Setenv("PATH", strings.Join([]string{fakebin, stubs, filepath.Join(dir, ".local", "bin"), "/usr/bin", "/bin"},
 		string(os.PathListSeparator)))
 	t.Setenv("CURL_LOG", filepath.Join(dir, "curl.log"))
 	t.Setenv("NVM_LOG", filepath.Join(dir, "nvm.log"))
@@ -277,8 +289,10 @@ func TestARequestedRuntimeThatDidNotArriveFailsVerification(t *testing.T) {
 	if out, ok := installToolchain(t, dir); !ok {
 		t.Fatalf("provisioning failed:\n%s", out)
 	}
-	// Take node away, the way a failed nvm install would have.
-	if err := os.Remove(filepath.Join(dir, "stubs", "node")); err != nil {
+	// Take node away, the way a failed nvm install would have. fakebin, not
+	// the stub directory: that is where the fake installers put what they
+	// produce, and the stub directory is shared across tests now.
+	if err := os.Remove(filepath.Join(dir, "fakebin", "node")); err != nil {
 		t.Fatal(err)
 	}
 	line := verifyLine(t, dir, dir, "toolchain")

@@ -51,15 +51,9 @@ func credGuest(t *testing.T, profile string, login bool) (dir, state string) {
 
 	// The rest of verify.sh is not what these cases are about, and a test host
 	// is not a sandbox: without stubs the egress probes would spend half a
-	// minute discovering they have no proxy.
-	stubs := filepath.Join(dir, "stubs")
-	if err := os.MkdirAll(stubs, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"curl", "sudo", "systemctl", "ss"} {
-		writeScript(t, filepath.Join(stubs, name), "#!/bin/sh\nexit 1\n")
-	}
-	writeScript(t, filepath.Join(stubs, "mount"), "#!/bin/sh\nexit 0\n")
+	// minute discovering they have no proxy. Shared rather than per-test; see
+	// stubs_test.go for why that is worth doing.
+	stubs := sharedStubs(t, "quiet", quietStubs)
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOME", dir)
 	return dir, state

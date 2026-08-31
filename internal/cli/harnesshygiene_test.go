@@ -67,6 +67,31 @@ func TestEveryHarnessThatRunsVerifyOwnsHome(t *testing.T) {
 	}
 }
 
+// Stub executables are built once per test binary, not once per test. A
+// per-test stub directory means a newly created executable that has never been
+// run, and macOS screens each of those on first exec: it is the difference
+// between a one-second package and a thirty-second one there, invisible on
+// Linux where fresh executables cost nothing.
+func TestNoHarnessBuildsItsStubsPerTest(t *testing.T) {
+	names, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if name == guardFile {
+			continue
+		}
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), `filepath.Join(dir, "stubs")`) {
+			t.Errorf("%s builds a stub directory per test; use sharedStubs so the "+
+				"executables are created once per binary", name)
+		}
+	}
+}
+
 func TestNoHarnessSweepsTheRealFilesystem(t *testing.T) {
 	// verify.sh takes the sweep root as its second argument. A harness that
 	// passes only the state directory gets the default, which is /.
