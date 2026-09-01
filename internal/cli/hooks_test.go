@@ -16,10 +16,23 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// gitConfigOrEmpty is gitConfig for a key that may legitimately be unset -
+// `git config <key>` exits non-zero when it is, which the shared helper
+// treats as a fatal error because its callers are asserting a value.
+func gitConfigOrEmpty(t *testing.T, dir, key string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "config", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // withHook plants an executable hook in a repo the harness will sandbox, and
 // returns the path so a test can prove it survived.
@@ -115,5 +128,54 @@ func TestOnlyExecutableNonSampleHooksCount(t *testing.T) {
 func TestActiveHooksIsQuietWhenThereIsNoHooksDirectory(t *testing.T) {
 	if got := activeHooks(t.TempDir()); got != nil {
 		t.Errorf("activeHooks = %v, want nil for a directory with no .git", got)
+	}
+}
+
+// The control has to hold continuously, not once. Before this, `new` set
+// core.hooksPath at create and nothing touched it again - so one `git config
+// --unset` inside the mount disabled the protection permanently and silently.
+// 90-harden.sh is the pattern: deliberately unguarded, re-asserting the sudo
+// removal on every boot.
+func TestStartReAssertsTheHooksRedirect(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	repoDir := filepath.Join(h.repos, "demo")
+
+	// The agent, or anything else with write access to the mount, undoes it.
+	gitRun(t, repoDir, "config", "--unset", "core.hooksPath")
+	if got := gitConfigOrEmpty(t, repoDir, "core.hooksPath"); got != "" {
+		t.Fatalf("the setting was not actually removed, got %q", got)
+	}
+
+	h.mustRun("start", "demo")
+
+	if got := gitConfig(t, repoDir, "core.hooksPath"); got != "/dev/null" {
+		t.Errorf("core.hooksPath = %q after start, want it re-asserted", got)
+	}
+}
+
+// The mapping start depends on: a VM name back to the host directory it
+// mounts. Nothing else records it, so this reads the generated Lima config -
+// and must not pick up the image URL, which is the other line of that shape.
+func TestTheMountedRepoIsReadBackFromTheGeneratedConfig(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+
+	got, ok := mountedRepo("demo")
+	if !ok {
+		t.Fatal("could not read the mounted repo back")
+	}
+	if want := filepath.Join(h.repos, "demo"); got != want {
+		t.Errorf("mountedRepo = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(got, "https:") {
+		t.Error("the image URL was mistaken for the mount")
+	}
+}
+
+func TestMountedRepoIsAbsentForAVMThatWasNeverCreated(t *testing.T) {
+	newHarness(t)
+	if _, ok := mountedRepo("nothing-here"); ok {
+		t.Error("mountedRepo answered for a VM with no generated config")
 	}
 }

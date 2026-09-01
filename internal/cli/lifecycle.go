@@ -125,6 +125,20 @@ func cmdStart(env *Env, args []string) error {
 		return err
 	}
 
+	// Re-assert the hooks redirect before the sandbox comes up.
+	//
+	// `new` set it once, at create, and nothing has touched it since - so a
+	// single `git config --unset core.hooksPath` inside the mount was
+	// permanent and silent, and the control quietly stopped existing. The
+	// pattern this follows is 90-harden.sh, which is deliberately unguarded so
+	// the sudo removal re-asserts on every boot: a control that has to hold
+	// continuously cannot be applied once. This is that, for the host side.
+	if repoDir, ok := mountedRepo(name); ok {
+		if err := neutraliseHooks(env, repoDir); err != nil {
+			return err
+		}
+	}
+
 	if env.Lima.Running(name) {
 		env.Out.Say("VM %q is already running", name)
 	} else if err := env.Lima.Start(name); err != nil {

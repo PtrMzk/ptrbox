@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
@@ -424,6 +425,29 @@ func prepareRepoDir(env *Env, dir string) (string, error) {
 func neutraliseHooks(env *Env, repoDir string) error {
 	return git(env, repoDir, "config", "core.hooksPath", "/dev/null")
 }
+
+// mountedRepo is the host directory a VM has mounted, read back out of its
+// generated Lima config.
+//
+// There is no other record: `ptrbox new` maps a repo to a VM name and nothing
+// maps back. The rendered config is that record, and invariant 3 is what makes
+// reading it unambiguous - there is exactly one mount. The image's `location:`
+// is the other line of this shape, and it can never be confused for this one
+// because PTRBOX_IMAGE_URL is validated to be https while a repo is an
+// absolute path.
+func mountedRepo(name string) (string, bool) {
+	body, err := os.ReadFile(config.GeneratedConfig(name))
+	if err != nil {
+		return "", false
+	}
+	m := mountLocation.FindSubmatch(body)
+	if m == nil {
+		return "", false
+	}
+	return string(m[1]), true
+}
+
+var mountLocation = regexp.MustCompile(`(?m)^\s*-\s*location:\s*"(/[^"]*)"`)
 
 // activeHooks are the hooks this repo would run if git were looking:
 // executable files in .git/hooks that are not git's own .sample templates. A
