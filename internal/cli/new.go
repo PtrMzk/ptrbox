@@ -109,7 +109,7 @@ func cmdNew(env *Env, args []string) error {
 	// Everything below this point is expensive or irreversible; everything
 	// above it is knowable now. This is the last moment either file can be
 	// edited without a re-create.
-	if err := reviewPlan(env, name, noEdit); err != nil {
+	if err := reviewPlan(env, name, repoDir, noEdit); err != nil {
 		return err
 	}
 
@@ -248,8 +248,8 @@ func cmdNew(env *Env, args []string) error {
 //
 // Every path through here is a no-op without a terminal, which is what keeps
 // scripted and tested runs exactly what they were.
-func reviewPlan(env *Env, name string, noEdit bool) error {
-	printPlan(env, name)
+func reviewPlan(env *Env, name, repoDir string, noEdit bool) error {
+	printPlan(env, name, repoDir)
 	if noEdit {
 		return nil
 	}
@@ -269,7 +269,7 @@ func reviewPlan(env *Env, name string, noEdit bool) error {
 				return err
 			}
 		}
-		printPlan(env, name)
+		printPlan(env, name, repoDir)
 	}
 
 	if ask(env, fmt.Sprintf("edit the egress allowlist for %q first?", name)) {
@@ -296,7 +296,7 @@ func reviewPlan(env *Env, name string, noEdit bool) error {
 // printPlan is what the VM will be, in the vocabulary the closing summary
 // uses. The same lines twice - once as a plan, once as a record - so that
 // "what did I ask for" and "what did I get" are comparable.
-func printPlan(env *Env, name string) {
+func printPlan(env *Env, name, repoDir string) {
 	cfg := env.Cfg
 	runtimes := cfg.ToolchainList()
 	if runtimes == "" {
@@ -315,6 +315,22 @@ func printPlan(env *Env, name string) {
 	}
 	env.Out.Detail("config   %s", settings)
 	env.Out.Detail("egress   %s", config.VMAllowlistPath(name))
+
+	// Only when the repo actually has hooks, so a fresh `git init` - which
+	// ships .sample templates and nothing else - stays quiet.
+	//
+	// Said because the cost of neutralising them is silence, and silence is
+	// the whole problem: a working pre-commit setup stops firing and nothing
+	// mentions it. Worse, `pre-commit install` afterwards appears to succeed -
+	// it writes .git/hooks/pre-commit quite happily - and then never runs.
+	// Naming the hooks, saying they are kept, and giving the one command that
+	// undoes it turns a baffling afternoon into a line of output.
+	if hooks := activeHooks(repoDir); len(hooks) > 0 {
+		env.Out.Detail("hooks    %s: kept, but not run on the host while sandboxed",
+			strings.Join(hooks, " "))
+		env.Out.Detail("         run them in the VM, or: git -C %s config --unset core.hooksPath",
+			repoDir)
+	}
 }
 
 // vmConfigHeader introduces a per-VM file seeded from the shipped example. The
@@ -382,15 +398,56 @@ func prepareRepoDir(env *Env, dir string) (string, error) {
 		}
 	}
 
-	// Neutralise git hooks on the HOST clone. The agent can write .git/hooks
-	// through the mount, and hooks execute on the Mac when YOU run git there -
-	// that is agent-authored code running outside the sandbox. Residual risk:
-	// .git/config is itself agent-writable and repo config outranks global, so
-	// this blocks the common case, not a targeted attack. See SECURITY.md.
-	if err := git(env, repoDir, "config", "core.hooksPath", "/dev/null"); err != nil {
+	if err := neutraliseHooks(env, repoDir); err != nil {
 		return "", err
 	}
 	return repoDir, nil
+}
+
+// neutraliseHooks points this repo's hooks at a directory that cannot exist.
+//
+// The agent can write .git/hooks through the mount, and hooks execute on the
+// Mac when YOU run git there - that is agent-authored code running outside the
+// sandbox, which is the shortest path there is from "the agent wrote a file"
+// to "code ran on your machine".
+//
+// A redirect, not a deletion: core.hooksPath changes WHICH directory git looks
+// in, and /dev/null is a character device, so every lookup misses and git
+// treats that as "no hook", the normal quiet case. Nothing in .git/hooks is
+// read, moved or removed, and `git config --unset core.hooksPath` restores all
+// of it. That matters for saying so honestly - the cost here is silence, not
+// lost work.
+//
+// Residual risk: .git/config is itself agent-writable and repo config outranks
+// global, so this blocks the common case, not a targeted attack. See
+// SECURITY.md.
+func neutraliseHooks(env *Env, repoDir string) error {
+	return git(env, repoDir, "config", "core.hooksPath", "/dev/null")
+}
+
+// activeHooks are the hooks this repo would run if git were looking:
+// executable files in .git/hooks that are not git's own .sample templates. A
+// fresh `git init` ships samples and nothing else, so this is empty for a
+// brand-new repo and non-empty exactly when somebody has set hooks up.
+func activeHooks(repoDir string) []string {
+	entries, err := os.ReadDir(filepath.Join(repoDir, ".git", "hooks"))
+	if err != nil {
+		// No .git/hooks at all, or a .git file rather than a directory (a
+		// worktree or submodule). Nothing to report either way.
+		return nil
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".sample") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.Mode()&0o111 == 0 {
+			continue // git only runs it if it is executable
+		}
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 func git(env *Env, dir string, args ...string) error {
