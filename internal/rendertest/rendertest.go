@@ -39,7 +39,7 @@ func Args() render.Values {
 		"TOOLCHAIN":      "node uv",
 		"NODE_VERSION":   "lts",
 		"PLAYWRIGHT":     "true",
-		"PROXY_HOST": "192.168.5.2",
+		"PROXY_HOST":     "192.168.5.2",
 		// The VM's own allocated port, not the base port: since item 37 every
 		// sandbox dials its own, and 8889 is the first allocation.
 		"PROXY_PORT":     "8889",

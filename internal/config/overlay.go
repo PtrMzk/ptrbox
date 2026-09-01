@@ -43,6 +43,7 @@ var perVMKeys = map[string]bool{
 	"IMAGE_URL":      true,
 	"EXTRA_PACKAGES": true,
 	"GO":             true,
+	"HOST_HOOKS":     true,
 	"NODE":           true,
 	"NODE_VERSION":   true,
 	"PLAYWRIGHT":     true,

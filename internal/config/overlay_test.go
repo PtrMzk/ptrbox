@@ -195,7 +195,7 @@ func TestEveryPerVMKeyIsAcceptedInAPerVMFile(t *testing.T) {
 		"DISTRO": "ubuntu2404", "IMAGE_URL": "https://example.com/x.qcow2",
 		"EXTRA_PACKAGES": "latexmk", "CLAUDE_MODEL": "opus",
 		"GO": "true", "NODE": "true", "UV": "true", "NODE_VERSION": "22",
-		"PLAYWRIGHT": "true",
+		"PLAYWRIGHT": "true", "HOST_HOOKS": "true",
 		"GIT_USER_NAME": "Someone", "GIT_USER_EMAIL": "someone@example.com",
 	}
 	for _, key := range PerVMKeys() {

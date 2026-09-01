@@ -30,7 +30,7 @@ var Keys = []string{
 	"REPO_ROOT", "CPUS", "MEMORY", "DISK", "PORT_MIN", "PORT_MAX",
 	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
-	"EXTRA_PACKAGES", "GO", "NODE", "NODE_VERSION", "PLAYWRIGHT", "UV",
+	"EXTRA_PACKAGES", "GO", "HOST_HOOKS", "NODE", "NODE_VERSION", "PLAYWRIGHT", "UV",
 }
 
 // The egress proxy VM, fixed rather than configured.
@@ -180,6 +180,7 @@ type Config struct {
 	Toolchain       []string
 	NodeVersion     string
 	Playwright      bool
+	HostHooks       bool
 
 	// features is the resolved answer to `# @requires`: the runtimes in
 	// Toolchain plus any capability that is on. Separate from Toolchain
@@ -230,6 +231,15 @@ func defaults() map[string]string {
 		// packages of GTK, X11 and font libraries in every sandbox, whether
 		// or not anything will ever open a browser.
 		"PLAYWRIGHT": "false",
+		// Let this repo's git hooks keep running on the HOST. Off, and the
+		// only setting here whose "on" is a decision to run agent-writable
+		// code outside the sandbox: .git/hooks is inside the one mount, so a
+		// hook you wrote is a hook the agent can rewrite. It exists because
+		// somebody with a real hook-based workflow on a repo they trust
+		// should be able to say so once, in a file, rather than be argued
+		// with on every create - and because a recorded decision beats a
+		// prompt answered under time pressure.
+		"HOST_HOOKS": "false",
 		// What `nvm install` is given. "lts" is the always-fresh default;
 		// a version pins a project to the runtime it needs.
 		"NODE_VERSION": "lts",
@@ -378,6 +388,10 @@ func load(vm string) (*Config, error) {
 	// Capabilities that are not runtimes, resolved the same way. features is
 	// what the allowlist seed matches `# @requires` against, so it holds both.
 	cfg.Playwright, err = parseBoolean("PLAYWRIGHT", values["PLAYWRIGHT"])
+	if err != nil {
+		return nil, err
+	}
+	cfg.HostHooks, err = parseBoolean("HOST_HOOKS", values["HOST_HOOKS"])
 	if err != nil {
 		return nil, err
 	}

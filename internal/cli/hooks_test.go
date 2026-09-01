@@ -179,3 +179,63 @@ func TestMountedRepoIsAbsentForAVMThatWasNeverCreated(t *testing.T) {
 		t.Error("mountedRepo answered for a VM with no generated config")
 	}
 }
+
+// --- the escape hatch ----------------------------------------------------------
+
+// PTRBOX_HOST_HOOKS is the one setting whose "on" means agent-writable code
+// runs outside the sandbox. It exists because somebody with a real hook-based
+// workflow on a repo they trust should be able to say so once, in a file,
+// rather than be argued with on every create. A recorded decision beats a
+// prompt answered under time pressure - which is why this is a config key and
+// NOT a question `ptrbox new` asks.
+func TestHostHooksLeavesTheRepoAlone(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_HOST_HOOKS=true\n")
+	h.mustRun("new", "demo")
+
+	repoDir := filepath.Join(h.repos, "demo")
+	if got := gitConfigOrEmpty(t, repoDir, "core.hooksPath"); got != "" {
+		t.Errorf("core.hooksPath = %q, want it left unset", got)
+	}
+	if !strings.Contains(h.stderr, "run on your Mac") {
+		t.Errorf("the decision was not said out loud:\n%s", h.stderr)
+	}
+}
+
+// Turning it on for a repo ptrbox has already clamped has to give the hooks
+// back. Skipping the set would leave the old /dev/null in place and the
+// setting would appear to do nothing.
+func TestHostHooksUndoesAnExistingRedirect(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	repoDir := filepath.Join(h.repos, "demo")
+	if got := gitConfigOrEmpty(t, repoDir, "core.hooksPath"); got != "/dev/null" {
+		t.Fatalf("setup: core.hooksPath = %q", got)
+	}
+
+	// The owner decides this repo's hooks are theirs, and starts the VM.
+	h.writeVMConfig("demo", "PTRBOX_HOST_HOOKS=true\n")
+	h.mustRun("start", "demo")
+
+	if got := gitConfigOrEmpty(t, repoDir, "core.hooksPath"); got != "" {
+		t.Errorf("core.hooksPath = %q after enabling host hooks, want it removed", got)
+	}
+}
+
+// It is per-VM, so allowing hooks for one repo must not allow them anywhere
+// else - and start must read that VM's answer rather than the host default.
+func TestHostHooksAppliesOnlyToTheVMThatAskedForIt(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("demo", "PTRBOX_HOST_HOOKS=true\n")
+	h.mustRun("new", "demo")
+	h.mustRun("new", "other")
+
+	if got := gitConfigOrEmpty(t, filepath.Join(h.repos, "other"), "core.hooksPath"); got != "/dev/null" {
+		t.Errorf("another repo's hooks path = %q, want it still clamped", got)
+	}
+	// And starting the permitted one does not re-clamp it.
+	h.mustRun("start", "demo")
+	if got := gitConfigOrEmpty(t, filepath.Join(h.repos, "demo"), "core.hooksPath"); got != "" {
+		t.Errorf("start re-clamped a repo that had opted out: %q", got)
+	}
+}

@@ -51,6 +51,13 @@
 #PTRBOX_GIT_USER_NAME=""
 #PTRBOX_GIT_USER_EMAIL=""
 
+# [vm] Let this repo's git hooks keep running on your Mac. Off, and the only
+# setting here whose "on" runs agent-writable code outside the sandbox:
+# .git/hooks is inside the mount, so a hook you wrote is one the agent can
+# rewrite. Normally ptrbox points core.hooksPath at /dev/null - the hooks are
+# kept, just not run - and you run them in the VM instead.
+#PTRBOX_HOST_HOOKS=false
+
 # --- this Mac ----------------------------------------------------------------
 
 # Resolvers, pinned in the guest firewall: unpinned port 53 exfiltrates. Not

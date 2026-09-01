@@ -134,7 +134,14 @@ func cmdStart(env *Env, args []string) error {
 	// the sudo removal re-asserts on every boot: a control that has to hold
 	// continuously cannot be applied once. This is that, for the host side.
 	if repoDir, ok := mountedRepo(name); ok {
-		if err := neutraliseHooks(env, repoDir); err != nil {
+		// This VM's own answer, not the host default: PTRBOX_HOST_HOOKS is
+		// per-VM, and a repo whose owner allowed hooks must not have them
+		// taken back every time the sandbox starts.
+		cfg, err := env.Cfg.Overlay(name)
+		if err != nil {
+			return err
+		}
+		if err := neutraliseHooks(env, cfg, repoDir); err != nil {
 			return err
 		}
 	}

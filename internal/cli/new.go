@@ -106,6 +106,14 @@ func cmdNew(env *Env, args []string) error {
 		}
 	}
 
+	// --- git hooks ----------------------------------------------------------
+	// After the per-VM overrides, because PTRBOX_HOST_HOOKS is one of them and
+	// this repo may be the one that turns it on. Still before anything
+	// expensive, and before the plan, so what the plan reports is true.
+	if err := neutraliseHooks(env, env.Cfg, repoDir); err != nil {
+		return err
+	}
+
 	// --- the plan, and the two offers ---------------------------------------
 	// Everything below this point is expensive or irreversible; everything
 	// above it is knowable now. This is the last moment either file can be
@@ -399,9 +407,6 @@ func prepareRepoDir(env *Env, dir string) (string, error) {
 		}
 	}
 
-	if err := neutraliseHooks(env, repoDir); err != nil {
-		return "", err
-	}
 	return repoDir, nil
 }
 
@@ -422,7 +427,23 @@ func prepareRepoDir(env *Env, dir string) (string, error) {
 // Residual risk: .git/config is itself agent-writable and repo config outranks
 // global, so this blocks the common case, not a targeted attack. See
 // SECURITY.md.
-func neutraliseHooks(env *Env, repoDir string) error {
+func neutraliseHooks(env *Env, cfg *config.Config, repoDir string) error {
+	if cfg.HostHooks {
+		// The escape hatch, and it is loud on purpose. Nobody should be able
+		// to arrive at this state without having read a sentence about it,
+		// and a per-VM file is read once while this prints on every create
+		// and every start.
+		env.Out.Warn("PTRBOX_HOST_HOOKS is on: this repo's git hooks run on your Mac")
+		env.Out.Detail(".git/hooks is inside the mount, so the agent can rewrite what runs there")
+		// Actively undone rather than merely skipped: turning the setting on
+		// for a repo ptrbox has already clamped has to give the hooks back,
+		// or the setting would appear to do nothing.
+		if current, err := exec.Command("git", "-C", repoDir, "config", "core.hooksPath").Output(); err == nil &&
+			strings.TrimSpace(string(current)) == "/dev/null" {
+			return git(env, repoDir, "config", "--unset", "core.hooksPath")
+		}
+		return nil
+	}
 	return git(env, repoDir, "config", "core.hooksPath", "/dev/null")
 }
 

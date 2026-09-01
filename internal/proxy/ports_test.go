@@ -88,7 +88,7 @@ func TestReleasingAnUnallocatedPortIsFine(t *testing.T) {
 func TestAFullRangeRefusesTheSeventeenthSandbox(t *testing.T) {
 	newHarness(t)
 	for i := 0; i < config.SandboxProxyPorts; i++ {
-		if _, err := proxy.AllocatePort(string(rune('a'+i))+"-vm"); err != nil {
+		if _, err := proxy.AllocatePort(string(rune('a'+i)) + "-vm"); err != nil {
 			t.Fatal(err)
 		}
 	}
