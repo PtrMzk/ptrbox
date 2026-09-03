@@ -1,6 +1,7 @@
 # Documentation stays untracked until it has been reviewed.
-# Remove this line to publish the docs.
+# Un-ignore a file here to publish it.
 *.md
+!README.md
 
 # Editor / OS noise
 .DS_Store
