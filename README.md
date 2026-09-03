@@ -87,8 +87,8 @@ ptrbox install                # dependency checks, proxy VM, config files
 claude setup-token            # prints a 1-year token; then store it:
 security add-generic-password -a "$USER" -s claude-sandbox-token -w
 
-ptrbox new my-api             # creates ~/code/my-api if needed, builds its VM
-ssh lima-my-api
+ptrbox new ~/my-code/my-git-repo   # creates the repo if needed, builds its VM
+ssh lima-my-git-repo
 cd /workspace && claude
 ```
 
@@ -103,11 +103,11 @@ Your repo is a live two-way mount, so the agent's edits appear on your Mac
 immediately. Review and push from the host, where your keys are:
 
 ```bash
-cd ~/code/my-api
+cd ~/my-code/my-git-repo
 git add -p && git commit && git push
 ```
 
-Done with a project? `ptrbox rm my-api` destroys the VM and reclaims the
+Done with a project? `ptrbox rm my-git-repo` destroys the VM and reclaims the
 disk. The repo, the VM's config and its allowlist are untouched.
 
 ## Commands
@@ -131,7 +131,7 @@ sandbox started without its proxy has no network at all.
 
 ```bash
 ptrbox logs --denied                  # find the domain (localport= says which VM asked)
-ptrbox allow my-api files.example.com # grant it to that sandbox; validates and reloads
+ptrbox allow my-git-repo files.example.com   # grant it to that sandbox; validates and reloads
 ```
 
 Each sandbox's list starts as a copy of the template
