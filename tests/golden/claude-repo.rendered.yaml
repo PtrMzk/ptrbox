@@ -456,6 +456,17 @@ provision:
           # second proxy identity. Everything the agent sends there is input to a
           # process on the Mac, which is the exposure SECURITY.md names.
           # (PTRBOX_OPENCODE off: no LM Studio rule)
+          # Everything else is refused, not silently dropped. On an OUTPUT chain
+          # the packet never leaves the VM either way - reject only hands the local
+          # socket an error instead of a timeout - so the "drop reveals nothing to
+          # a scanner" argument does not apply here; that is an input-chain
+          # argument. What it buys: a tool that ignores the proxy (anything
+          # Bun-based, a phone-home whose switch was missed) fails in a
+          # millisecond with ECONNREFUSED rather than hanging for a minute on
+          # every attempt. The policy stays drop as the backstop for whatever
+          # reject cannot express. These two lines change no verdict.
+          meta l4proto tcp reject with tcp reset
+          reject with icmpx type admin-prohibited
         }
       }
       NFT

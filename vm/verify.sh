@@ -123,10 +123,22 @@ fi
 # cannot run the agent the token below is about to be injected for.
 
 # Bypassing the proxy must fail: that is the kernel-level wall doing its job.
+# And it must fail FAST: the ruleset ends in reject rules so that a blocked
+# connection is an instant error rather than a hang, and a slow failure here
+# means the ruleset that loaded is not the one that was rendered - the accept
+# rules may be right and the rejects gone. The probe's own timeout is 5s;
+# anything near it is a drop, not a refusal.
+probe_start="$(date +%s)"
 if curl -sm 5 --noproxy '*' https://api.anthropic.com -o /dev/null; then
   bad "direct egress blocked" "reached the internet without the proxy"
 else
   ok "direct egress blocked"
+fi
+probe_took=$(( $(date +%s) - probe_start ))
+if [ "$probe_took" -ge 4 ]; then
+  bad "egress fails fast" "the blocked connection took ${probe_took}s to fail - dropped, not rejected"
+else
+  ok "egress fails fast"
 fi
 
 # Through the proxy, an allowlisted domain must work.

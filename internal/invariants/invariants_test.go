@@ -314,6 +314,32 @@ func TestOpencodeAddsExactlyOneAllowanceAndItIsLMStudio(t *testing.T) {
 	}
 }
 
+// Blocked egress is refused, not silently dropped: the chain ends in reject
+// rules, after every accept, with the drop policy still behind them. On an
+// output chain this reveals nothing - the packet never leaves the VM either
+// way - and turns every hang from a tool that ignores the proxy into an
+// instant error. Ordering is the whole assertion: a reject ABOVE an accept
+// would refuse the proxy itself.
+func TestBlockedEgressIsRejectedAfterEveryAccept(t *testing.T) {
+	_, stripped := sandbox(t)
+	for _, body := range []string{stripped, opencodeSandbox(t)} {
+		tcp := strings.Index(body, "meta l4proto tcp reject with tcp reset")
+		rest := strings.Index(body, "reject with icmpx type admin-prohibited")
+		if tcp < 0 || rest < 0 {
+			t.Fatal("the firewall does not end in reject rules")
+		}
+		if tcp > rest {
+			t.Error("the TCP reset must come before the generic reject, or TCP never gets a reset")
+		}
+		for _, rule := range acceptRules(body) {
+			if strings.Index(body, rule) > tcp {
+				t.Errorf("accept rule %q comes after the reject - it would never match", rule)
+			}
+		}
+		mustMatch(t, body, `policy drop;`, "the drop policy is gone; reject needs it as the backstop")
+	}
+}
+
 func TestNoLMStudioRuleUnlessOpencodeIsOn(t *testing.T) {
 	_, stripped := sandbox(t)
 	mustNotMatch(t, stripped, `dport 1234 accept`, "the LM Studio rule is rendered into a sandbox without opencode")
@@ -977,7 +1003,8 @@ func TestTheVerificationScriptChecksWhatMatters(t *testing.T) {
 	verify := asset(t, "vm/verify.sh")
 	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs",
 		"extra-packages.failed", "setuid stripped", "perm -4000",
-		"no multicast dns", ".credentials.json", "no stored login", "lm studio reachable", "exit 1"} {
+		"no multicast dns", ".credentials.json", "no stored login", "lm studio reachable",
+		"egress fails fast", "exit 1"} {
 		if !strings.Contains(verify, want) {
 			t.Errorf("vm/verify.sh no longer checks %q", want)
 		}
