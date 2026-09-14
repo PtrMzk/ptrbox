@@ -122,6 +122,10 @@ ssh:
 provision:
   - mode: system
     script: |
+      __INCLUDE:provision/05-apt.sh__
+
+  - mode: system
+    script: |
       __INCLUDE:provision/10-base.sh__
 
   - mode: system

@@ -227,6 +227,28 @@ func TestTheAptTimersAreMasked(t *testing.T) {
 	mustMatch(t, stripped, `systemctl mask`, "nothing is masked")
 }
 
+// The apt settings are only worth having if apt reads them: the timers must
+// be masked and the dpkg configuration written BEFORE the first apt-get, or
+// boot 1 pays the lock contention and the man-db trigger it was meant to skip.
+func TestAptIsTunedAndItsTimersMaskedBeforeTheFirstAptGet(t *testing.T) {
+	_, stripped := sandbox(t)
+	first := strings.Index(stripped, "apt-get update")
+	if first < 0 {
+		t.Fatal("no apt-get update in the rendering")
+	}
+	for _, setting := range []string{"systemctl mask", "dpkg.cfg.d/01-ptrbox", "man-db/auto-update boolean false"} {
+		at := strings.Index(stripped, setting)
+		if at < 0 {
+			t.Errorf("%q is not in the rendering", setting)
+		} else if at > first {
+			t.Errorf("%q comes after the first apt-get update", setting)
+		}
+	}
+	// And the full upgrade is still there: a faster boot that ships stale
+	// packages is a different decision, made elsewhere if at all.
+	mustMatch(t, stripped, `(?m)^\s*apt-get upgrade -y\s*$`, "the provision-time upgrade is gone")
+}
+
 // The two deliberate keeps. AppArmor is the one service in that list actively
 // helping, and fstrim is what lets the Mac reclaim space from a sparse
 // diffdisk - turning either off would be a loss dressed as hardening.

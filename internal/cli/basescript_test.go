@@ -116,8 +116,10 @@ func TestWithoutPlaywrightNoChromiumPackagesAreInstalled(t *testing.T) {
 	}
 	apt := logOf(t, dir, "apt.log")
 	// The base set still lands - this gates the browser libraries, nothing else.
-	if !strings.Contains(apt, "curl git build-essential") {
-		t.Errorf("the base packages were not installed:\n%s", apt)
+	// And it lands without recommends: that list is ours, every recommend it
+	// wants is named in it.
+	if !strings.Contains(apt, "--no-install-recommends curl git build-essential") {
+		t.Errorf("the base packages were not installed without recommends:\n%s", apt)
 	}
 	for _, unwanted := range []string{"libgtk-3-0t64", "libnss3", "fonts-liberation"} {
 		if strings.Contains(apt, unwanted) {
@@ -146,6 +148,14 @@ func TestPlaywrightInstallsTheChromiumPackagesAndRecordsThem(t *testing.T) {
 	for _, want := range []string{"libgtk-3-0t64", "libnss3", "fonts-liberation"} {
 		if !strings.Contains(apt, want) {
 			t.Errorf("%s was not installed for a Playwright VM:\n%s", want, apt)
+		}
+	}
+	// The browser libraries keep their recommends - fonts and ICU are what
+	// breaks a headless browser silently - so the flag must not leak onto
+	// that line from the base install above it.
+	for _, line := range strings.Split(apt, "\n") {
+		if strings.Contains(line, "libgtk-3-0t64") && strings.Contains(line, "--no-install-recommends") {
+			t.Errorf("the Playwright packages were installed without recommends: %s", line)
 		}
 	}
 	// One package per line, which is what verify.sh reads back.

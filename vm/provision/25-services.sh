@@ -53,19 +53,8 @@ RESOLVED
 
 # --- units with nothing to do -------------------------------------------------
 
-# Masked rather than disabled: these are the apt machinery, and a package
-# upgrade is exactly the event that re-enables them. unattended-upgrades cannot
-# reach the Debian mirrors once the firewall is up (they are not on the
-# allowlist, and apt does not use the proxy), so it wakes, fails, and sleeps -
-# a root process doing nothing but retrying. Patching happens at provision
-# time in 10-base.sh, and the image URLs track current builds, so a fresh VM is
-# a patched VM.
-for unit in \
-  unattended-upgrades.service \
-  apt-daily.timer \
-  apt-daily-upgrade.timer; do
-  systemctl mask "$unit" 2>/dev/null || true
-done
+# The apt timers and unattended-upgrades are masked in 05-apt.sh, ahead of the
+# first apt-get, because on boot 1 they contend with it for the dpkg lock.
 
 # Disabled rather than masked: nothing re-enables these, and masking would be
 # a stronger claim than the reasoning supports.

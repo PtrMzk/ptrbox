@@ -49,7 +49,14 @@ apt-get upgrade -y
 # or pip packages compile native extensions.  ca-certificates: TLS trust roots
 # so https works at all.  jq: JSON wrangling in shell.  nftables: the firewall
 # itself.  tmux: long-running agent sessions that survive ssh disconnects.
-apt-get install -y curl git build-essential ca-certificates jq nftables tmux
+# less: git's pager, which --no-install-recommends would otherwise drop.
+# unzip: what curl|bash installers unpack their archives with.
+#
+# --no-install-recommends here and not below: this list is ours, and every
+# recommend it would pull is either named here or unwanted. The Playwright
+# set keeps recommends, because fonts and ICU are exactly the kind of
+# dependency that breaks a browser silently rather than at install time.
+apt-get install -y --no-install-recommends curl git build-essential ca-certificates jq nftables tmux less unzip
 
 # Chromium runtime dependencies (Playwright headless browser testing), only
 # when PTRBOX_PLAYWRIGHT asked for them. This is what

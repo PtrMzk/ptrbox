@@ -72,7 +72,7 @@ func TestDistroUbuntuBuildsAnUbuntuVM(t *testing.T) {
 	}
 	// Same provisioning either way: both distros are apt-based with identical
 	// package names.
-	if !strings.Contains(body, "apt-get install -y curl git build-essential") {
+	if !strings.Contains(body, "apt-get install -y --no-install-recommends curl git build-essential") {
 		t.Error("the base package install changed with the distro")
 	}
 }
