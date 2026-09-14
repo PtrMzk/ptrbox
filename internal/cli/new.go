@@ -286,7 +286,7 @@ func cmdNew(env *Env, args []string) error {
 // the LAST plan printed: the configuration editor may have turned opencode on
 // or off, and the build must follow the plan that was shown, not the first
 // one.
-func reviewPlan(env *Env, name, repoDir string, noEdit bool) ([]string, error) {
+func reviewPlan(env *Env, name, repoDir string, noEdit bool) ([]lmModel, error) {
 	models, err := printPlan(env, name, repoDir)
 	if err != nil {
 		return nil, err
@@ -352,13 +352,13 @@ func reviewPlan(env *Env, name, repoDir string, noEdit bool) ([]string, error) {
 // not running is a sandbox that cannot do what it was created for, found here
 // in a second rather than after minutes of provisioning - and before any VM
 // state exists.
-func printPlan(env *Env, name, repoDir string) ([]string, error) {
+func printPlan(env *Env, name, repoDir string) ([]lmModel, error) {
 	cfg := env.Cfg
 	runtimes := cfg.ToolchainList()
 	if runtimes == "" {
 		runtimes = "none (claude only)"
 	}
-	var models []string
+	var models []lmModel
 	if cfg.Wants("opencode") {
 		var err error
 		if models, err = lmstudioModels(cfg.LMStudioPort); err != nil {
@@ -370,8 +370,8 @@ func printPlan(env *Env, name, repoDir string) ([]string, error) {
 			return nil, fmt.Errorf("PTRBOX_OPENCODE is on but LM Studio on 127.0.0.1:%d serves no chat models - "+
 				"download one in LM Studio first", cfg.LMStudioPort)
 		}
-		for _, id := range models {
-			if err := validModelID(id); err != nil {
+		for _, m := range models {
+			if err := validModelID(m.ID); err != nil {
 				return nil, err
 			}
 		}
@@ -384,8 +384,12 @@ func printPlan(env *Env, name, repoDir string) ([]string, error) {
 		env.Out.Detail("extra    %s", packages)
 	}
 	if models != nil {
+		names := make([]string, 0, len(models))
+		for _, m := range models {
+			names = append(names, m.describe())
+		}
 		env.Out.Detail("opencode LM Studio on 127.0.0.1:%d - models: %s (default %s)",
-			cfg.LMStudioPort, strings.Join(models, ", "), models[0])
+			cfg.LMStudioPort, strings.Join(names, ", "), models[0].ID)
 	}
 	settings := config.VMConfigPath(name)
 	if !config.HasVMConfig(name) {
@@ -439,12 +443,13 @@ func reconcileAllowlist(env *Env, name string) error {
 	return nil
 }
 
-// firstOf is the default model: the first one LM Studio listed, or "" for none.
-func firstOf(models []string) string {
+// firstOf is the default model: the first one LM Studio listed (loaded models
+// first), or "" for none.
+func firstOf(models []lmModel) string {
 	if len(models) == 0 {
 		return ""
 	}
-	return models[0]
+	return models[0].ID
 }
 
 // vmConfigHeader introduces a per-VM file seeded from the shipped example. The

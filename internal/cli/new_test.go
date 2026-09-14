@@ -619,7 +619,7 @@ func TestNewStillSucceedsWithNoTimingsRecord(t *testing.T) {
 // disagree about which port the wall was opened for.
 func TestLMStudioPortReachesTheFirewallOnlyWhenOpencodeIsOn(t *testing.T) {
 	h := newHarness(t)
-	h.lmstudio.models, h.lmstudio.err = []string{"some-model"}, nil
+	h.lmstudio.models, h.lmstudio.err = []lmModel{{ID: "some-model"}}, nil
 	t.Setenv("PTRBOX_LMSTUDIO_PORT", "4321")
 	h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
 	h.mustRun("new", "agentic")
@@ -668,14 +668,17 @@ func TestOpencodeOnWithoutLMStudioFailsNewBeforeAnyVMIsTouched(t *testing.T) {
 
 func TestOpencodeOnRendersLMStudiosModelsIntoTheGuest(t *testing.T) {
 	h := newHarness(t)
-	h.lmstudio.models, h.lmstudio.err = []string{"qwen/qwen3-coder-30b", "google/gemma-3-12b"}, nil
+	h.lmstudio.models, h.lmstudio.err = []lmModel{
+		{ID: "qwen/qwen3-coder-30b", Context: 32768, Loaded: true},
+		{ID: "google/gemma-3-12b", Context: 131072},
+	}, nil
 	h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
 	h.mustRun("new", "agentic")
 
 	body := h.generated("agentic")
 	// Sorted keys, one line, each id displayed as itself - what encoding/json
 	// makes of the list, substituted as one token.
-	if !strings.Contains(body, `"models": {"google/gemma-3-12b":{"name":"google/gemma-3-12b"},"qwen/qwen3-coder-30b":{"name":"qwen/qwen3-coder-30b"}}`) {
+	if !strings.Contains(body, `"models": {"google/gemma-3-12b":{"name":"google/gemma-3-12b","limit":{"context":131072,"output":8192}},"qwen/qwen3-coder-30b":{"name":"qwen/qwen3-coder-30b","limit":{"context":32768,"output":8192}}}`) {
 		t.Errorf("the model list did not reach opencode.json:\n%s", body)
 	}
 	// The default is the first one LM Studio listed, not the first sorted.
@@ -687,7 +690,7 @@ func TestOpencodeOnRendersLMStudiosModelsIntoTheGuest(t *testing.T) {
 	}
 	out := ui.Plain(h.stderr)
 	for _, want := range []string{
-		"opencode LM Studio on 127.0.0.1:1234 - models: qwen/qwen3-coder-30b, google/gemma-3-12b (default qwen/qwen3-coder-30b)",
+		"opencode LM Studio on 127.0.0.1:1234 - models: qwen/qwen3-coder-30b (32k) loaded, google/gemma-3-12b (128k) (default qwen/qwen3-coder-30b)",
 		"opencode lmstudio/qwen/qwen3-coder-30b via 192.168.5.2:1234 on the Mac",
 		"cd /workspace && opencode",
 	} {
@@ -716,7 +719,7 @@ func TestAModelIDThatCannotBeRenderedFailsNew(t *testing.T) {
 	for _, id := range []string{"bad__ID__", "a b", `q"uote`, "$(reboot)", "-flag"} {
 		t.Run(id, func(t *testing.T) {
 			h := newHarness(t)
-			h.lmstudio.models, h.lmstudio.err = []string{id}, nil
+			h.lmstudio.models, h.lmstudio.err = []lmModel{{ID: id}}, nil
 			h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
 			err := h.run("new", "agentic")
 			if err == nil || !strings.Contains(err.Error(), "cannot be rendered") {

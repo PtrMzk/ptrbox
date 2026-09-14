@@ -59,7 +59,7 @@ type harness struct {
 	// models. The default is a Mac without one - an error - so the opencode
 	// path is only ever taken by a test that set it up.
 	lmstudio struct {
-		models []string
+		models []lmModel
 		err    error
 		calls  int
 	}
@@ -152,7 +152,7 @@ func newHarness(t *testing.T) *harness {
 	// developer's loopback.
 	h.lmstudio.err = errors.New("connection refused (no LM Studio in the harness)")
 	realLMStudio := lmstudioModels
-	lmstudioModels = func(int) ([]string, error) {
+	lmstudioModels = func(int) ([]lmModel, error) {
 		h.lmstudio.calls++
 		return h.lmstudio.models, h.lmstudio.err
 	}

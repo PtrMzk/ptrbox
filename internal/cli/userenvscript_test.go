@@ -44,7 +44,7 @@ func userenvScript(t *testing.T, opencode bool) (dir string) {
 	}
 	if opencode {
 		values["OPENCODE"] = "true"
-		values["OPENCODE_MODELS_JSON"] = `{"google/gemma-3-12b":{"name":"google/gemma-3-12b"},"qwen/qwen3-coder-30b":{"name":"qwen/qwen3-coder-30b"}}`
+		values["OPENCODE_MODELS_JSON"] = `{"google/gemma-3-12b":{"name":"google/gemma-3-12b"},"qwen/qwen3-coder-30b":{"name":"qwen/qwen3-coder-30b","limit":{"context":32768,"output":8192}}}`
 		values["OPENCODE_MODEL"] = "qwen/qwen3-coder-30b"
 	}
 	var buf strings.Builder
@@ -85,7 +85,11 @@ func TestOpencodeConfigIsValidJSONPointedAtLMStudioWithNoKey(t *testing.T) {
 			NPM     string            `json:"npm"`
 			Options map[string]string `json:"options"`
 			Models  map[string]struct {
-				Name string `json:"name"`
+				Name  string `json:"name"`
+				Limit *struct {
+					Context int `json:"context"`
+					Output  int `json:"output"`
+				} `json:"limit"`
 			} `json:"models"`
 		} `json:"provider"`
 	}
@@ -104,6 +108,11 @@ func TestOpencodeConfigIsValidJSONPointedAtLMStudioWithNoKey(t *testing.T) {
 	}
 	if len(lm.Models) != 2 || lm.Models["qwen/qwen3-coder-30b"].Name != "qwen/qwen3-coder-30b" {
 		t.Errorf("models = %+v", lm.Models)
+	}
+	// The limits survive the trip as numbers, which is what lets opencode
+	// compact before LM Studio truncates.
+	if limit := lm.Models["qwen/qwen3-coder-30b"].Limit; limit == nil || limit.Context != 32768 || limit.Output != 8192 {
+		t.Errorf("limit = %+v, want the rendered context and output", limit)
 	}
 	if cfg.Model != "lmstudio/qwen/qwen3-coder-30b" {
 		t.Errorf("default model = %q", cfg.Model)
