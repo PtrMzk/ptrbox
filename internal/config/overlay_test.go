@@ -178,7 +178,7 @@ func TestExtraPackagesAreReplacedNotAppended(t *testing.T) {
 // keys that used to head this list are not keys at all any more; the proxy
 // VM's address, port and sizing are constants in this package.)
 func TestAHostGlobalKeyInAPerVMFileIsAnError(t *testing.T) {
-	for _, key := range []string{"REPO_ROOT", "KEYCHAIN_SERVICE", "DNS_SERVERS", "BIN_DIR"} {
+	for _, key := range []string{"REPO_ROOT", "KEYCHAIN_SERVICE", "DNS_SERVERS", "BIN_DIR", "LMSTUDIO_PORT"} {
 		t.Run(key, func(t *testing.T) {
 			setup(t)
 			writeVMConfig(t, "thesis", "PTRBOX_"+key+"=8\n")
@@ -220,6 +220,8 @@ func TestPerVMKeysAreOnlyTheCreateTimeOnes(t *testing.T) {
 		// Technically per-VM, deliberately not settable: it is rendered into
 		// the guest's nftables ruleset, so it is an invariant-2 decision.
 		"DNS_SERVERS": true,
+		// One LM Studio per Mac, and the same wall argument as DNS_SERVERS.
+		"LMSTUDIO_PORT": true,
 	}
 	for _, key := range Keys {
 		if perVMKeys[key] && hostWide[key] {

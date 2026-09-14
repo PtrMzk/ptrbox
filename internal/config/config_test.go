@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -399,5 +400,56 @@ func TestRecordManifestAppends(t *testing.T) {
 	}
 	if string(got) != "wrote a\nlinked b\n" {
 		t.Errorf("manifest = %q", got)
+	}
+}
+
+// LM Studio's port is part of an opencode sandbox's wall, so it is validated
+// like the rest of the wall: a port, and never one the proxy owns.
+func TestLMStudioPortDefaultsToLMStudios(t *testing.T) {
+	setup(t)
+	if cfg := mustLoad(t); cfg.LMStudioPort != 1234 {
+		t.Errorf("LMStudioPort = %d, want 1234", cfg.LMStudioPort)
+	}
+}
+
+func TestRejectsAnLMStudioPortThatIsNotAPort(t *testing.T) {
+	for value, want := range map[string]string{"0": "1-65535", "70000": "1-65535", "abc": "must be a number"} {
+		t.Run(value, func(t *testing.T) {
+			setup(t)
+			t.Setenv("PTRBOX_LMSTUDIO_PORT", value)
+			loadErr(t, want)
+		})
+	}
+}
+
+// Every port in the proxy block, not just the base: a rule toward any of them
+// would be a second squid identity, and with it another sandbox's allowlist.
+func TestRejectsAnLMStudioPortInsideTheProxyBlock(t *testing.T) {
+	for port := ProxyPort; port <= SandboxPortMax(); port++ {
+		setup(t)
+		t.Setenv("PTRBOX_LMSTUDIO_PORT", strconv.Itoa(port))
+		loadErr(t, "proxy")
+	}
+	// The neighbours on either side are fine.
+	for _, port := range []int{ProxyPort - 1, SandboxPortMax() + 1} {
+		setup(t)
+		t.Setenv("PTRBOX_LMSTUDIO_PORT", strconv.Itoa(port))
+		if cfg := mustLoad(t); cfg.LMStudioPort != port {
+			t.Errorf("LMStudioPort = %d, want %d", cfg.LMStudioPort, port)
+		}
+	}
+}
+
+// The rendered rule is the whole of what opencode adds to the wall, so its
+// exact text on and off is worth pinning here as well as in the invariants.
+func TestTheLMStudioRuleFollowsTheOpencodeFlag(t *testing.T) {
+	setup(t)
+	t.Setenv("PTRBOX_LMSTUDIO_PORT", "4321")
+	if got := mustLoad(t).LMStudioNftRule(); got != "# (PTRBOX_OPENCODE off: no LM Studio rule)" {
+		t.Errorf("rule without opencode = %q", got)
+	}
+	t.Setenv("PTRBOX_OPENCODE", "true")
+	if got := mustLoad(t).LMStudioNftRule(); got != "ip daddr 192.168.5.2 tcp dport 4321 accept" {
+		t.Errorf("rule with opencode = %q", got)
 	}
 }

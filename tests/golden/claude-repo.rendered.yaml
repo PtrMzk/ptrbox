@@ -446,9 +446,16 @@ provision:
           # in this table, so it is implicitly default-denied.
           ip daddr { 9.9.9.9, 1.1.1.1 } udp dport 53 accept
           ip daddr { 9.9.9.9, 1.1.1.1 } tcp dport 53 accept
-          # THE one road out: the Squid allowlist proxy on the Mac, reached at the
+          # THE road out: the Squid allowlist proxy on the Mac, reached at the
           # vzNAT gateway address.
           ip daddr 192.168.5.2 tcp dport 8889 accept
+          # The one exception, and only in a sandbox with PTRBOX_OPENCODE: LM
+          # Studio's server on the Mac, the same gateway trip on PTRBOX_LMSTUDIO_PORT.
+          # Rendered on the host from a validated port that can never fall inside
+          # the proxy's block, or rendered as a comment - never a range, never a
+          # second proxy identity. Everything the agent sends there is input to a
+          # process on the Mac, which is the exposure SECURITY.md names.
+          # (PTRBOX_OPENCODE off: no LM Studio rule)
         }
       }
       NFT
@@ -727,8 +734,11 @@ provision:
       # that makes the proxy the ONLY physical way out.
       export HTTPS_PROXY="http://192.168.5.2:8889"
       export HTTP_PROXY="$HTTPS_PROXY"
-      # Don't proxy the VM's own local traffic (tests hitting localhost, etc.)
-      export NO_PROXY="localhost,127.0.0.1"
+      # Don't proxy the VM's own local traffic (tests hitting localhost, etc.), nor
+      # the gateway itself: LM Studio on the Mac (PTRBOX_OPENCODE) is dialled there
+      # directly, and squid would refuse a tunnel into private address space anyway.
+      # Listed unconditionally - harmless without opencode, required with it.
+      export NO_PROXY="localhost,127.0.0.1,192.168.5.2"
       # Don't even attempt telemetry calls - their domains are deliberately off the
       # allowlist, so attempts would just spam TCP_DENIED in the squid log.
       export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
@@ -935,6 +945,15 @@ provision:
         }
       }
       JSON
+
+      # LM Studio on the Mac, for a sandbox with PTRBOX_OPENCODE. The URL is
+      # recorded so vm/verify.sh can ask the live wall whether that one destination
+      # answers - the same request-then-check shape as the toolchain record, and
+      # the reason verify.sh never needs to know the gateway address itself.
+      OPENCODE="false"
+      if [ "$OPENCODE" = "true" ]; then
+        printf 'http://%s:%s\n' "192.168.5.2" "1234" >"$HOME/.ptrbox/lmstudio-url"
+      fi
 
       touch "$HOME/.ptrbox/userenv.done"
 

@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -266,12 +268,55 @@ func TestTheFirewallsDefaultVerdictIsDrop(t *testing.T) {
 }
 
 func TestExactlyFiveEgressAllowancesAndNoMore(t *testing.T) {
-	// Loopback, established, DNS over udp and tcp, and the proxy. Anything
-	// else is a new hole in the wall.
+	// Loopback, established, DNS over udp and tcp, and the proxy - with every
+	// feature off, which is what the default rendering is. PTRBOX_OPENCODE
+	// adds exactly one more, asserted on its own below; anything else is a
+	// new hole in the wall.
 	_, stripped := sandbox(t)
-	if n := countMatches(stripped, `(?m)[ \t]accept[ \t]*$`); n != 5 {
+	if n := len(acceptRules(stripped)); n != 5 {
 		t.Errorf("the firewall has %d accept rules, want exactly 5", n)
 	}
+}
+
+// opencodeSandbox is the fixture with PTRBOX_OPENCODE on, comments stripped.
+func opencodeSandbox(t *testing.T) string {
+	t.Helper()
+	return stripComments(rendertest.SandboxWith(t, rendertest.OpencodeOn()))
+}
+
+// acceptRules is every accept line in a rendering, trimmed.
+func acceptRules(stripped string) []string {
+	var rules []string
+	for _, line := range regexp.MustCompile(`(?m)^.*[ \t]accept[ \t]*$`).FindAllString(stripped, -1) {
+		rules = append(rules, strings.TrimSpace(line))
+	}
+	return rules
+}
+
+// The one widening of the wall that exists, and its whole extent: an opencode
+// sandbox has every rule the default one has plus exactly one, and that one
+// is LM Studio's port at the gateway. Item 59; the reasoning is in SECURITY.md.
+// Anyone changing this count is making a security decision, not a bugfix.
+func TestOpencodeAddsExactlyOneAllowanceAndItIsLMStudio(t *testing.T) {
+	_, off := sandbox(t)
+	onRules, offRules := acceptRules(opencodeSandbox(t)), acceptRules(off)
+	if len(onRules) != len(offRules)+1 {
+		t.Fatalf("opencode changes the accept count from %d to %d, want exactly one more", len(offRules), len(onRules))
+	}
+	var extra []string
+	for _, rule := range onRules {
+		if !slices.Contains(offRules, rule) {
+			extra = append(extra, rule)
+		}
+	}
+	if len(extra) != 1 || extra[0] != "ip daddr 192.168.5.2 tcp dport 1234 accept" {
+		t.Errorf("the rule opencode adds is %q, want LM Studio's port at the gateway and nothing else", extra)
+	}
+}
+
+func TestNoLMStudioRuleUnlessOpencodeIsOn(t *testing.T) {
+	_, stripped := sandbox(t)
+	mustNotMatch(t, stripped, `dport 1234 accept`, "the LM Studio rule is rendered into a sandbox without opencode")
 }
 
 func TestTheOnlyRouteOutIsTheConfiguredProxy(t *testing.T) {
@@ -280,19 +325,59 @@ func TestTheOnlyRouteOutIsTheConfiguredProxy(t *testing.T) {
 	// identity at squid, and the firewall pinning it to exactly one is what
 	// makes that identity kernel-enforced rather than claimed.
 	_, stripped := sandbox(t)
-	mustMatch(t, stripped, `ip daddr 192\.168\.5\.2 tcp dport 8889 accept`,
-		"the proxy is not the destination of the one egress rule")
-	// No blanket HTTPS egress, and no second address.
-	mustNotMatch(t, stripped, `tcp dport (443|80) accept`, "there is blanket web egress")
+	for _, body := range []string{stripped, opencodeSandbox(t)} {
+		mustMatch(t, body, `ip daddr 192\.168\.5\.2 tcp dport 8889 accept`,
+			"the proxy is not the destination of the egress rule")
+		// No blanket HTTPS egress, with or without opencode.
+		mustNotMatch(t, body, `tcp dport (443|80) accept`, "there is blanket web egress")
+	}
+}
+
+// gatewayPorts are the destination ports the wall opens toward the Mac.
+func gatewayPorts(stripped string) []int {
+	var ports []int
+	for _, m := range regexp.MustCompile(`ip daddr 192\.168\.5\.2 tcp dport (\d+) accept`).FindAllStringSubmatch(stripped, -1) {
+		n, _ := strconv.Atoi(m[1])
+		ports = append(ports, n)
+	}
+	return ports
 }
 
 func TestTheSandboxDialsExactlyOneProxyPort(t *testing.T) {
-	// One dport rule toward the proxy host. A second one would let this VM
-	// borrow another sandbox's identity - and with it, in item 38, another
-	// sandbox's allowlist.
+	// One rule toward a port in the proxy's block, with or without opencode.
+	// A second one would let this VM borrow another sandbox's identity - and
+	// with it, in item 38, another sandbox's allowlist. Item 59's LM Studio
+	// rule dials the same address, which is why this counts ports in the
+	// block rather than rules toward the address.
 	_, stripped := sandbox(t)
-	if n := countMatches(stripped, `ip daddr 192\.168\.5\.2 tcp dport \d+ accept`); n != 1 {
-		t.Errorf("the firewall allows %d ports toward the proxy host, want exactly 1", n)
+	for _, body := range []string{stripped, opencodeSandbox(t)} {
+		inBlock := 0
+		for _, port := range gatewayPorts(body) {
+			if port >= config.SandboxPortMin() && port <= config.SandboxPortMax() {
+				inBlock++
+			}
+		}
+		if inBlock != 1 {
+			t.Errorf("the firewall allows %d proxy ports, want exactly 1", inBlock)
+		}
+	}
+}
+
+// The LM Studio rule must never BE a proxy port: the config refuses the whole
+// block, and the rendering an opencode sandbox gets has one port in the block
+// and one outside it, nothing else toward the Mac.
+func TestTheLMStudioRuleIsNeverAProxyPort(t *testing.T) {
+	ports := gatewayPorts(opencodeSandbox(t))
+	slices.Sort(ports)
+	if want := []int{1234, 8889}; !slices.Equal(ports, want) {
+		t.Errorf("an opencode sandbox dials %v at the gateway, want %v", ports, want)
+	}
+	for _, port := range []int{config.ProxyPort, config.SandboxPortMin(), config.SandboxPortMax()} {
+		t.Setenv("PTRBOX_LMSTUDIO_PORT", strconv.Itoa(port))
+		t.Setenv("HOME", t.TempDir())
+		if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "proxy") {
+			t.Errorf("PTRBOX_LMSTUDIO_PORT=%d was accepted (err = %v)", port, err)
+		}
 	}
 }
 
@@ -334,9 +419,22 @@ func TestSSHAgentForwardingIsOff(t *testing.T) {
 func TestNoCredentialsAreBakedIntoTheVMConfig(t *testing.T) {
 	// The token reaches a VM over stdin at creation time; it must never be
 	// part of the config, which persists on disk under ~/.lima/_generated.
+	// Both renderings: an opencode sandbox talks to a model server, and an
+	// OpenAI-compatible client is exactly where an api key would creep in.
 	_, stripped := sandbox(t)
-	mustNotMatch(t, stripped, `(?i)oauth|token|password|api[_-]?key|secret`,
-		"the generated config mentions a credential")
+	for _, body := range []string{stripped, opencodeSandbox(t)} {
+		mustNotMatch(t, body, `(?i)oauth|token|password|api[_-]?key|secret`,
+			"the generated config mentions a credential")
+	}
+}
+
+// The cooperative layer has to agree with the wall here too: LM Studio is
+// reached at the gateway directly, so the gateway must be exempt from the
+// proxy environment or every request to it would go to squid and be refused.
+func TestNoProxyCoversTheGateway(t *testing.T) {
+	rendered, _ := sandbox(t)
+	mustMatch(t, rendered, `export NO_PROXY="localhost,127\.0\.0\.1,192\.168\.5\.2"`,
+		"the gateway is not exempt from the proxy environment")
 }
 
 func TestProxyEnvironmentPointsAtTheConfiguredProxyOnly(t *testing.T) {
@@ -680,6 +778,17 @@ func TestTheToolchainRecordIsSpelledTheSameInBothScripts(t *testing.T) {
 	}
 }
 
+// Same contract for the LM Studio record: 40-userenv.sh writes the URL the
+// wall was opened for, vm/verify.sh asks whether it answers.
+func TestTheLMStudioRecordIsSpelledTheSameInBothScripts(t *testing.T) {
+	const record = ".ptrbox/lmstudio-url"
+	for _, name := range []string{"vm/provision/40-userenv.sh", "vm/verify.sh"} {
+		if !strings.Contains(asset(t, name), record) {
+			t.Errorf("%s does not mention %s", name, record)
+		}
+	}
+}
+
 // The runtime list is fixed on the host and substituted in, exactly like the
 // apt list. A list computed inside the guest - from a file, a command, or
 // anything under the repo mount - would let the agent choose what its own
@@ -840,7 +949,7 @@ func TestTheVerificationScriptChecksWhatMatters(t *testing.T) {
 	verify := asset(t, "vm/verify.sh")
 	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs",
 		"extra-packages.failed", "setuid stripped", "perm -4000",
-		"no multicast dns", ".credentials.json", "no stored login", "exit 1"} {
+		"no multicast dns", ".credentials.json", "no stored login", "lm studio reachable", "exit 1"} {
 		if !strings.Contains(verify, want) {
 			t.Errorf("vm/verify.sh no longer checks %q", want)
 		}

@@ -30,8 +30,11 @@ export NVM_DIR="$HOME/.nvm"
 # that makes the proxy the ONLY physical way out.
 export HTTPS_PROXY="http://__PROXY_HOST__:__PROXY_PORT__"
 export HTTP_PROXY="$HTTPS_PROXY"
-# Don't proxy the VM's own local traffic (tests hitting localhost, etc.)
-export NO_PROXY="localhost,127.0.0.1"
+# Don't proxy the VM's own local traffic (tests hitting localhost, etc.), nor
+# the gateway itself: LM Studio on the Mac (PTRBOX_OPENCODE) is dialled there
+# directly, and squid would refuse a tunnel into private address space anyway.
+# Listed unconditionally - harmless without opencode, required with it.
+export NO_PROXY="localhost,127.0.0.1,__PROXY_HOST__"
 # Don't even attempt telemetry calls - their domains are deliberately off the
 # allowlist, so attempts would just spam TCP_DENIED in the squid log.
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
@@ -238,5 +241,14 @@ cat >"$HOME/.claude.json" <<'JSON'
   }
 }
 JSON
+
+# LM Studio on the Mac, for a sandbox with PTRBOX_OPENCODE. The URL is
+# recorded so vm/verify.sh can ask the live wall whether that one destination
+# answers - the same request-then-check shape as the toolchain record, and
+# the reason verify.sh never needs to know the gateway address itself.
+OPENCODE="__OPENCODE__"
+if [ "$OPENCODE" = "true" ]; then
+  printf 'http://%s:%s\n' "__PROXY_HOST__" "__LMSTUDIO_PORT__" >"$HOME/.ptrbox/lmstudio-url"
+fi
 
 touch "$HOME/.ptrbox/userenv.done"

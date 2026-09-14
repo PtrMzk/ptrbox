@@ -30,7 +30,7 @@ var Keys = []string{
 	"REPO_ROOT", "CPUS", "MEMORY", "DISK", "PORT_MIN", "PORT_MAX",
 	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
-	"EXTRA_PACKAGES", "GO", "HOST_HOOKS", "NODE", "NODE_VERSION", "OPENCODE", "PLAYWRIGHT", "UV",
+	"EXTRA_PACKAGES", "GO", "HOST_HOOKS", "LMSTUDIO_PORT", "NODE", "NODE_VERSION", "OPENCODE", "PLAYWRIGHT", "UV",
 }
 
 // The egress proxy VM, fixed rather than configured.
@@ -167,12 +167,16 @@ func imageFor(distro string) string {
 
 // Config is the resolved configuration for one ptrbox run.
 type Config struct {
-	RepoRoot        string
-	CPUs            int
-	Memory          string
-	Disk            string
-	PortMin         int
-	PortMax         int
+	RepoRoot string
+	CPUs     int
+	Memory   string
+	Disk     string
+	PortMin  int
+	PortMax  int
+	// LMStudioPort is where LM Studio's server listens on the Mac's loopback.
+	// Rendered into an opencode sandbox's firewall as the one destination it
+	// may reach beside the proxy; validated whether or not any VM wants it.
+	LMStudioPort    int
 	DNSServers      []string
 	ClaudeModel     string
 	KeychainService string
@@ -216,6 +220,10 @@ func defaults() map[string]string {
 		"DISTRO":           "debian13",
 		// Where `ptrbox install` offers to symlink the CLI.
 		"BIN_DIR": filepath.Join(home, "bin"),
+		// LM Studio's default server port. Host-wide: one LM Studio per Mac,
+		// and it is rendered into a guest's nftables ruleset, which is the
+		// DNS_SERVERS argument - part of the wall, not a per-VM preference.
+		"LMSTUDIO_PORT": "1234",
 		// Extra apt packages for sandbox VMs, space separated. Host-side by
 		// design: the list is rendered into the generated config at
 		// `ptrbox new` time, never read from inside a VM (a repo-provided
@@ -417,6 +425,7 @@ func load(vm string) (*Config, error) {
 		{"CPUS", &cfg.CPUs},
 		{"PORT_MIN", &cfg.PortMin},
 		{"PORT_MAX", &cfg.PortMax},
+		{"LMSTUDIO_PORT", &cfg.LMStudioPort},
 	} {
 		n, err := parseNumber(num.key, values[num.key])
 		if err != nil {
@@ -480,6 +489,19 @@ func (c *Config) validate() error {
 			return fmt.Errorf("PTRBOX_%s must look like 8GiB or 512MiB, got %q",
 				size.key, size.value)
 		}
+	}
+
+	// LM Studio's port on the Mac, which an opencode sandbox's wall opens.
+	// Checked whether or not opencode is on, the way NODE_VERSION is checked
+	// without node: it is rendered into the guest either way. A port inside
+	// the proxy's block is refused outright - the rule it would render is a
+	// second squid identity, and with it another sandbox's allowlist.
+	if c.LMStudioPort < 1 || c.LMStudioPort > 65535 {
+		return fmt.Errorf("PTRBOX_LMSTUDIO_PORT must be a port (1-65535), got %d", c.LMStudioPort)
+	}
+	if c.LMStudioPort >= ProxyPort && c.LMStudioPort <= SandboxPortMax() {
+		return fmt.Errorf("PTRBOX_LMSTUDIO_PORT (%d) is inside the egress proxy's port block (%d-%d); "+
+			"a sandbox may dial nothing there but its own squid port", c.LMStudioPort, ProxyPort, SandboxPortMax())
 	}
 
 	// The proxy's address and port block used to be validated here. They are

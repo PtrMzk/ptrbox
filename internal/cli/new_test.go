@@ -611,3 +611,30 @@ func TestNewStillSucceedsWithNoTimingsRecord(t *testing.T) {
 		t.Errorf("a timing line was printed for a VM with no record:\n%s", h.output())
 	}
 }
+
+// The sixth firewall rule exists only for a sandbox that asked for opencode,
+// and names the configured LM Studio port - the same port the guest records
+// for verify.sh. Both halves come from one resolved config, so they cannot
+// disagree about which port the wall was opened for.
+func TestLMStudioPortReachesTheFirewallOnlyWhenOpencodeIsOn(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("PTRBOX_LMSTUDIO_PORT", "4321")
+	h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
+	h.mustRun("new", "agentic")
+	body := h.generated("agentic")
+	if !strings.Contains(body, "ip daddr 192.168.5.2 tcp dport 4321 accept") {
+		t.Error("the firewall does not open LM Studio's port for an opencode sandbox")
+	}
+	if !strings.Contains(body, `printf 'http://%s:%s\n' "192.168.5.2" "4321" >"$HOME/.ptrbox/lmstudio-url"`) {
+		t.Error("the guest does not record the LM Studio URL for verify.sh")
+	}
+
+	h.mustRun("new", "plain")
+	body = h.generated("plain")
+	if strings.Contains(body, "dport 4321 accept") {
+		t.Error("the LM Studio rule reached a sandbox without opencode")
+	}
+	if !strings.Contains(body, "(PTRBOX_OPENCODE off: no LM Studio rule)") {
+		t.Error("the sandbox without opencode does not say why it has no LM Studio rule")
+	}
+}

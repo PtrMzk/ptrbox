@@ -46,7 +46,33 @@ func Args() render.Values {
 		"GIT_USER_NAME":  "Example Dev",
 		"GIT_USER_EMAIL": "dev@example.com",
 		"CLAUDE_MODEL":   "opus",
+		// opencode OFF: the golden shows the default wall, five rules. The
+		// on-path is asserted from OpencodeOn below rather than a second
+		// golden.
+		"OPENCODE":          "false",
+		"LMSTUDIO_PORT":     "1234",
+		"LMSTUDIO_NFT_RULE": "# (PTRBOX_OPENCODE off: no LM Studio rule)",
 	}
+}
+
+// OpencodeOn are the overrides that turn the fixture into an opencode sandbox:
+// the tool in the list, the flag on, and the one extra firewall rule exactly
+// as config.LMStudioNftRule renders it for the default port.
+func OpencodeOn() render.Values {
+	return render.Values{
+		"TOOLCHAIN":         "node opencode uv",
+		"OPENCODE":          "true",
+		"LMSTUDIO_NFT_RULE": "ip daddr 192.168.5.2 tcp dport 1234 accept",
+	}
+}
+
+// SandboxWith renders the sandbox template with Args plus the given overrides.
+func SandboxWith(t *testing.T, overrides render.Values) string {
+	values := Args()
+	for k, v := range overrides {
+		values[k] = v
+	}
+	return mustRender(t, "vm/claude-repo.yaml", "vm", values)
 }
 
 // ProxyArgs are the egress proxy VM template's values.

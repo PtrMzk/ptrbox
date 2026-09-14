@@ -143,6 +143,24 @@ else
   ok "blocked domain denied"
 fi
 
+# LM Studio on the Mac, only in a sandbox that asked for opencode. The wall
+# gains exactly one rule for it, and 40-userenv.sh records the URL that rule
+# is for; this asks whether the recorded destination actually answers through
+# the live ruleset. --noproxy, because the point is the kernel rule, not squid.
+# A recorded request with no record is a failure, like the toolchain's.
+if [ -r "$HOME/.ptrbox/toolchain" ] && grep -qw opencode "$HOME/.ptrbox/toolchain"; then
+  if [ ! -r "$HOME/.ptrbox/lmstudio-url" ]; then
+    bad "lm studio reachable" "40-userenv.sh left no record of the LM Studio URL"
+  else
+    lmstudio_url="$(cat "$HOME/.ptrbox/lmstudio-url")"
+    if curl -sm 5 --noproxy '*' "$lmstudio_url/v1/models" -o /dev/null; then
+      ok "lm studio reachable"
+    else
+      bad "lm studio reachable" "nothing answered at $lmstudio_url (is LM Studio's server running on the Mac?)"
+    fi
+  fi
+fi
+
 # --- toolchain ---------------------------------------------------------------
 
 # claude and git are unconditional: the first is what the sandbox exists to

@@ -42,9 +42,16 @@ table inet sandbox {
     # in this table, so it is implicitly default-denied.
     ip daddr { __DNS_NFT_SET__ } udp dport 53 accept
     ip daddr { __DNS_NFT_SET__ } tcp dport 53 accept
-    # THE one road out: the Squid allowlist proxy on the Mac, reached at the
+    # THE road out: the Squid allowlist proxy on the Mac, reached at the
     # vzNAT gateway address.
     ip daddr __PROXY_HOST__ tcp dport __PROXY_PORT__ accept
+    # The one exception, and only in a sandbox with PTRBOX_OPENCODE: LM
+    # Studio's server on the Mac, the same gateway trip on PTRBOX_LMSTUDIO_PORT.
+    # Rendered on the host from a validated port that can never fall inside
+    # the proxy's block, or rendered as a comment - never a range, never a
+    # second proxy identity. Everything the agent sends there is input to a
+    # process on the Mac, which is the exposure SECURITY.md names.
+    __LMSTUDIO_NFT_RULE__
   }
 }
 NFT

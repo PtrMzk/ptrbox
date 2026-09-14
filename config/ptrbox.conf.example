@@ -68,6 +68,10 @@
 # per-VM - it is part of that guest's wall.
 #PTRBOX_DNS_SERVERS="9.9.9.9 1.1.1.1"
 
+# LM Studio's server port on this Mac, opened in the guest firewall only for
+# sandboxes with PTRBOX_OPENCODE. Not per-VM - it is part of that wall.
+#PTRBOX_LMSTUDIO_PORT=1234
+
 # Keychain entry with the OAuth token. Create it once:
 #   claude setup-token
 #   security add-generic-password -a "$USER" -s claude-sandbox-token -w

@@ -35,7 +35,8 @@ come from the machine, not from the agent asking first.
   guest allows exactly one route out: a CONNECT-only squid proxy with a
   domain allowlist. Each VM has its own list, so granting `pypi.org` to one
   project grants it to nothing else. `ptrbox logs --denied` shows what was
-  blocked and which VM asked.
+  blocked and which VM asked. (A sandbox with `PTRBOX_OPENCODE` gets one
+  more route: LM Studio's port on your Mac, and nothing else.)
 - **One directory, no keys.** The project repo is the only mount. Git push
   happens on the host, where your ssh keys stay. The only credential in a VM
   is the Claude token — injected from the macOS Keychain, and only after
@@ -71,6 +72,7 @@ macOS host
 └── Lima VM per repo (vz + virtiofs)
      ├── mount:    ~/code/<repo> -> /workspace   (nothing else is mounted)
      ├── nftables: default-deny egress; only the proxy and DNS
+     │             (+ LM Studio's port on the Mac, if PTRBOX_OPENCODE)
      ├── no sudo:  passwordless root removed, setuid stripped, every boot
      └── claude    any permission mode - the VM is the boundary
 ```

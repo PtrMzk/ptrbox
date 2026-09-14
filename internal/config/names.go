@@ -78,3 +78,15 @@ func (c *Config) Wants(name string) bool { return slices.Contains(c.features, na
 
 // DNSList is the resolver list as the guest's resolv.conf writer wants it.
 func (c *Config) DNSList() string { return strings.Join(c.DNSServers, " ") }
+
+// LMStudioNftRule is the one line the guest firewall gains when the sandbox
+// has opencode: an accept toward LM Studio's port at the gateway address,
+// the same trip the proxy rule makes. Without opencode it is a comment rather
+// than an empty line, so the rendered ruleset says the decision out loud -
+// and the invariants tests strip comments before they count.
+func (c *Config) LMStudioNftRule() string {
+	if !c.Wants("opencode") {
+		return "# (PTRBOX_OPENCODE off: no LM Studio rule)"
+	}
+	return fmt.Sprintf("ip daddr %s tcp dport %d accept", ProxyHost, c.LMStudioPort)
+}
