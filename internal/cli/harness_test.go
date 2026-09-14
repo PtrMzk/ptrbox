@@ -12,6 +12,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,15 @@ type harness struct {
 
 	// portInUse answers for the host's TCP ports; see newHarness.
 	portInUse func(port int) bool
+
+	// lmstudio is what LM Studio on this fake Mac answers when asked for its
+	// models. The default is a Mac without one - an error - so the opencode
+	// path is only ever taken by a test that set it up.
+	lmstudio struct {
+		models []string
+		err    error
+		calls  int
+	}
 
 	// verbose is --verbose; narrator is the limactl output translator, built
 	// per run and kept so a test can replay it.
@@ -138,11 +148,22 @@ func newHarness(t *testing.T) *harness {
 	}
 	portInUse = func(port int) bool { return h.portInUse(port) }
 
+	// LM Studio is answered from the harness too, so no test ever dials the
+	// developer's loopback.
+	h.lmstudio.err = errors.New("connection refused (no LM Studio in the harness)")
+	realLMStudio := lmstudioModels
+	lmstudioModels = func(int) ([]string, error) {
+		h.lmstudio.calls++
+		return h.lmstudio.models, h.lmstudio.err
+	}
+
 	// waitForPort's polling must not spend its deadline in real time when a
 	// test holds the port down; the loop still runs, the clock does not.
 	realSleep := sleep
 	sleep = func(time.Duration) {}
-	t.Cleanup(func() { lookPath, portInUse, sleep = realLookPath, realPortInUse, realSleep })
+	t.Cleanup(func() {
+		lookPath, portInUse, sleep, lmstudioModels = realLookPath, realPortInUse, realSleep, realLMStudio
+	})
 
 	return h
 }

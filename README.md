@@ -188,6 +188,11 @@ PTRBOX_EXTRA_PACKAGES="ripgrep sqlite3"   # any apt packages, checked by name
 ```
 
 Claude Code is always installed: it is a native binary and needs no runtime.
+`PTRBOX_OPENCODE` adds a second agent that talks to LM Studio on your Mac
+instead of a cloud model: `ptrbox new` asks LM Studio which models it serves
+(and stops if it is not running), opens exactly one extra firewall rule to its
+port, and pre-configures opencode with those models and every phone-home
+switched off. Set `PTRBOX_LMSTUDIO_PORT` if you moved LM Studio off 1234.
 If a runtime or package you asked for fails to install, `ptrbox new`
 fails — immediately, not a week later when something needs it. Anything that
 needs root is an edit to `vm/provision/` followed by a re-create — the

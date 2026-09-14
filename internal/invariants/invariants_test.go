@@ -428,6 +428,34 @@ func TestNoCredentialsAreBakedIntoTheVMConfig(t *testing.T) {
 	}
 }
 
+// opencode's config is rendered, never computed in the guest: the model list
+// is one token built on the host from validated ids, so nothing under the
+// repo mount - or anything the agent can reach - decides what a sandbox's
+// second agent talks to. Same rule as the apt and toolchain lists.
+func TestOpencodeConfigIsRenderedNotComputedInTheGuest(t *testing.T) {
+	on := rendertest.SandboxWith(t, rendertest.OpencodeOn())
+	mustMatch(t, on, `"models": \{"qwen/qwen3-coder-30b":\{"name":"qwen/qwen3-coder-30b"\}\}`,
+		"the fixture's model list is not rendered as a literal")
+	mustNotMatch(t, on, "\"models\": .*(\\$\\(|`|<|cat |curl |workspace)",
+		"the model list is computed inside the guest")
+	mustNotMatch(t, on, "baseURL.*(\\$\\(|`|cat |curl |workspace)",
+		"the model server address is computed inside the guest")
+}
+
+// The phone-home switches are exports, so they sit in ~/.profile beside the
+// one credential a sandbox holds - and they must not read as a second one.
+// The regex here is verify.sh's own; the executed-script test asks verify.sh.
+func TestOpencodePhoneHomeSwitchesAreNotKeyShaped(t *testing.T) {
+	rendered, _ := sandbox(t)
+	for _, want := range []string{"OPENCODE_DISABLE_AUTOUPDATE", "OPENCODE_DISABLE_SHARE",
+		"OPENCODE_DISABLE_LSP_DOWNLOAD", "OPENCODE_DISABLE_MODELS_FETCH"} {
+		mustMatch(t, rendered, `export `+want+`=1`, "opencode's phone-home is not switched off: "+want)
+		if regexp.MustCompile(`(TOKEN|SECRET|PASSWORD|API_KEY)`).MatchString(want) {
+			t.Errorf("%s is key-shaped - verify.sh would count it as a credential", want)
+		}
+	}
+}
+
 // The cooperative layer has to agree with the wall here too: LM Studio is
 // reached at the gateway directly, so the gateway must be exempt from the
 // proxy environment or every request to it would go to squid and be refused.

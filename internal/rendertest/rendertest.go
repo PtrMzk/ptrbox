@@ -49,9 +49,11 @@ func Args() render.Values {
 		// opencode OFF: the golden shows the default wall, five rules. The
 		// on-path is asserted from OpencodeOn below rather than a second
 		// golden.
-		"OPENCODE":          "false",
-		"LMSTUDIO_PORT":     "1234",
-		"LMSTUDIO_NFT_RULE": "# (PTRBOX_OPENCODE off: no LM Studio rule)",
+		"OPENCODE":             "false",
+		"LMSTUDIO_PORT":        "1234",
+		"LMSTUDIO_NFT_RULE":    "# (PTRBOX_OPENCODE off: no LM Studio rule)",
+		"OPENCODE_MODELS_JSON": "{}",
+		"OPENCODE_MODEL":       "",
 	}
 }
 
@@ -60,9 +62,11 @@ func Args() render.Values {
 // as config.LMStudioNftRule renders it for the default port.
 func OpencodeOn() render.Values {
 	return render.Values{
-		"TOOLCHAIN":         "node opencode uv",
-		"OPENCODE":          "true",
-		"LMSTUDIO_NFT_RULE": "ip daddr 192.168.5.2 tcp dport 1234 accept",
+		"TOOLCHAIN":            "node opencode uv",
+		"OPENCODE":             "true",
+		"LMSTUDIO_NFT_RULE":    "ip daddr 192.168.5.2 tcp dport 1234 accept",
+		"OPENCODE_MODELS_JSON": `{"qwen/qwen3-coder-30b":{"name":"qwen/qwen3-coder-30b"}}`,
+		"OPENCODE_MODEL":       "qwen/qwen3-coder-30b",
 	}
 }
 

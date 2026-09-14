@@ -118,7 +118,8 @@ func cmdNew(env *Env, args []string) error {
 	// Everything below this point is expensive or irreversible; everything
 	// above it is knowable now. This is the last moment either file can be
 	// edited without a re-create.
-	if err := reviewPlan(env, name, repoDir, noEdit); err != nil {
+	models, err := reviewPlan(env, name, repoDir, noEdit)
+	if err != nil {
 		return err
 	}
 
@@ -153,15 +154,19 @@ func cmdNew(env *Env, args []string) error {
 		"LMSTUDIO_NFT_RULE": cfg.LMStudioNftRule(),
 		"LMSTUDIO_PORT":     fmt.Sprint(cfg.LMStudioPort),
 		"OPENCODE":          fmt.Sprint(cfg.Wants("opencode")),
-		"DNS_LIST":          cfg.DNSList(),
-		"DNS_NFT_SET":       cfg.DNSNftSet(),
-		"EXTRA_PACKAGES":    cfg.ExtraPackageList(),
-		"TOOLCHAIN":         cfg.ToolchainList(),
-		"NODE_VERSION":      cfg.NodeVersion,
-		"PLAYWRIGHT":        fmt.Sprint(cfg.Playwright),
-		"CLAUDE_MODEL":      cfg.ClaudeModel,
-		"GIT_USER_NAME":     cfg.GitUserName,
-		"GIT_USER_EMAIL":    cfg.GitUserEmail,
+		// What LM Studio said it serves, as opencode.json wants it. `{}` and
+		// "" without opencode, inside a branch the guest never takes.
+		"OPENCODE_MODELS_JSON": opencodeModelsJSON(models),
+		"OPENCODE_MODEL":       firstOf(models),
+		"DNS_LIST":             cfg.DNSList(),
+		"DNS_NFT_SET":          cfg.DNSNftSet(),
+		"EXTRA_PACKAGES":       cfg.ExtraPackageList(),
+		"TOOLCHAIN":            cfg.ToolchainList(),
+		"NODE_VERSION":         cfg.NodeVersion,
+		"PLAYWRIGHT":           fmt.Sprint(cfg.Playwright),
+		"CLAUDE_MODEL":         cfg.ClaudeModel,
+		"GIT_USER_NAME":        cfg.GitUserName,
+		"GIT_USER_EMAIL":       cfg.GitUserEmail,
 	})
 	if err != nil {
 		return err
@@ -226,10 +231,15 @@ func cmdNew(env *Env, args []string) error {
 	lines := []string{
 		fmt.Sprintf("ssh lima-%s", name),
 		"cd /workspace && claude",
+	}
+	if env.Cfg.Wants("opencode") {
+		lines = append(lines, "cd /workspace && opencode")
+	}
+	lines = append(lines,
 		"",
 		fmt.Sprintf("distro   %s, %d CPUs, %s memory", env.Cfg.Distro, env.Cfg.CPUs, env.Cfg.Memory),
 		fmt.Sprintf("repo     %s, mounted at /workspace", repoDir),
-	}
+	)
 	// Always shown, unlike the extras: which runtimes a sandbox has is now a
 	// decision rather than a constant, and "none" is a valid answer somebody
 	// will want confirmed.
@@ -240,6 +250,10 @@ func cmdNew(env *Env, args []string) error {
 	lines = append(lines, "runtime  "+runtimes)
 	if packages := env.Cfg.ExtraPackageList(); packages != "" {
 		lines = append(lines, "extra    "+packages)
+	}
+	if env.Cfg.Wants("opencode") {
+		lines = append(lines, fmt.Sprintf("opencode lmstudio/%s via %s:%d on the Mac",
+			firstOf(models), config.ProxyHost, env.Cfg.LMStudioPort))
 	}
 	if config.HasVMConfig(name) {
 		lines = append(lines, "config   "+config.VMConfigPath(name))
@@ -267,28 +281,38 @@ func cmdNew(env *Env, args []string) error {
 //
 // Every path through here is a no-op without a terminal, which is what keeps
 // scripted and tested runs exactly what they were.
-func reviewPlan(env *Env, name, repoDir string, noEdit bool) error {
-	printPlan(env, name, repoDir)
+//
+// It returns what the plan learned from LM Studio (nil without opencode), from
+// the LAST plan printed: the configuration editor may have turned opencode on
+// or off, and the build must follow the plan that was shown, not the first
+// one.
+func reviewPlan(env *Env, name, repoDir string, noEdit bool) ([]string, error) {
+	models, err := printPlan(env, name, repoDir)
+	if err != nil {
+		return nil, err
+	}
 	if noEdit {
-		return nil
+		return models, nil
 	}
 
 	if ask(env, fmt.Sprintf("edit the configuration for %q first?", name)) {
 		if err := seedVMConfig(env, name); err != nil {
-			return err
+			return nil, err
 		}
 		if err := env.Editor(config.VMConfigPath(name)); err != nil {
-			return err
+			return nil, err
 		}
 		// Re-resolved rather than patched: a distro named here re-derives the
 		// image URL, and the plan printed below has to be the one that will
 		// be built, not the one that was offered.
 		if env.LoadVM != nil {
 			if err := env.LoadVM(env, name); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		printPlan(env, name, repoDir)
+		if models, err = printPlan(env, name, repoDir); err != nil {
+			return nil, err
+		}
 	}
 
 	if ask(env, fmt.Sprintf("edit the egress allowlist for %q first?", name)) {
@@ -298,28 +322,52 @@ func reviewPlan(env *Env, name, repoDir string, noEdit bool) error {
 		// accepting the offer on a fresh host fails with "run ptrbox install
 		// first" - for a file the next step was about to write anyway.
 		if _, err := env.Proxy.SeedAllowlist(); err != nil {
-			return err
+			return nil, err
 		}
 		// Then the VM's own list, so there is a file to open - seeded with the
 		// runtimes just settled above, so it holds the right groups.
 		if _, err := env.Proxy.EnsureVMAllowlist(name); err != nil {
-			return err
+			return nil, err
 		}
 		if err := env.Editor(config.VMAllowlistPath(name)); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return models, nil
 }
 
 // printPlan is what the VM will be, in the vocabulary the closing summary
 // uses. The same lines twice - once as a plan, once as a record - so that
 // "what did I ask for" and "what did I get" are comparable.
-func printPlan(env *Env, name, repoDir string) {
+//
+// With opencode on, the plan also asks LM Studio on the Mac what it serves,
+// and that is the one part of a plan that can fail: a model server that is
+// not running is a sandbox that cannot do what it was created for, found here
+// in a second rather than after minutes of provisioning - and before any VM
+// state exists.
+func printPlan(env *Env, name, repoDir string) ([]string, error) {
 	cfg := env.Cfg
 	runtimes := cfg.ToolchainList()
 	if runtimes == "" {
 		runtimes = "none (claude only)"
+	}
+	var models []string
+	if cfg.Wants("opencode") {
+		var err error
+		if models, err = lmstudioModels(cfg.LMStudioPort); err != nil {
+			return nil, fmt.Errorf("PTRBOX_OPENCODE is on but LM Studio is not answering on 127.0.0.1:%d - "+
+				"start its server (LM Studio > Developer > Start Server, or `lms server start`), "+
+				"set PTRBOX_LMSTUDIO_PORT, or turn PTRBOX_OPENCODE off for this VM: %v", cfg.LMStudioPort, err)
+		}
+		if len(models) == 0 {
+			return nil, fmt.Errorf("PTRBOX_OPENCODE is on but LM Studio on 127.0.0.1:%d serves no chat models - "+
+				"download one in LM Studio first", cfg.LMStudioPort)
+		}
+		for _, id := range models {
+			if err := validModelID(id); err != nil {
+				return nil, err
+			}
+		}
 	}
 	env.Out.Say("VM %q will be built with:", name)
 	env.Out.Detail("distro   %s, %d CPUs, %s memory, %s disk",
@@ -327,6 +375,10 @@ func printPlan(env *Env, name, repoDir string) {
 	env.Out.Detail("runtime  %s", runtimes)
 	if packages := cfg.ExtraPackageList(); packages != "" {
 		env.Out.Detail("extra    %s", packages)
+	}
+	if models != nil {
+		env.Out.Detail("opencode LM Studio on 127.0.0.1:%d - models: %s (default %s)",
+			cfg.LMStudioPort, strings.Join(models, ", "), models[0])
 	}
 	settings := config.VMConfigPath(name)
 	if !config.HasVMConfig(name) {
@@ -350,6 +402,15 @@ func printPlan(env *Env, name, repoDir string) {
 		env.Out.Detail("         run them in the VM, or: git -C %s config --unset core.hooksPath",
 			repoDir)
 	}
+	return models, nil
+}
+
+// firstOf is the default model: the first one LM Studio listed, or "" for none.
+func firstOf(models []string) string {
+	if len(models) == 0 {
+		return ""
+	}
+	return models[0]
 }
 
 // vmConfigHeader introduces a per-VM file seeded from the shipped example. The

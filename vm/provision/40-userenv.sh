@@ -249,6 +249,51 @@ JSON
 OPENCODE="__OPENCODE__"
 if [ "$OPENCODE" = "true" ]; then
   printf 'http://%s:%s\n' "__PROXY_HOST__" "__LMSTUDIO_PORT__" >"$HOME/.ptrbox/lmstudio-url"
+
+  # opencode's own config: one provider, LM Studio through the gateway, with
+  # the models `ptrbox new` found there at create time (opencode cannot
+  # discover them itself). The models object is rendered whole - built on the
+  # host with encoding/json from ids validated there - so nothing here
+  # interpolates a name. No api key anywhere: LM Studio wants none, and a
+  # key-shaped value is exactly what the credential checks refuse. autoupdate
+  # and share are off in the file; the rest of the phone-home is below.
+  #
+  # small_model is pinned, and the hosted `opencode` provider is disabled,
+  # for the same reason: opencode picks a model for side tasks (session
+  # titles) separately from the main one, and its default prefers its own
+  # hosted provider before falling back to yours - session text sent to
+  # opencode's servers on every first message, or here, a hang against the
+  # wall. The pin makes the local model answer both jobs.
+  mkdir -p "$HOME/.config/opencode"
+  cat >"$HOME/.config/opencode/opencode.json" <<'OPENCODE'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "share": "disabled",
+  "disabled_providers": ["opencode"],
+  "provider": {
+    "lmstudio": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LM Studio (Mac)",
+      "options": { "baseURL": "http://__PROXY_HOST__:__LMSTUDIO_PORT__/v1" },
+      "models": __OPENCODE_MODELS_JSON__
+    }
+  },
+  "model": "lmstudio/__OPENCODE_MODEL__",
+  "small_model": "lmstudio/__OPENCODE_MODEL__"
+}
+OPENCODE
+
+  # None of these hosts is on the allowlist, and Bun's fetch ignores
+  # HTTP_PROXY, so each call would hang against the wall rather than fail.
+  # None of the names is key-shaped, which vm/verify.sh checks.
+  cat >>"$HOME/.profile" <<'RC'
+# opencode: no update checks, share links, LSP or model-catalog downloads.
+export OPENCODE_DISABLE_AUTOUPDATE=1
+export OPENCODE_DISABLE_SHARE=1
+export OPENCODE_DISABLE_LSP_DOWNLOAD=1
+export OPENCODE_DISABLE_MODELS_FETCH=1
+RC
 fi
 
 touch "$HOME/.ptrbox/userenv.done"

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/PtrMzk/ptrbox/internal/config"
+	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
 
@@ -618,6 +619,7 @@ func TestNewStillSucceedsWithNoTimingsRecord(t *testing.T) {
 // disagree about which port the wall was opened for.
 func TestLMStudioPortReachesTheFirewallOnlyWhenOpencodeIsOn(t *testing.T) {
 	h := newHarness(t)
+	h.lmstudio.models, h.lmstudio.err = []string{"some-model"}, nil
 	t.Setenv("PTRBOX_LMSTUDIO_PORT", "4321")
 	h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
 	h.mustRun("new", "agentic")
@@ -636,5 +638,104 @@ func TestLMStudioPortReachesTheFirewallOnlyWhenOpencodeIsOn(t *testing.T) {
 	}
 	if !strings.Contains(body, "(PTRBOX_OPENCODE off: no LM Studio rule)") {
 		t.Error("the sandbox without opencode does not say why it has no LM Studio rule")
+	}
+}
+
+// An opencode sandbox is built for a model server. If LM Studio is not
+// answering on the Mac, that is found in the plan, in a second, before a
+// single piece of VM state exists - not after minutes of provisioning and a
+// verify failure.
+func TestOpencodeOnWithoutLMStudioFailsNewBeforeAnyVMIsTouched(t *testing.T) {
+	h := newHarness(t)
+	h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
+	err := h.run("new", "agentic")
+	if err == nil || !strings.Contains(err.Error(), "LM Studio is not answering on 127.0.0.1:1234") {
+		t.Fatalf("err = %v, want the LM Studio message naming the port", err)
+	}
+	for _, hint := range []string{"PTRBOX_LMSTUDIO_PORT", "PTRBOX_OPENCODE off"} {
+		if !strings.Contains(err.Error(), hint) {
+			t.Errorf("the error does not offer %q as a way out:\n%v", hint, err)
+		}
+	}
+	h.assertNotCalled("start")
+	if h.exists(config.GeneratedConfig("agentic")) {
+		t.Error("a generated config was written for a VM that will not be built")
+	}
+	if h.exists(proxy.PortFile("agentic")) {
+		t.Error("a proxy port was allocated for a VM that will not be built")
+	}
+}
+
+func TestOpencodeOnRendersLMStudiosModelsIntoTheGuest(t *testing.T) {
+	h := newHarness(t)
+	h.lmstudio.models, h.lmstudio.err = []string{"qwen/qwen3-coder-30b", "google/gemma-3-12b"}, nil
+	h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
+	h.mustRun("new", "agentic")
+
+	body := h.generated("agentic")
+	// Sorted keys, one line, each id displayed as itself - what encoding/json
+	// makes of the list, substituted as one token.
+	if !strings.Contains(body, `"models": {"google/gemma-3-12b":{"name":"google/gemma-3-12b"},"qwen/qwen3-coder-30b":{"name":"qwen/qwen3-coder-30b"}}`) {
+		t.Errorf("the model list did not reach opencode.json:\n%s", body)
+	}
+	// The default is the first one LM Studio listed, not the first sorted.
+	if !strings.Contains(body, `"model": "lmstudio/qwen/qwen3-coder-30b"`) {
+		t.Error("the default model is not the first LM Studio listed")
+	}
+	if !strings.Contains(body, `"baseURL": "http://192.168.5.2:1234/v1"`) {
+		t.Error("opencode is not pointed at LM Studio through the gateway")
+	}
+	out := ui.Plain(h.stderr)
+	for _, want := range []string{
+		"opencode LM Studio on 127.0.0.1:1234 - models: qwen/qwen3-coder-30b, google/gemma-3-12b (default qwen/qwen3-coder-30b)",
+		"opencode lmstudio/qwen/qwen3-coder-30b via 192.168.5.2:1234 on the Mac",
+		"cd /workspace && opencode",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the plan and summary do not say %q:\n%s", want, out)
+		}
+	}
+}
+
+// LM Studio running with nothing to serve is the same answer as not running:
+// the sandbox would have a provider and no model.
+func TestLMStudioWithNoModelsFailsNew(t *testing.T) {
+	h := newHarness(t)
+	h.lmstudio.models, h.lmstudio.err = nil, nil
+	h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
+	err := h.run("new", "agentic")
+	if err == nil || !strings.Contains(err.Error(), "serves no chat models") {
+		t.Fatalf("err = %v", err)
+	}
+	h.assertNotCalled("start")
+}
+
+// A model id is rendered into the guest verbatim, so the charset is the whole
+// defence - the same argument as NODE_VERSION. Refused, never escaped.
+func TestAModelIDThatCannotBeRenderedFailsNew(t *testing.T) {
+	for _, id := range []string{"bad__ID__", "a b", `q"uote`, "$(reboot)", "-flag"} {
+		t.Run(id, func(t *testing.T) {
+			h := newHarness(t)
+			h.lmstudio.models, h.lmstudio.err = []string{id}, nil
+			h.writeVMConfig("agentic", "PTRBOX_OPENCODE=true\n")
+			err := h.run("new", "agentic")
+			if err == nil || !strings.Contains(err.Error(), "cannot be rendered") {
+				t.Fatalf("err = %v", err)
+			}
+			h.assertNotCalled("start")
+		})
+	}
+}
+
+// And a sandbox without opencode never asks: LM Studio is not a dependency
+// of ptrbox, only of the feature.
+func TestOpencodeOffNeverAsksLMStudio(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	if h.lmstudio.calls != 0 {
+		t.Errorf("LM Studio was asked %d times for a VM without opencode", h.lmstudio.calls)
+	}
+	if !strings.Contains(h.generated("demo"), `"models": {}`) {
+		t.Error("the inert opencode block does not render an empty model list")
 	}
 }
