@@ -180,10 +180,10 @@ default:
 ```sh
 PTRBOX_NODE=true               # npm/npx, and therefore npx-based MCP servers
 PTRBOX_NODE_VERSION=22.11.0    # or lts, the default
+PTRBOX_PLAYWRIGHT=true         # Chromium/GTK libraries + the Playwright CDNs
 PTRBOX_UV=true                 # Python, via uv
 PTRBOX_GO=true                 # the upstream Go toolchain, under $HOME
 PTRBOX_OPENCODE=true           # the opencode agent, using LM Studio on your Mac
-PTRBOX_PLAYWRIGHT=true         # Chromium/GTK libraries + the Playwright CDNs
 PTRBOX_EXTRA_PACKAGES="ripgrep sqlite3"   # any apt packages, checked by name
 ```
 

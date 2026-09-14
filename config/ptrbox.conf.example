@@ -25,19 +25,19 @@
 # none of them. node = npm/npx and npx-based MCP servers; uv = Python; go =
 # the upstream toolchain. Each is more surface, and its own allowlist group.
 #PTRBOX_GO=false
-#PTRBOX_NODE=false
 #PTRBOX_UV=false
+
+# [vm] node, and the two settings that only matter with it: which version
+# `nvm install` gets (lts, node, lts/hydrogen, 22, 22.11.0), and browser
+# testing - ~20 Chromium/GTK/X11 packages plus the Playwright CDNs, driven
+# with `npx playwright` (or from uv). Off unless you test browsers.
+#PTRBOX_NODE=false
+#PTRBOX_NODE_VERSION=lts
+#PTRBOX_PLAYWRIGHT=false
 
 # [vm] A second coding agent, opencode (opencode.ai), using LM Studio on this
 # Mac as its model. Off. Claude Code is installed either way.
 #PTRBOX_OPENCODE=false
-
-# [vm] What `nvm install` gets: lts, node, lts/hydrogen, 22, 22.11.0.
-#PTRBOX_NODE_VERSION=lts
-
-# [vm] Browser testing. Installs ~20 Chromium/GTK/X11 packages and allows the
-# Playwright CDNs. Needs node or uv to drive it. Off unless you test browsers.
-#PTRBOX_PLAYWRIGHT=false
 
 # [vm] Sizing. Disk is sparse; memory is the one to watch with several VMs.
 #PTRBOX_CPUS=4
