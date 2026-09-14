@@ -30,7 +30,7 @@ var Keys = []string{
 	"REPO_ROOT", "CPUS", "MEMORY", "DISK", "PORT_MIN", "PORT_MAX",
 	"DNS_SERVERS", "CLAUDE_MODEL", "KEYCHAIN_SERVICE",
 	"GIT_USER_NAME", "GIT_USER_EMAIL", "DISTRO", "IMAGE_URL", "BIN_DIR",
-	"EXTRA_PACKAGES", "GO", "HOST_HOOKS", "NODE", "NODE_VERSION", "PLAYWRIGHT", "UV",
+	"EXTRA_PACKAGES", "GO", "HOST_HOOKS", "NODE", "NODE_VERSION", "OPENCODE", "PLAYWRIGHT", "UV",
 }
 
 // The egress proxy VM, fixed rather than configured.
@@ -85,26 +85,31 @@ func SandboxPortMin() int { return ProxyPort + 1 }
 // SandboxPortMax is the last per-sandbox proxy port.
 func SandboxPortMax() int { return ProxyPort + SandboxProxyPorts }
 
-// Toolchains are the language runtimes vm/provision/30-toolchain.sh knows how
-// to install, in the order it installs them. Each name carries three jobs, and
-// they are deliberately the same string:
+// Toolchains are the tools vm/provision/30-toolchain.sh installs on request,
+// in the order it installs them: three language runtimes and one more coding
+// agent. Each name carries three jobs, and they are deliberately the same
+// string:
 //
-//   - upper-cased it is the config key that turns the runtime on
+//   - upper-cased it is the config key that turns the tool on
 //     (node -> PTRBOX_NODE), so there is no table mapping one to the other;
 //   - it is what 30-toolchain.sh records in ~/.ptrbox/toolchain before
 //     installing anything;
 //   - it is the command vm/verify.sh then looks for on PATH, which is what
-//     makes a requested runtime that did not install a failed `ptrbox new`
+//     makes a requested tool that did not install a failed `ptrbox new`
 //     rather than a surprise a week later.
 //
+// That third job is the membership test. opencode is not a runtime, but it is
+// a binary with that name on PATH, so the contract fits it exactly; Playwright
+// is a capability with no binary, so it lives in featureOnly below.
+//
 // Every entry must therefore also appear in Keys; a test asserts it. All of
-// them default to false: a sandbox installs a runtime because someone asked
-// for it, not because it is a sandbox.
+// them default to false: a sandbox installs a tool because someone asked for
+// it, not because it is a sandbox.
 //
 // Claude Code is deliberately absent - it is installed unconditionally, being
 // the thing a sandbox exists to run, and it is a native binary that needs
-// neither of these.
-var Toolchains = []string{"go", "node", "uv"}
+// none of these.
+var Toolchains = []string{"go", "node", "opencode", "uv"}
 
 // toolchainKey is the config key that switches a runtime on.
 func toolchainKey(tool string) string { return strings.ToUpper(tool) }
@@ -226,6 +231,10 @@ func defaults() map[string]string {
 		"GO":   "false",
 		"NODE": "false",
 		"UV":   "false",
+		// A second coding agent, opencode, alongside Claude Code. Off: it
+		// is only useful with a model server to talk to (item 59 wires it to
+		// LM Studio on the Mac), and a binary nobody asked for is surface.
+		"OPENCODE": "false",
 		// Browser testing. Off by default like the runtimes, and for a
 		// sharper reason: it is the only feature whose cost is ~20 apt
 		// packages of GTK, X11 and font libraries in every sandbox, whether

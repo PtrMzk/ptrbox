@@ -100,6 +100,12 @@ INSTALLER
 *astral.sh*)
   printf 'printf "#!/bin/sh\\necho uv\\n" >"$FAKEBIN/uv"; chmod 755 "$FAKEBIN/uv"\n'
   ;;
+*opencode.ai/install*)
+  # Where the real installer puts it: ~/.opencode/bin, NOT on PATH. The
+  # script's own symlink into ~/.local/bin is what has to make it findable,
+  # so the stub must not do that job for it.
+  printf 'mkdir -p "$HOME/.opencode/bin"; printf "#!/bin/sh\\necho opencode\\n" >"$HOME/.opencode/bin/opencode"; chmod 755 "$HOME/.opencode/bin/opencode"\n'
+  ;;
 *claude.ai*)
   printf 'printf "#!/bin/sh\\necho claude\\n" >"$FAKEBIN/claude"; chmod 755 "$FAKEBIN/claude"\n'
   ;;
@@ -196,7 +202,7 @@ func TestAnEmptyToolchainInstallsOnlyClaudeCode(t *testing.T) {
 	if !strings.Contains(curl, "claude.ai") {
 		t.Errorf("Claude Code was not installed:\n%s", curl)
 	}
-	for _, unwanted := range []string{"nvm-sh/nvm", "astral.sh", "dl.google.com"} {
+	for _, unwanted := range []string{"nvm-sh/nvm", "astral.sh", "dl.google.com", "opencode.ai"} {
 		if strings.Contains(curl, unwanted) {
 			t.Errorf("%s was fetched for an empty toolchain:\n%s", unwanted, curl)
 		}
@@ -242,6 +248,7 @@ func TestEachRuntimeCanBeAskedForAlone(t *testing.T) {
 	for _, tc := range []struct{ toolchain, fetched, skipped string }{
 		{"go", "dl.google.com", "nvm-sh/nvm"},
 		{"node", "nvm-sh/nvm", "astral.sh"},
+		{"opencode", "opencode.ai", "astral.sh"},
 		{"uv", "astral.sh", "nvm-sh/nvm"},
 	} {
 		t.Run(tc.toolchain, func(t *testing.T) {
@@ -344,4 +351,29 @@ func TestToolchainRecordsItsTimingUnderTheAgentsHome(t *testing.T) {
 		}
 	}
 	assertOneTiming(t, filepath.Join(dir, ".ptrbox", "timings"), "30-toolchain")
+}
+
+// opencode's installer lands the binary under ~/.opencode/bin, which nothing
+// on a login shell's PATH reaches; the script's symlink into ~/.local/bin is
+// the step that makes verify.sh's question answerable, so it is the step
+// worth executing.
+func TestOpencodeIsInstalledOnRequestAndLandsOnPath(t *testing.T) {
+	dir := toolchainScript(t, "opencode", "lts")
+	if out, ok := installToolchain(t, dir); !ok {
+		t.Fatalf("provisioning failed:\n%s", out)
+	}
+	if curl := logOf(t, dir, "curl.log"); !strings.Contains(curl, "opencode.ai/install") {
+		t.Errorf("the opencode installer was never fetched:\n%s", curl)
+	}
+	link := filepath.Join(dir, ".local", "bin", "opencode")
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("no symlink at %s: %v", link, err)
+	}
+	if want := filepath.Join(dir, ".opencode", "bin", "opencode"); target != want {
+		t.Errorf("symlink points at %s, want %s", target, want)
+	}
+	if line := verifyLine(t, dir, dir, "toolchain"); !strings.Contains(line, "OK") {
+		t.Errorf("verify.sh = %q, want OK", line)
+	}
 }

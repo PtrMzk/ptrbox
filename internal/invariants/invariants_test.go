@@ -715,6 +715,19 @@ func TestClaudeCodeIsInstalledUnconditionally(t *testing.T) {
 	}
 }
 
+// The inverse of the Claude Code test above: opencode is the OPTIONAL agent,
+// and its install must sit inside a conditional. Unconditional, every sandbox
+// would carry a second agent and, once item 59 lands, a second hole in the
+// wall to feed it.
+func TestOpencodeIsInstalledOnlyOnRequest(t *testing.T) {
+	script := asset(t, "vm/provision/30-toolchain.sh")
+	mustMatch(t, script, `(?m)^  curl [^\n]*opencode\.ai[^\n]*$`,
+		"the opencode install is not indented inside its conditional")
+	mustNotMatch(t, script, `(?m)^curl [^\n]*opencode\.ai`,
+		"the opencode install is at the top level, so every sandbox gets it")
+	mustMatch(t, script, `if want opencode; then`, "no opencode branch")
+}
+
 func TestTheFailedPackageMarkerIsSpelledTheSameInBothScripts(t *testing.T) {
 	// 15-extra-packages.sh writes the marker and vm/verify.sh reads it, and
 	// nothing connects the two but the file name. A typo on either side is

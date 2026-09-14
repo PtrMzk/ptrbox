@@ -194,7 +194,7 @@ func TestEveryPerVMKeyIsAcceptedInAPerVMFile(t *testing.T) {
 		"PORT_MIN": "4000", "PORT_MAX": "5000",
 		"DISTRO": "ubuntu2404", "IMAGE_URL": "https://example.com/x.qcow2",
 		"EXTRA_PACKAGES": "latexmk", "CLAUDE_MODEL": "opus",
-		"GO": "true", "NODE": "true", "UV": "true", "NODE_VERSION": "22",
+		"GO": "true", "NODE": "true", "OPENCODE": "true", "UV": "true", "NODE_VERSION": "22",
 		"PLAYWRIGHT": "true", "HOST_HOOKS": "true",
 		"GIT_USER_NAME": "Someone", "GIT_USER_EMAIL": "someone@example.com",
 	}
@@ -506,5 +506,30 @@ func TestNodeVersionAcceptsWhatNvmUnderstands(t *testing.T) {
 				t.Errorf("NodeVersion = %q, want %q", got, good)
 			}
 		})
+	}
+}
+
+// opencode is a tool rather than a runtime, and it belongs in Toolchains
+// anyway: the membership test is "a command verify.sh can require on PATH",
+// and opencode is one. Off by default, per-VM, and sorted into install order
+// with the runtimes so 30-toolchain.sh has one list to walk.
+func TestOpencodeIsAToolLikeTheRuntimes(t *testing.T) {
+	setup(t)
+	if !slices.Contains(Toolchains, "opencode") {
+		t.Fatal("opencode is not in Toolchains")
+	}
+	if cfg := mustLoad(t); cfg.Wants("opencode") {
+		t.Error("opencode is on by default")
+	}
+	if !perVMKeys["OPENCODE"] {
+		t.Error("PTRBOX_OPENCODE is not settable per VM")
+	}
+	writeVMConfig(t, "agentic", "PTRBOX_NODE=true\nPTRBOX_OPENCODE=true\nPTRBOX_UV=true\n")
+	cfg, err := mustLoad(t).Overlay("agentic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ToolchainList(); got != "node opencode uv" {
+		t.Errorf("ToolchainList = %q, want the install order", got)
 	}
 }

@@ -28,6 +28,10 @@
 #PTRBOX_NODE=false
 #PTRBOX_UV=false
 
+# [vm] A second coding agent, opencode (opencode.ai), using LM Studio on this
+# Mac as its model. Off. Claude Code is installed either way.
+#PTRBOX_OPENCODE=false
+
 # [vm] What `nvm install` gets: lts, node, lts/hydrogen, 22, 22.11.0.
 #PTRBOX_NODE_VERSION=lts
 

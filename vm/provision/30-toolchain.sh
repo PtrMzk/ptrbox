@@ -2,12 +2,12 @@
 # =============================================================================
 # 30-toolchain.sh - developer toolchain. Runs as the unprivileged agent user.
 #
-# Which language runtimes land here is host-side config (one boolean per
-# runtime: PTRBOX_GO, PTRBOX_NODE, PTRBOX_UV, all off by default), resolved
-# into the list rendered in below and validated on the host first - the same
-# rule as the apt
-# list in 15-extra-packages.sh, and for the same reason: a runtime list read
-# from the repo mount would let the agent decide what its own sandbox contains.
+# Which tools land here is host-side config (one boolean each: PTRBOX_GO,
+# PTRBOX_NODE, PTRBOX_UV for the runtimes, PTRBOX_OPENCODE for a second coding
+# agent, all off by default), resolved into the list rendered in below and
+# validated on the host first - the same rule as the apt list in
+# 15-extra-packages.sh, and for the same reason: a list read from the repo
+# mount would let the agent decide what its own sandbox contains.
 #
 # Claude Code is not part of that list. It is installed unconditionally,
 # because it is what a ptrbox VM exists to run, and it is a native binary that
@@ -17,10 +17,11 @@
 # therefore mandatory. The reason is narrower than it looks: several of the
 # downloads below are from hosts that ARE on the allowlist
 # (.githubusercontent.com, astral.sh, claude.ai). The ones that are not are
-# `nvm install`, which fetches the node tarball from nodejs.org, and Go's
-# tarball from go.dev/dl.google.com - all deliberately absent from the
-# allowlist, because provisioning is the only thing that needs them. So a
-# post-firewall re-run would get through most of this file and then hang.
+# `nvm install`, which fetches the node tarball from nodejs.org, Go's tarball
+# from go.dev/dl.google.com, and opencode's installer at opencode.ai - all
+# deliberately absent from the allowlist, because provisioning is the only
+# thing that needs them. So a post-firewall re-run would get through most of
+# this file and then hang.
 #
 # The installer URLs and the nvm pin are deliberately NOT config. They are
 # `curl | bash` sources; changing one should be an edit here, visible as a
@@ -32,7 +33,7 @@ if [ -f "$HOME/.ptrbox/toolchain.done" ]; then
   exit 0
 fi
 
-# Rendered from host config; TOOLCHAIN is empty when neither runtime is wanted.
+# Rendered from host config; TOOLCHAIN is empty when no tool is wanted.
 TOOLCHAIN="__TOOLCHAIN__"
 NODE_VERSION="__NODE_VERSION__"
 
@@ -89,6 +90,18 @@ if want node; then
   else
     nvm install "$NODE_VERSION"
   fi
+fi
+
+if want opencode; then
+  # opencode - a second coding agent, configured by 40-userenv.sh to use LM
+  # Studio on the Mac as its model. The installer drops the binary under
+  # ~/.opencode/bin and wires PATH into ~/.bashrc, below the interactive guard
+  # where scripts and vm/verify.sh cannot see it - so the symlink into
+  # ~/.local/bin, which .profile puts on PATH for every login shell, is what
+  # actually makes it findable. Same reason the Go block symlinks.
+  curl -fsSL https://opencode.ai/install | bash
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode"
 fi
 
 if want uv; then

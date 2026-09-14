@@ -45,7 +45,7 @@ var perVMKeys = map[string]bool{
 	"GO":             true,
 	"HOST_HOOKS":     true,
 	"NODE":           true,
-	"NODE_VERSION":   true,
+	"NODE_VERSION":   true, "OPENCODE": true,
 	"PLAYWRIGHT":     true,
 	"UV":             true,
 	"CLAUDE_MODEL":   true,
