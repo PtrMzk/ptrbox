@@ -588,3 +588,26 @@ func mountLines(body string) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// The provision scripts record how long each took, and the summary is where
+// that record is read out: root's under /var/lib/ptrbox, the agent's under its
+// home, summed by name. This is the number the boot-time work is measured by.
+func TestNewReportsGuestProvisioningTimings(t *testing.T) {
+	h := newHarness(t)
+	h.fake.WriteFile("demo", "/var/lib/ptrbox/timings",
+		"10-base 100 176\n90-harden 176 176\n90-harden 300 300\n")
+	h.fake.WriteFile("demo", "~/.ptrbox/timings", "30-toolchain 176 240\n")
+	h.mustRun("new", "demo")
+	h.assertOutputContains("timing   10-base 1m16s, 90-harden 0s, 30-toolchain 1m04s")
+}
+
+// A guest with no record - an older template, a read that failed - is a
+// summary without the line, never a failed create. The timings are a
+// diagnostic, not an assertion.
+func TestNewStillSucceedsWithNoTimingsRecord(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	if strings.Contains(h.output(), "timing ") {
+		t.Errorf("a timing line was printed for a VM with no record:\n%s", h.output())
+	}
+}

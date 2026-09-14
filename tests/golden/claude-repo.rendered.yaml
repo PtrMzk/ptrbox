@@ -150,6 +150,17 @@ provision:
         exit 0
       fi
 
+      mkdir -p "$state"
+      # How long this script took, recorded on exit as `<script> <start> <end>` in
+      # epoch seconds. `ptrbox new` reads the file back and prints one line per
+      # script in its summary, which is what turns "provisioning takes minutes" into
+      # a number per step. Installed AFTER the done-marker guard, so a guarded re-run
+      # on a later boot records nothing; a run that dies under set -e still records,
+      # because EXIT fires either way. Every provision script carries this trap; a
+      # test asserts the name in each one is the script's own.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "10-base %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
       export DEBIAN_FRONTEND=noninteractive # apt must never prompt in a script
 
       apt-get update
@@ -163,8 +174,6 @@ provision:
       # so https works at all.  jq: JSON wrangling in shell.  nftables: the firewall
       # itself.  tmux: long-running agent sessions that survive ssh disconnects.
       apt-get install -y curl git build-essential ca-certificates jq nftables tmux
-
-      mkdir -p "$state"
 
       # Chromium runtime dependencies (Playwright headless browser testing), only
       # when PTRBOX_PLAYWRIGHT asked for them. This is what
@@ -237,12 +246,16 @@ provision:
         exit 0
       fi
 
+      mkdir -p "$state"
+      # Timing record; see 10-base.sh. A `fail` below exits through this too.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "15-extra-packages %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
       export DEBIAN_FRONTEND=noninteractive # apt must never prompt in a script
 
       # Rendered from host config; empty when no extra packages are configured.
       EXTRA_PACKAGES=""
 
-      mkdir -p "$state"
       # Cleared first, so the marker always describes THIS boot. The script has no
       # done marker until it succeeds, so a failed boot 1 re-runs on the reboot that
       # raises the firewall - and every step below works off the package lists on
@@ -319,6 +332,11 @@ provision:
         exit 0
       fi
 
+      mkdir -p /var/lib/ptrbox
+      # Timing record; see 10-base.sh.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "20-firewall %s %s\n" "$ptrbox_t0" "$(date +%s)" >>/var/lib/ptrbox/timings || true' EXIT
+
       # Root-owned + chmod 600 so the agent user can't read or edit it - which only
       # means something combined with the sudo removal in 90-harden.sh.
       cat >/etc/nftables-sandbox.nft <<'NFT'
@@ -383,7 +401,6 @@ provision:
       done
       chattr +i /etc/resolv.conf
 
-      mkdir -p /var/lib/ptrbox
       touch /var/lib/ptrbox/firewall.done
 
   - mode: system
@@ -416,6 +433,11 @@ provision:
       if [ -f "$state/services.done" ]; then
         exit 0
       fi
+
+      mkdir -p "$state"
+      # Timing record; see 10-base.sh.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "25-services %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
 
       # --- multicast name resolution ------------------------------------------------
 
@@ -473,7 +495,6 @@ provision:
         systemctl disable "$unit" 2>/dev/null || true
       done
 
-      mkdir -p "$state"
       touch "$state/services.done"
 
   - mode: user
@@ -517,6 +538,10 @@ provision:
       NODE_VERSION="lts"
 
       mkdir -p "$HOME/.ptrbox"
+      # Timing record; see 10-base.sh. User scripts write under $HOME - the state
+      # directory is root's, and this one runs as the agent user.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "30-toolchain %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$HOME/.ptrbox/timings" || true' EXIT
 
       # What was ASKED FOR, recorded before anything is installed. vm/verify.sh reads
       # this file and requires every name in it to be on PATH, so a runtime that
@@ -591,6 +616,11 @@ provision:
       if [ -f "$HOME/.ptrbox/userenv.done" ]; then
         exit 0
       fi
+
+      mkdir -p "$HOME/.ptrbox"
+      # Timing record; see 10-base.sh and 30-toolchain.sh.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "40-userenv %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$HOME/.ptrbox/timings" || true' EXIT
 
       # Steady-state environment. Goes in ~/.profile, NOT ~/.bashrc: Debian's stock
       # .bashrc begins with an interactive-shell guard that returns early for
@@ -817,7 +847,6 @@ provision:
       }
       JSON
 
-      mkdir -p "$HOME/.ptrbox"
       touch "$HOME/.ptrbox/userenv.done"
 
   - mode: system
@@ -849,6 +878,12 @@ provision:
       # package and restores its setuid bit.
       # =============================================================================
       set -eux
+
+      # Timing record; see 10-base.sh. No guard here, so this is written on every
+      # boot; the host sums the lines for one name, and this one is milliseconds.
+      mkdir -p /var/lib/ptrbox
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "90-harden %s %s\n" "$ptrbox_t0" "$(date +%s)" >>/var/lib/ptrbox/timings || true' EXIT
 
       # --- the permission ----------------------------------------------------------
 

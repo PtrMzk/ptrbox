@@ -570,6 +570,29 @@ func TestEveryNetworkDependentProvisionStepIsGuarded(t *testing.T) {
 	}
 }
 
+// Every provision script records its wall-clock on exit under its own name,
+// which is what `ptrbox new`'s timing line is made of. Asserted statically
+// because four of the seven scripts are never executed by the suite, and a
+// script that recorded under another's name would be a summary that lies
+// about where the minutes went.
+func TestEveryProvisionScriptRecordsItsTiming(t *testing.T) {
+	for _, name := range provisionScripts(t, "vm/provision") {
+		base := strings.TrimSuffix(name[strings.LastIndex(name, "/")+1:], ".sh")
+		body := asset(t, name)
+		trap := regexp.MustCompile(`(?m)^trap 'printf "` + regexp.QuoteMeta(base) + ` %s %s\\n" "\$ptrbox_t0" "\$\(date \+%s\)" >>\S*timings" || true' EXIT$`)
+		if !trap.MatchString(body) {
+			t.Errorf("%s does not record its timing under its own name", name)
+		}
+		// After the guard, so a guarded exit records nothing. 90-harden has
+		// no guard by design and is exempt from the ordering.
+		if guard := strings.Index(body, ".done\" ]; then"); guard >= 0 {
+			if trapAt := strings.Index(body, "trap 'printf"); trapAt < guard {
+				t.Errorf("%s installs its timing trap before the done-marker guard", name)
+			}
+		}
+	}
+}
+
 func TestTheExtraPackageListIsFixedAtRenderTime(t *testing.T) {
 	// The list is substituted into the generated config on the host. A list
 	// read inside the guest at boot - from a file, a command, or anything

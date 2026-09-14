@@ -26,6 +26,12 @@
 # =============================================================================
 set -eux
 
+# Timing record; see 10-base.sh. No guard here, so this is written on every
+# boot; the host sums the lines for one name, and this one is milliseconds.
+mkdir -p /var/lib/ptrbox
+ptrbox_t0="$(date +%s)"
+trap 'printf "90-harden %s %s\n" "$ptrbox_t0" "$(date +%s)" >>/var/lib/ptrbox/timings || true' EXIT
+
 # --- the permission ----------------------------------------------------------
 
 rm -f /etc/sudoers.d/90-cloud-init-users

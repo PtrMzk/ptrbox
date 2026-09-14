@@ -32,7 +32,10 @@ type Fake struct {
 	// in that tests read it, but stable order makes failures readable.
 	VMs []lima.VM
 
-	// Files is each VM's filesystem: Files[vm][path] = content.
+	// Files is each VM's filesystem: Files[vm][path] = content. Paths are
+	// absolute except for the agent's home, which is spelled `~/...`: the
+	// real home carries a version-dependent suffix, so the host never names
+	// it and neither does the fake.
 	Files map[string]map[string]string
 
 	// Calls is one line per invocation, in order, with long or multi-line
@@ -213,6 +216,17 @@ func (f *Fake) shell(c lima.Cmd) error {
 		// is how a VM says it has nothing to archive.
 		if body := f.Transcripts[vm]; len(body) > 0 {
 			c.Stdout.Write(body)
+		}
+		return nil
+
+	case len(rest) > 2 && rest[1] == "-c" && strings.Contains(rest[2], ".ptrbox/timings"):
+		// The provisioning timing readback: both records concatenated on
+		// stdout, an absent one contributing nothing - the real command is a
+		// cat with its errors discarded, for the same reason.
+		for _, path := range []string{"/var/lib/ptrbox/timings", "~/.ptrbox/timings"} {
+			if body, ok := f.Files[vm][path]; ok {
+				io.WriteString(c.Stdout, body)
+			}
 		}
 		return nil
 

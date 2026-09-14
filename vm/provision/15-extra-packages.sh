@@ -35,12 +35,16 @@ if [ -f "$done_marker" ]; then
   exit 0
 fi
 
+mkdir -p "$state"
+# Timing record; see 10-base.sh. A `fail` below exits through this too.
+ptrbox_t0="$(date +%s)"
+trap 'printf "15-extra-packages %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
 export DEBIAN_FRONTEND=noninteractive # apt must never prompt in a script
 
 # Rendered from host config; empty when no extra packages are configured.
 EXTRA_PACKAGES="__EXTRA_PACKAGES__"
 
-mkdir -p "$state"
 # Cleared first, so the marker always describes THIS boot. The script has no
 # done marker until it succeeds, so a failed boot 1 re-runs on the reboot that
 # raises the firewall - and every step below works off the package lists on

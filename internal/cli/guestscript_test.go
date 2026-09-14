@@ -323,3 +323,14 @@ func TestAFixedListClearsAnOlderFailure(t *testing.T) {
 		t.Errorf("verify.sh = %q, want OK - the stale marker was not cleared", line)
 	}
 }
+
+// The timing record survives the failure path too: `fail` exits through the
+// trap, so a boot that could not install its packages still says how long it
+// spent finding out.
+func TestExtraPackagesRecordsItsTimingEvenWhenItFails(t *testing.T) {
+	dir, state := guestScripts(t, "ripgrep nosuchpkg", aptStub{known: []string{"ripgrep"}})
+	if _, ok := provision(t, dir, state); ok {
+		t.Fatal("provisioning succeeded with an unresolvable package")
+	}
+	assertOneTiming(t, filepath.Join(state, "timings"), "15-extra-packages")
+}

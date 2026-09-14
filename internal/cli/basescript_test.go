@@ -182,3 +182,34 @@ func TestAPlaywrightPackageThatDidNotArriveFailsVerification(t *testing.T) {
 		t.Errorf("verify.sh = %q, want it to name the missing package", line)
 	}
 }
+
+// Every provision script records its own wall-clock on exit, once per real
+// run: a guarded second boot exits before the trap is installed and adds
+// nothing, which is what keeps `ptrbox new`'s summary about boot 1.
+func TestBaseRecordsItsTimingOncePerRealRun(t *testing.T) {
+	dir, state := baseScript(t, false, "")
+	if out, ok := provisionBase(t, dir, state); !ok {
+		t.Fatalf("provisioning failed:\n%s", out)
+	}
+	if out, ok := provisionBase(t, dir, state); !ok {
+		t.Fatalf("the second run failed:\n%s", out)
+	}
+	assertOneTiming(t, filepath.Join(state, "timings"), "10-base")
+}
+
+// assertOneTiming checks a timings file holds exactly one well-formed line
+// for the named script.
+func assertOneTiming(t *testing.T, path, script string) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("no timing record: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("timings holds %d lines, want 1 (a guarded re-run recorded itself?):\n%s", len(lines), body)
+	}
+	if !matches(lines[0], `^`+script+` \d+ \d+$`) {
+		t.Errorf("timing line = %q, want %q followed by two epoch seconds", lines[0], script)
+	}
+}

@@ -9,6 +9,11 @@ if [ -f "$HOME/.ptrbox/userenv.done" ]; then
   exit 0
 fi
 
+mkdir -p "$HOME/.ptrbox"
+# Timing record; see 10-base.sh and 30-toolchain.sh.
+ptrbox_t0="$(date +%s)"
+trap 'printf "40-userenv %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$HOME/.ptrbox/timings" || true' EXIT
+
 # Steady-state environment. Goes in ~/.profile, NOT ~/.bashrc: Debian's stock
 # .bashrc begins with an interactive-shell guard that returns early for
 # scripts, so exports appended there are invisible to non-interactive shells
@@ -234,5 +239,4 @@ cat >"$HOME/.claude.json" <<'JSON'
 }
 JSON
 
-mkdir -p "$HOME/.ptrbox"
 touch "$HOME/.ptrbox/userenv.done"

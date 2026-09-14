@@ -244,6 +244,12 @@ func cmdNew(env *Env, args []string) error {
 	// decides what it may reach. Always shown - the list outlives the VM, so
 	// this is where its existence is said out loud.
 	lines = append(lines, fmt.Sprintf("egress   proxy port %d, allowlist %s", proxyPort, config.VMAllowlistPath(name)))
+	// Where the minutes went, per provision script. Diagnostic: a VM that
+	// kept no record, or one that cannot be read, is a summary without this
+	// line rather than a failed create.
+	if timing := formatTimings(readTimings(env, name)); timing != "" {
+		lines = append(lines, "timing   "+timing)
+	}
 	lines = append(lines,
 		"push     from the host; the VM has no credentials but the Claude token")
 	env.Out.Summary(fmt.Sprintf("VM %q is ready", name), lines...)

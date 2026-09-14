@@ -333,3 +333,15 @@ func TestASecondRunInstallsNothing(t *testing.T) {
 		t.Errorf("the second run fetched things:\n%s", curl)
 	}
 }
+
+// The user-side scripts record under the agent's home rather than root's
+// state directory, and the guarded second run adds nothing there either.
+func TestToolchainRecordsItsTimingUnderTheAgentsHome(t *testing.T) {
+	dir := toolchainScript(t, "", "lts")
+	for i := 0; i < 2; i++ {
+		if out, ok := installToolchain(t, dir); !ok {
+			t.Fatalf("run %d failed:\n%s", i+1, out)
+		}
+	}
+	assertOneTiming(t, filepath.Join(dir, ".ptrbox", "timings"), "30-toolchain")
+}

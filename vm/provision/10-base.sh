@@ -26,6 +26,17 @@ if [ -f "$state/base.done" ]; then
   exit 0
 fi
 
+mkdir -p "$state"
+# How long this script took, recorded on exit as `<script> <start> <end>` in
+# epoch seconds. `ptrbox new` reads the file back and prints one line per
+# script in its summary, which is what turns "provisioning takes minutes" into
+# a number per step. Installed AFTER the done-marker guard, so a guarded re-run
+# on a later boot records nothing; a run that dies under set -e still records,
+# because EXIT fires either way. Every provision script carries this trap; a
+# test asserts the name in each one is the script's own.
+ptrbox_t0="$(date +%s)"
+trap 'printf "10-base %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
 export DEBIAN_FRONTEND=noninteractive # apt must never prompt in a script
 
 apt-get update
@@ -39,8 +50,6 @@ apt-get upgrade -y
 # so https works at all.  jq: JSON wrangling in shell.  nftables: the firewall
 # itself.  tmux: long-running agent sessions that survive ssh disconnects.
 apt-get install -y curl git build-essential ca-certificates jq nftables tmux
-
-mkdir -p "$state"
 
 # Chromium runtime dependencies (Playwright headless browser testing), only
 # when PTRBOX_PLAYWRIGHT asked for them. This is what

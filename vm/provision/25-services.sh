@@ -27,6 +27,11 @@ if [ -f "$state/services.done" ]; then
   exit 0
 fi
 
+mkdir -p "$state"
+# Timing record; see 10-base.sh.
+ptrbox_t0="$(date +%s)"
+trap 'printf "25-services %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
 # --- multicast name resolution ------------------------------------------------
 
 # LLMNR and mDNS listen on every interface (udp/tcp 5355, udp 5353) and resolve
@@ -83,5 +88,4 @@ for unit in \
   systemctl disable "$unit" 2>/dev/null || true
 done
 
-mkdir -p "$state"
 touch "$state/services.done"

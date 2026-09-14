@@ -37,6 +37,10 @@ TOOLCHAIN="__TOOLCHAIN__"
 NODE_VERSION="__NODE_VERSION__"
 
 mkdir -p "$HOME/.ptrbox"
+# Timing record; see 10-base.sh. User scripts write under $HOME - the state
+# directory is root's, and this one runs as the agent user.
+ptrbox_t0="$(date +%s)"
+trap 'printf "30-toolchain %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$HOME/.ptrbox/timings" || true' EXIT
 
 # What was ASKED FOR, recorded before anything is installed. vm/verify.sh reads
 # this file and requires every name in it to be on PATH, so a runtime that

@@ -15,6 +15,11 @@ if [ -f /var/lib/ptrbox/firewall.done ]; then
   exit 0
 fi
 
+mkdir -p /var/lib/ptrbox
+# Timing record; see 10-base.sh.
+ptrbox_t0="$(date +%s)"
+trap 'printf "20-firewall %s %s\n" "$ptrbox_t0" "$(date +%s)" >>/var/lib/ptrbox/timings || true' EXIT
+
 # Root-owned + chmod 600 so the agent user can't read or edit it - which only
 # means something combined with the sudo removal in 90-harden.sh.
 cat >/etc/nftables-sandbox.nft <<'NFT'
@@ -79,5 +84,4 @@ for ns in __DNS_LIST__; do
 done
 chattr +i /etc/resolv.conf
 
-mkdir -p /var/lib/ptrbox
 touch /var/lib/ptrbox/firewall.done
