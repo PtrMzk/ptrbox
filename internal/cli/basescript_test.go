@@ -14,6 +14,7 @@ package cli
 // installed. Nothing here touches the network.
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +29,11 @@ import (
 // around it. absent, when set, is a package dpkg-query reports as missing -
 // the "apt said yes but it is not there" case.
 func baseScript(t *testing.T, playwright bool, absent string) (dir, state string) {
+	return baseScriptWith(t, playwright, false, absent)
+}
+
+// baseScriptWith is baseScript with the opencode flag as well.
+func baseScriptWith(t *testing.T, playwright, opencode bool, absent string) (dir, state string) {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is not available")
@@ -39,12 +45,8 @@ func baseScript(t *testing.T, playwright bool, absent string) (dir, state string
 	// host resolves: substituting the placeholder some other way would prove
 	// nothing about the real script.
 	var buf strings.Builder
-	value := "false"
-	if playwright {
-		value = "true"
-	}
 	err := render.Render(&buf, ptrbox.Assets, "vm/provision/10-base.sh", "vm",
-		render.Values{"PLAYWRIGHT": value})
+		render.Values{"PLAYWRIGHT": fmt.Sprint(playwright), "OPENCODE": fmt.Sprint(opencode)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,5 +223,51 @@ func assertOneTiming(t *testing.T, path, script string) {
 	}
 	if !matches(lines[0], `^`+script+` \d+ \d+$`) {
 		t.Errorf("timing line = %q, want %q followed by two epoch seconds", lines[0], script)
+	}
+}
+
+// opencode's own apt dependency, gated on its flag and asserted the way
+// Playwright's are: recorded before the install, checked by verify.sh.
+func TestOpencodeInstallsRipgrepAndRecordsIt(t *testing.T) {
+	dir, state := baseScriptWith(t, false, true, "")
+	if out, ok := provisionBase(t, dir, state); !ok {
+		t.Fatalf("provisioning failed:\n%s", out)
+	}
+	if apt := logOf(t, dir, "apt.log"); !strings.Contains(apt, "ripgrep") {
+		t.Errorf("ripgrep was not installed for an opencode VM:\n%s", apt)
+	}
+	body, err := os.ReadFile(filepath.Join(state, "opencode-packages"))
+	if err != nil || strings.TrimSpace(string(body)) != "ripgrep" {
+		t.Errorf("opencode-packages = %q, %v", body, err)
+	}
+	if line := verifyLine(t, dir, state, "opencode packages"); !strings.Contains(line, "OK") {
+		t.Errorf("verify.sh = %q, want OK", line)
+	}
+}
+
+func TestWithoutOpencodeNoRipgrepAndNoRecord(t *testing.T) {
+	dir, state := baseScriptWith(t, false, false, "")
+	if out, ok := provisionBase(t, dir, state); !ok {
+		t.Fatalf("provisioning failed:\n%s", out)
+	}
+	if apt := logOf(t, dir, "apt.log"); strings.Contains(apt, "ripgrep") {
+		t.Errorf("ripgrep was installed in a VM without opencode:\n%s", apt)
+	}
+	if _, err := os.Stat(filepath.Join(state, "opencode-packages")); err == nil {
+		t.Error("a record was written for a VM with opencode off")
+	}
+	if line := verifyLineIfAny(t, dir, state, "opencode packages"); line != "" {
+		t.Errorf("verify.sh reported on opencode packages in a VM without it: %q", line)
+	}
+}
+
+func TestRipgrepThatDidNotArriveFailsVerification(t *testing.T) {
+	dir, state := baseScriptWith(t, false, true, "ripgrep")
+	if out, ok := provisionBase(t, dir, state); !ok {
+		t.Fatalf("provisioning failed:\n%s", out)
+	}
+	line := verifyLine(t, dir, state, "opencode packages")
+	if !strings.Contains(line, "FAIL") || !strings.Contains(line, "ripgrep") {
+		t.Errorf("verify.sh = %q, want a FAIL naming ripgrep", line)
 	}
 }

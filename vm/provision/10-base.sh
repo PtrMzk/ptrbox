@@ -58,6 +58,21 @@ apt-get upgrade -y
 # dependency that breaks a browser silently rather than at install time.
 apt-get install -y --no-install-recommends curl git build-essential ca-certificates jq nftables tmux less unzip
 
+# What opencode needs from apt, only when PTRBOX_OPENCODE asked for it. Its
+# search tools use the system rg when there is one and otherwise download
+# ripgrep from GitHub releases with a proxy-blind fetch, which the wall
+# refuses - so without this the first Grep in an opencode sandbox fails.
+# Claude Code bundles its own ripgrep and needs nothing here. Same shape as
+# the Playwright block below: the list is recorded BEFORE the install so
+# vm/verify.sh can check each package actually arrived.
+OPENCODE="__OPENCODE__"
+if [ "$OPENCODE" = "true" ]; then
+  printf 'ripgrep\n' >"$state/opencode-packages"
+  apt-get install -y --no-install-recommends ripgrep
+else
+  rm -f "$state/opencode-packages"
+fi
+
 # Chromium runtime dependencies (Playwright headless browser testing), only
 # when PTRBOX_PLAYWRIGHT asked for them. This is what
 # `npx playwright install-deps chromium` would install - listed explicitly

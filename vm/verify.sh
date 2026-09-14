@@ -209,11 +209,12 @@ else
   ok "extra packages"
 fi
 
-# Playwright's OS libraries, when PTRBOX_PLAYWRIGHT asked for them.
-# 10-base.sh writes the list before installing it, so this compares the
-# request against what dpkg actually holds rather than against itself. No
-# record means the flag was off, which is the default and not a failure.
-if [ -r "$state/playwright-packages" ]; then
+# The apt packages a feature asked for. 10-base.sh writes each list before
+# installing it, so this compares the request against what dpkg actually
+# holds rather than against itself. No record means the flag was off, which
+# is the default and not a failure.
+check_packages() { # <record file> <check name>
+  [ -r "$1" ] || return 0
   missing=""
   while read -r pkg; do
     [ -n "$pkg" ] || continue
@@ -222,13 +223,15 @@ if [ -r "$state/playwright-packages" ]; then
     *"install ok installed"*) ;;
     *) missing="$missing $pkg" ;;
     esac
-  done <"$state/playwright-packages"
+  done <"$1"
   if [ -z "$missing" ]; then
-    ok "playwright libraries"
+    ok "$2"
   else
-    bad "playwright libraries" "missing:$missing"
+    bad "$2" "missing:$missing"
   fi
-fi
+}
+check_packages "$state/playwright-packages" "playwright libraries" # PTRBOX_PLAYWRIGHT
+check_packages "$state/opencode-packages" "opencode packages"      # PTRBOX_OPENCODE: ripgrep
 
 # --- credentials ---------------------------------------------------------------
 
