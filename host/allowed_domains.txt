@@ -7,16 +7,18 @@
 # A sandbox with no node cannot run npm, so granting it the npm registry
 # grants a capability nothing in the VM can use - and every line here is a
 # capability.
-# The markers are read only in THIS file; a VM's own list is plain, with a
-# note where a group was left out.
+# The markers survive into a VM's list, with a note where a group was left
+# out: every `ptrbox new` reads them back against that VM's config, so a
+# re-create with a runtime turned on restores its group, and one with a
+# runtime turned off empties it. Lines outside the groups, and lines you add
+# inside them, are never touched.
 #
 # Scope: `ptrbox new` copies this file into the VM's own list
 # (~/.config/ptrbox/allowed_domains.d/<vm>.txt), and from then on that file
-# ALONE decides that VM's egress - editing this one changes no existing
-# sandbox and needs no reload, it only shapes future creates. Each group
-# below says what needs it, so pruning a VM's copy down to what its project
-# uses is encouraged: every entry is a capability grant, not just a
-# destination.
+# decides that VM's egress - editing this one changes no existing sandbox and
+# needs no reload, it only shapes future creates. Each group below says what
+# needs it, so pruning a VM's copy down to what its project uses is
+# encouraged: every entry is a capability grant, not just a destination.
 #
 # To find domains a sandbox is missing:  ptrbox logs --denied
 #   (the localport= field says which VM asked; its port is in

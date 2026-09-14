@@ -107,17 +107,19 @@ func TestARuntimeBringsItsOwnDomains(t *testing.T) {
 	}
 }
 
-// The markers are read in the template only. A VM's own list is a plain list -
-// nothing re-reads it against the config, so a marker left in it would claim a
-// relationship that does not exist.
-func TestTheMarkersDoNotSurviveIntoAVMsList(t *testing.T) {
+// The markers survive into a VM's list: `ptrbox new` reads them back against
+// the config on every create, so a group left out today can be restored when
+// the feature is turned on for a re-create. An omitted group keeps its marker
+// pair around the note, which is what makes it findable later.
+func TestTheMarkersSurviveIntoAVMsList(t *testing.T) {
 	newHarness(t)
-	seed := seedFor(t, seedTemplate, "PTRBOX_NODE=true\nPTRBOX_UV=true\n")
+	seed := seedFor(t, seedTemplate, "PTRBOX_NODE=true\n")
 
-	for _, marker := range []string{"@requires", "@end"} {
-		if strings.Contains(seed, marker) {
-			t.Errorf("%s survived into the seeded list:\n%s", marker, seed)
-		}
+	if !strings.Contains(seed, "# @requires node\nregistry.npmjs.org\n# @end\n") {
+		t.Errorf("the kept group lost its markers:\n%s", seed)
+	}
+	if !strings.Contains(seed, "# @requires uv\n# (omitted: this VM has no uv)\n# @end\n") {
+		t.Errorf("the omitted group is not a marked, empty group:\n%s", seed)
 	}
 }
 
@@ -192,8 +194,11 @@ func TestTheShippedTemplateFiltersBothWays(t *testing.T) {
 	}
 }
 
-// The filter runs on the way in and never again: once the file exists it is
-// the user's, and turning a runtime off later must not rewrite it.
+// A sync never rewrites an existing list, whatever the config says now: the
+// one moment a list follows the config is `ptrbox new` (reconcile_test.go),
+// because that is the moment the VM is rebuilt to match. Between creates the
+// file is the user's, and a `ptrbox allow` or `sync-proxy` must push what
+// they wrote.
 func TestTurningARuntimeOffDoesNotRewriteAnExistingList(t *testing.T) {
 	h := newHarness(t)
 	h.mustEnsure(t)

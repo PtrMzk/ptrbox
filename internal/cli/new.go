@@ -291,11 +291,8 @@ func reviewPlan(env *Env, name, repoDir string, noEdit bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if noEdit {
-		return models, nil
-	}
 
-	if ask(env, fmt.Sprintf("edit the configuration for %q first?", name)) {
+	if !noEdit && ask(env, fmt.Sprintf("edit the configuration for %q first?", name)) {
 		if err := seedVMConfig(env, name); err != nil {
 			return nil, err
 		}
@@ -313,6 +310,16 @@ func reviewPlan(env *Env, name, repoDir string, noEdit bool) ([]string, error) {
 		if models, err = printPlan(env, name, repoDir); err != nil {
 			return nil, err
 		}
+	}
+
+	// The allowlist follows the settings just settled - a group the template
+	// gates on a feature is restored or emptied to match - and it happens
+	// before the editor offer so what opens is the list that will be pushed.
+	if err := reconcileAllowlist(env, name); err != nil {
+		return nil, err
+	}
+	if noEdit {
+		return models, nil
 	}
 
 	if ask(env, fmt.Sprintf("edit the egress allowlist for %q first?", name)) {
@@ -403,6 +410,33 @@ func printPlan(env *Env, name, repoDir string) ([]string, error) {
 			repoDir)
 	}
 	return models, nil
+}
+
+// reconcileAllowlist brings an existing per-VM list into line with the
+// features this create resolved, saying what it did. A VM with no list yet is
+// seeded later with the right groups already; this is for the re-create,
+// where the file outlived the VM and the config may have moved on.
+func reconcileAllowlist(env *Env, name string) error {
+	if !hasVMAllowlist(name) {
+		return nil
+	}
+	// The template must exist to reconcile against, and `ptrbox new` has
+	// never required install to have been run first.
+	if _, err := env.Proxy.SeedAllowlist(); err != nil {
+		return err
+	}
+	changes, err := env.Proxy.ReconcileVMAllowlist(name)
+	if err != nil {
+		return err
+	}
+	for _, change := range changes {
+		if change.Warn {
+			env.Out.Warn("%s", change.Text)
+		} else {
+			env.Out.Say("%s", change.Text)
+		}
+	}
+	return nil
 }
 
 // firstOf is the default model: the first one LM Studio listed, or "" for none.

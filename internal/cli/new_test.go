@@ -739,3 +739,60 @@ func TestOpencodeOffNeverAsksLMStudio(t *testing.T) {
 		t.Error("the inert opencode block does not render an empty model list")
 	}
 }
+
+// The whole path, through `ptrbox new`: a sandbox created with node, deleted,
+// and re-created with node and uv gets PyPI - in the file on the host, in the
+// list the proxy serves, and said in the output. And back again.
+func TestARecreateWithDifferentRuntimesFollowsThemIntoTheAllowlist(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("install")
+	h.writeVMConfig("demo", "PTRBOX_NODE=true\n")
+	h.mustRun("new", "demo")
+	if pushed := h.proxyFile("/etc/squid/allowed.d/demo.txt"); strings.Contains(pushed, "pypi.org") {
+		t.Fatalf("a node-only VM was granted PyPI:\n%s", pushed)
+	}
+	h.mustRun("rm", "demo")
+
+	h.writeVMConfig("demo", "PTRBOX_NODE=true\nPTRBOX_UV=true\n")
+	h.mustRun("new", "demo")
+	pushed := h.proxyFile("/etc/squid/allowed.d/demo.txt")
+	for _, want := range []string{"pypi.org", "files.pythonhosted.org", "astral.sh", "registry.npmjs.org"} {
+		if !strings.Contains(pushed, want) {
+			t.Errorf("%s is missing from the re-created VM's list:\n%s", want, pushed)
+		}
+	}
+	h.assertOutputContains("allowlist: restored the uv group")
+	// Before the build, so the list the VM boots behind is the one shown.
+	if out := ui.Plain(h.stderr); strings.Index(out, "restored the uv group") > strings.Index(out, "provisioning demo") {
+		t.Error("the allowlist was reconciled after provisioning started")
+	}
+	h.mustRun("rm", "demo")
+
+	h.writeVMConfig("demo", "PTRBOX_UV=true\n")
+	h.mustRun("new", "demo")
+	pushed = h.proxyFile("/etc/squid/allowed.d/demo.txt")
+	if strings.Contains(pushed, "registry.npmjs.org") {
+		t.Errorf("npm survived into a VM with no node:\n%s", pushed)
+	}
+	if !strings.Contains(pushed, "pypi.org") {
+		t.Errorf("PyPI was lost from a VM that still has uv:\n%s", pushed)
+	}
+	h.assertOutputContains("removed registry.npmjs.org from the node group - this VM has no node")
+}
+
+// Lines a person added are the one thing a re-create never touches, wherever
+// they put them.
+func TestARecreateKeepsYourOwnAllowlistLines(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("install")
+	h.writeVMConfig("demo", "PTRBOX_NODE=true\n")
+	h.mustRun("new", "demo")
+	h.mustRun("allow", "demo", "internal.example.com")
+	h.mustRun("rm", "demo")
+
+	h.writeVMConfig("demo", "PTRBOX_UV=true\n")
+	h.mustRun("new", "demo")
+	if pushed := h.proxyFile("/etc/squid/allowed.d/demo.txt"); !strings.Contains(pushed, "internal.example.com") {
+		t.Errorf("a hand-added domain was lost across a re-create:\n%s", pushed)
+	}
+}

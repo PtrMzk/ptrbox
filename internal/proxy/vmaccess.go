@@ -114,9 +114,10 @@ const (
 )
 
 // SeedFor renders the template into the list one VM starts from: the groups
-// whose runtimes that VM does not have are replaced by a line saying they were
-// left out, and the markers themselves do not survive - a VM's list is a plain
-// list, and nothing re-reads it against the config later. Exported for the
+// whose features that VM does not have are emptied down to a line saying they
+// were left out. The markers survive, because `ptrbox new` re-reads the list
+// against the config on every create (reconcile.go) - a group left out today
+// is restored when the feature is turned on for a re-create. Exported for the
 // invariants test, which reads the seeded result rather than the template.
 //
 // A marker naming something that is not a runtime is an ERROR, not a group
@@ -149,14 +150,19 @@ func SeedFor(template []byte, cfg *config.Config) ([]byte, error) {
 				}
 			}
 			group, keep = argument, slices.ContainsFunc(runtimes, cfg.Wants)
+			out.WriteString(text)
+			out.WriteByte('\n')
 			if !keep {
-				fmt.Fprintf(&out, "# (omitted: this VM has no %s)\n", strings.Join(runtimes, " or "))
+				out.WriteString(omittedNote(runtimes))
+				out.WriteByte('\n')
 			}
 		case endMarker:
 			if group == "" {
 				return nil, fmt.Errorf("line %d: %s with no %s above it", line, endMarker, requiresMarker)
 			}
 			group, keep = "", true
+			out.WriteString(text)
+			out.WriteByte('\n')
 		case "":
 		default:
 			// A directive nobody implements, which in practice is one of the
@@ -166,9 +172,7 @@ func SeedFor(template []byte, cfg *config.Config) ([]byte, error) {
 			return nil, fmt.Errorf("line %d: unknown directive %s (expected %s or %s)",
 				line, directive, requiresMarker, endMarker)
 		}
-		// Markers do not survive into a VM's list: nothing re-reads that file
-		// against the config, so a marker in it would claim a relationship
-		// that no longer exists.
+		// The markers are what a later `ptrbox new` reads the list back by.
 		if directive == "" && keep {
 			out.WriteString(text)
 			out.WriteByte('\n')
@@ -203,10 +207,10 @@ func parseMarker(line string) (directive, argument string) {
 // when it is absent. Seeding here rather than only in `new` is what makes a
 // deleted file a RESET instead of a parse error: the generated rules reference
 // the file, so a mapped VM without one would stop squid, which is every
-// sandbox's network. Create what is absent, never touch what is present -
-// which is also why the runtime filter cannot reach an existing file: from the
-// moment it is written it is the user's, and turning a runtime off later
-// changes what the next VM starts from, not what this one may reach.
+// sandbox's network. Create what is absent, never touch what is present: the
+// one thing that revisits an existing file is `ptrbox new`, which reconciles
+// the marked groups against the config at create time (reconcile.go) and
+// leaves every other line alone.
 func (p *Proxy) ensureVMAllowlist(name string, seed []byte) (string, error) {
 	path := config.VMAllowlistPath(name)
 	if body, err := os.ReadFile(path); err == nil {
@@ -217,7 +221,9 @@ func (p *Proxy) ensureVMAllowlist(name string, seed []byte) (string, error) {
 
 	body := fmt.Sprintf("# Egress allowlist for VM %q, seeded from allowed_domains.txt on %s.\n"+
 		"# This file alone decides what this VM may CONNECT to - edit it with\n"+
-		"# `ptrbox allow %s`, or delete it to re-seed from the template.\n\n",
+		"# `ptrbox allow %s`, or delete it to re-seed from the template.\n"+
+		"# The `@requires` groups follow this VM's config on each `ptrbox new`;\n"+
+		"# everything else in the file is yours.\n\n",
 		name, time.Now().Format("2006-01-02"), name) + string(seed)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
