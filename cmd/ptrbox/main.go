@@ -102,16 +102,10 @@ func colorFlag(args []string) ([]string, bool) {
 	if !asked || os.Getenv("NO_COLOR") != "" {
 		return kept, false
 	}
-	// An unset TERM is the same answer as "dumb": something is running ptrbox
-	// that never said it could render anything.
-	if term := os.Getenv("TERM"); term == "" || term == "dumb" {
-		return kept, false
-	}
-	info, err := os.Stderr.Stat()
-	if err != nil {
-		return kept, false
-	}
-	return kept, info.Mode()&os.ModeCharDevice != 0
+	// Asked second, and only of a run that wants colour: on Windows the
+	// question has a side effect (the console is switched into rendering
+	// escapes), and a console nobody will colour is left as it was found.
+	return kept, ui.Terminal(os.Stderr)
 }
 
 // loadWith resolves the configuration and everything that depends on it.
