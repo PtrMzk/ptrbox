@@ -61,7 +61,7 @@ import (
 // that a command which loops printing errors cannot grow this without bound.
 const rawLimit = 200
 
-// Stream is an io.Writer for limactl's output. It implements lima.Narrator,
+// Stream is an io.Writer for limactl's output. It implements backend.Narrator,
 // so the client tells it where one invocation ends and the next begins.
 type Stream struct {
 	Out ui.Printer

@@ -12,42 +12,32 @@ package lima
 
 import (
 	"bytes"
-	"fmt"
 	"io"
-	"os/exec"
 	"strings"
+
+	"github.com/PtrMzk/ptrbox/internal/backend"
 )
 
 // Binary is the executable every call goes to.
 const Binary = "limactl"
 
-// Cmd is one limactl invocation.
-type Cmd struct {
-	Args   []string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-}
-
-// Runner executes limactl invocations.
-type Runner interface {
-	Run(Cmd) error
-}
+// The invocation, the thing that runs it, its error and the narrator are the
+// backend package's: nothing about them is lima's. The names stay here as
+// aliases, so limafake and every caller read as they always did.
+type (
+	Cmd      = backend.Cmd
+	Runner   = backend.Runner
+	Error    = backend.Error
+	Narrator = backend.Narrator
+)
 
 // Exec is the real runner.
 type Exec struct{}
 
-func (Exec) Run(c Cmd) error {
-	cmd := exec.Command(Binary, c.Args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.Stdin, c.Stdout, c.Stderr
-	return cmd.Run()
-}
+func (Exec) Run(c Cmd) error { return backend.ExecRunner{Binary: Binary}.Run(c) }
 
 // Available reports whether limactl is on PATH.
-func (Exec) Available() bool {
-	_, err := exec.LookPath(Binary)
-	return err == nil
-}
+func (Exec) Available() bool { return backend.ExecRunner{Binary: Binary}.Available() }
 
 // availabler lets a Runner answer "is limactl usable here" for itself, which
 // is how the fake reports yes without a limactl anywhere on the machine.
@@ -72,19 +62,6 @@ func (c *Client) Available() bool {
 	return false
 }
 
-// Narrator is an output writer that wants to know where one limactl
-// invocation begins and ends: enough to translate the stream into ptrbox's
-// voice, and to hand the raw bytes back when the invocation fails.
-//
-// Declared here rather than imported so that this package keeps knowing
-// nothing about how output is presented. A plain io.Writer is still a
-// perfectly good Stdout.
-type Narrator interface {
-	io.Writer
-	Begin(args []string)
-	End(err error)
-}
-
 // Passthrough runs limactl with its output going straight to the user.
 func (c *Client) Passthrough(args ...string) error {
 	if n, ok := c.Stdout.(Narrator); ok {
@@ -102,7 +79,7 @@ func (c *Client) Output(args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	err := c.Runner.Run(Cmd{Args: args, Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
-		return stdout.String(), &Error{Args: args, Stderr: stderr.String(), Err: err}
+		return stdout.String(), &Error{Binary: Binary, Args: args, Stderr: stderr.String(), Err: err}
 	}
 	return stdout.String(), nil
 }
@@ -113,7 +90,7 @@ func (c *Client) Output(args ...string) (string, error) {
 func (c *Client) Send(stdin io.Reader, args ...string) error {
 	var stderr bytes.Buffer
 	if err := c.Runner.Run(Cmd{Args: args, Stdin: stdin, Stderr: &stderr}); err != nil {
-		return &Error{Args: args, Stderr: stderr.String(), Err: err}
+		return &Error{Binary: Binary, Args: args, Stderr: stderr.String(), Err: err}
 	}
 	return nil
 }
@@ -123,28 +100,10 @@ func (c *Client) Send(stdin io.Reader, args ...string) error {
 func (c *Client) Stream(w io.Writer, args ...string) error {
 	var stderr bytes.Buffer
 	if err := c.Runner.Run(Cmd{Args: args, Stdout: w, Stderr: &stderr}); err != nil {
-		return &Error{Args: args, Stderr: stderr.String(), Err: err}
+		return &Error{Binary: Binary, Args: args, Stderr: stderr.String(), Err: err}
 	}
 	return nil
 }
-
-// Error carries what limactl said, which is usually more useful than the exit
-// status on its own.
-type Error struct {
-	Args   []string
-	Stderr string
-	Err    error
-}
-
-func (e *Error) Error() string {
-	msg := fmt.Sprintf("%s %s: %v", Binary, strings.Join(e.Args, " "), e.Err)
-	if trimmed := strings.TrimSpace(e.Stderr); trimmed != "" {
-		msg += ": " + trimmed
-	}
-	return msg
-}
-
-func (e *Error) Unwrap() error { return e.Err }
 
 // --- VM state ----------------------------------------------------------------
 
