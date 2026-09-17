@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	ptrbox "github.com/PtrMzk/ptrbox"
 )
@@ -233,6 +234,17 @@ func TestASilentProxyFailsTheScript(t *testing.T) {
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close() // nothing is listening there now
+	// ... once the port agrees. Under WSL mirrored networking a port goes on
+	// accepting for a few milliseconds after its listener closed (the host-side
+	// relay lags), and the script would see squid "listening" there.
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		conn, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+		if err != nil {
+			break
+		}
+		conn.Close()
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	out, passed := runVerifyScript(t, port, sampleAllowlist)
 	if passed {
