@@ -64,14 +64,15 @@ func waitForPort(port int, deadline time.Duration) bool {
 	}
 }
 
-// openEditor is the default Env.Editor: $VISUAL, else $EDITOR, else vi.
+// openEditor is the default Env.Editor: $VISUAL, else $EDITOR, else the
+// platform's fallback (vi, notepad).
 func openEditor(path string) error {
 	editor := os.Getenv("VISUAL")
 	if editor == "" {
 		editor = os.Getenv("EDITOR")
 	}
 	if editor == "" {
-		editor = "vi"
+		editor = hostOS.FallbackEditor
 	}
 	cmd := exec.Command(editor, path)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr

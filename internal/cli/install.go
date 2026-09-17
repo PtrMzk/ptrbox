@@ -68,7 +68,16 @@ func cmdInstall(env *Env, args []string) error {
 	}
 
 	// --- directories and the ssh include ------------------------------------
-	steps.Next("preparing directories and ssh")
+	// The ssh half exists to serve a backend that writes an ssh config per VM:
+	// the Include is what makes the links `ptrbox new` drops into config.d
+	// resolve. Without such a backend there is nothing for it to include, and
+	// ~/.ssh/config is not a file to edit for nothing.
+	wantsSSH := env.Backend.Facts().HasSSHConfigLink
+	if wantsSSH {
+		steps.Next("preparing directories and ssh")
+	} else {
+		steps.Next("preparing directories")
+	}
 	for _, dir := range []string{env.Cfg.RepoRoot, config.GeneratedDir()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -85,11 +94,13 @@ func cmdInstall(env *Env, args []string) error {
 	if err := reportAllowlist(env, update); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(config.Host.Home(), ".ssh", "config.d"), 0o700); err != nil {
-		return err
-	}
-	if err := installSSHInclude(env); err != nil {
-		return err
+	if wantsSSH {
+		if err := os.MkdirAll(filepath.Join(config.Host.Home(), ".ssh", "config.d"), 0o700); err != nil {
+			return err
+		}
+		if err := installSSHInclude(env); err != nil {
+			return err
+		}
 	}
 
 	// --- the egress proxy VM ------------------------------------------------
@@ -174,6 +185,11 @@ func installSymlink(env *Env) error {
 		env.Out.Warn("cannot tell where this binary is; skipping the PATH link")
 		return nil
 	}
+	// Where a link cannot be made, the binary stays where it is and the only
+	// question left is whether that directory is searched.
+	if !hostOS.Symlinks {
+		return advisePath(env, filepath.Dir(env.Exe))
+	}
 	target := filepath.Join(env.Cfg.BinDir, "ptrbox")
 
 	// Already installed here - by `go install`, say. Linking a file to itself
@@ -230,7 +246,7 @@ func installPathEntry(env *Env) error {
 	if onPath(env.Cfg.BinDir) {
 		return nil
 	}
-	rcFile, line := pathAdvice(env.Cfg.BinDir)
+	rcFile, line := hostOS.PathAdvice(env.Cfg.BinDir)
 
 	// A shell ptrbox does not know how to edit, or one with its own way of
 	// doing this. Say the line and stop.
@@ -250,7 +266,7 @@ func installPathEntry(env *Env) error {
 	// missing step is one nobody can take on the user's behalf.
 	if hasLine(body, line) {
 		env.Out.Warn("%s is in %s but not in this shell - start a new terminal, or:", env.Cfg.BinDir, rcFile)
-		env.Out.Detail("%s", reloadCommand())
+		env.Out.Detail("%s", hostOS.ReloadAdvice())
 		return nil
 	}
 
@@ -284,43 +300,24 @@ func installPathEntry(env *Env) error {
 
 	// A child process cannot change its parent shell's environment, so this
 	// last step is genuinely the user's however much of the rest is not.
-	env.Out.Detail("%s", reloadCommand())
+	env.Out.Detail("%s", hostOS.ReloadAdvice())
 	return nil
 }
 
-// pathAdvice is how the user's shell puts a directory on PATH: the startup
-// file to append to - empty when ptrbox should not guess - and the line that
-// does it.
-func pathAdvice(dir string) (rcFile, line string) {
-	export := fmt.Sprintf(`export PATH="%s:$PATH"`, dir)
-	home := config.Host.Home()
-
-	switch shellName() {
-	case "zsh":
-		return filepath.Join(home, ".zshrc"), export
-	case "bash":
-		// Terminal.app and iTerm start login shells, which read
-		// .bash_profile and never .bashrc.
-		return filepath.Join(home, ".bash_profile"), export
-	case "fish":
-		// fish has a command for this, and would not even parse an export
-		// line. Nothing here to append to.
-		return "", fmt.Sprintf("fish_add_path %s", dir)
+// advisePath is installPathEntry for a platform with no startup file to offer
+// to edit: it says whether dir is searched, and what to type if it is not.
+// Nothing is written - the line changes a per-user setting, and running it is
+// the user's keystroke.
+func advisePath(env *Env, dir string) error {
+	if onPath(dir) {
+		env.Out.Say("ptrbox is on your PATH (%s)", dir)
+		return nil
 	}
-	return "", export
-}
-
-// shellName is the user's shell, by the name of its binary.
-func shellName() string { return filepath.Base(os.Getenv("SHELL")) }
-
-// reloadCommand re-execs the user's shell so it re-reads what was just
-// written.
-func reloadCommand() string {
-	switch name := shellName(); name {
-	case "zsh", "bash":
-		return "exec " + name
-	}
-	return "open a new terminal"
+	_, line := hostOS.PathAdvice(dir)
+	env.Out.Warn("%s is not on your PATH, so ptrbox only runs by its full path. Add it with:", dir)
+	env.Out.Detail("%s", line)
+	env.Out.Detail("then: %s", hostOS.ReloadAdvice())
+	return nil
 }
 
 // hasLine reports whether body already contains want as a line of its own,
@@ -337,7 +334,7 @@ func hasLine(body []byte, want string) bool {
 
 func onPath(dir string) bool {
 	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
-		if entry == dir {
+		if hostOS.SamePath(entry, dir) {
 			return true
 		}
 	}
@@ -433,7 +430,7 @@ func verifyEgress(env *Env) error {
 // inside the proxy VM now and is only ever invoked through the backend.)
 func deps(env *Env) []backend.Dep {
 	all := append([]backend.Dep{}, env.Backend.Facts().Deps...)
-	return append(all, backend.Dep{Tool: "git", Package: "git"})
+	return append(all, backend.Dep{Tool: "git", Package: hostOS.GitPackage})
 }
 
 // ptrbox never installs packages on your behalf. Running a package manager as
@@ -451,7 +448,9 @@ func preflightDeps(env *Env) error {
 		return nil
 	}
 	env.Out.Say("missing dependencies: %s. Install them with:", strings.Join(tools, " "))
-	env.Out.Detail("brew install %s", strings.Join(formulae, " "))
+	for _, line := range hostOS.InstallAdvice(formulae) {
+		env.Out.Detail("%s", line)
+	}
 	return ErrReported
 }
 
