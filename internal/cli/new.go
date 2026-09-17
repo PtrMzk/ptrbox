@@ -628,7 +628,7 @@ func linkSSHConfig(name string) error {
 	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
 		return err
 	}
-	target := filepath.Join(os.Getenv("HOME"), ".lima", name, "ssh.config")
+	target := filepath.Join(config.Host.Home(), ".lima", name, "ssh.config")
 	// ln -sf: re-creating a VM must replace the old link, not fail on it.
 	if err := os.Remove(link); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err

@@ -6,17 +6,14 @@ import (
 	"path/filepath"
 )
 
-// Path is where the config file lives: $PTRBOX_CONFIG, else
-// $XDG_CONFIG_HOME/ptrbox/config, else ~/.config/ptrbox/config.
+// Path is where the config file lives: $PTRBOX_CONFIG, else ptrbox/config
+// under the platform's config directory - $XDG_CONFIG_HOME or ~/.config on
+// macOS and Linux, %APPDATA% on Windows.
 func Path() string {
 	if p := os.Getenv("PTRBOX_CONFIG"); p != "" {
 		return p
 	}
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		base = filepath.Join(os.Getenv("HOME"), ".config")
-	}
-	return filepath.Join(base, "ptrbox", "config")
+	return filepath.Join(Host.ConfigBase(), "ptrbox", "config")
 }
 
 // Dir is the directory holding the config file, and with it everything else
@@ -55,11 +52,9 @@ func VMDir() string { return filepath.Join(Dir(), "vms") }
 // Config.Overlay, which checks it.
 func VMConfigPath(name string) string { return filepath.Join(VMDir(), name) }
 
-// GeneratedDir is where rendered Lima configs are written. Lima's own
-// directory rather than ptrbox's: `limactl start` is handed a path in it, and
-// keeping the artifact next to the VM it describes is what makes a generated
-// config findable when a VM misbehaves.
-func GeneratedDir() string { return filepath.Join(os.Getenv("HOME"), ".lima", "_generated") }
+// GeneratedDir is where rendered VM configs are written: lima's own directory
+// on macOS and Linux, ptrbox's under %LOCALAPPDATA% on Windows. See Platform.
+func GeneratedDir() string { return Host.GeneratedDir() }
 
 // GeneratedConfig is the rendered Lima config for one VM.
 func GeneratedConfig(name string) string {
@@ -69,7 +64,7 @@ func GeneratedConfig(name string) string {
 // SSHConfigLink is the symlink into ~/.ssh/config.d that makes `ssh lima-<vm>`
 // work.
 func SSHConfigLink(name string) string {
-	return filepath.Join(os.Getenv("HOME"), ".ssh", "config.d", "lima-"+name)
+	return filepath.Join(Host.Home(), ".ssh", "config.d", "lima-"+name)
 }
 
 // RecordManifest appends a line to the install manifest: what ptrbox wrote
@@ -92,14 +87,9 @@ func RecordManifest(line string) error {
 }
 
 // StateDir is where ptrbox keeps things it produced rather than things you
-// configured: $XDG_STATE_HOME/ptrbox, else ~/.local/state/ptrbox.
-func StateDir() string {
-	base := os.Getenv("XDG_STATE_HOME")
-	if base == "" {
-		base = filepath.Join(os.Getenv("HOME"), ".local", "state")
-	}
-	return filepath.Join(base, "ptrbox")
-}
+// configured: $XDG_STATE_HOME/ptrbox, else ~/.local/state/ptrbox; on Windows,
+// %LOCALAPPDATA%\ptrbox\state.
+func StateDir() string { return Host.StateDir() }
 
 // TranscriptDir holds Claude transcripts pulled out of VMs before they are
 // destroyed. Mode 0700 throughout: a transcript records everything the agent

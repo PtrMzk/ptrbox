@@ -173,7 +173,7 @@ func parseValue(s string, lookup func(string) string) (value, trailing string, e
 		}
 		word := s[:end]
 		if strings.HasPrefix(word, "~/") {
-			word = os.Getenv("HOME") + word[1:]
+			word = Host.Home() + word[1:]
 		}
 		value, err := expand(word, lookup)
 		return value, s[end:], err

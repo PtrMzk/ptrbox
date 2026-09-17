@@ -85,7 +85,7 @@ func cmdInstall(env *Env, args []string) error {
 	if err := reportAllowlist(env, update); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".ssh", "config.d"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(config.Host.Home(), ".ssh", "config.d"), 0o700); err != nil {
 		return err
 	}
 	if err := installSSHInclude(env); err != nil {
@@ -134,7 +134,7 @@ func cmdInstall(env *Env, args []string) error {
 // --- ssh ---------------------------------------------------------------------
 
 func installSSHInclude(env *Env) error {
-	path := filepath.Join(os.Getenv("HOME"), ".ssh", "config")
+	path := filepath.Join(config.Host.Home(), ".ssh", "config")
 
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -293,7 +293,7 @@ func installPathEntry(env *Env) error {
 // does it.
 func pathAdvice(dir string) (rcFile, line string) {
 	export := fmt.Sprintf(`export PATH="%s:$PATH"`, dir)
-	home := os.Getenv("HOME")
+	home := config.Host.Home()
 
 	switch shellName() {
 	case "zsh":

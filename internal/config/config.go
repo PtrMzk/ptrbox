@@ -231,9 +231,8 @@ type Config struct {
 }
 
 func defaults() map[string]string {
-	home := os.Getenv("HOME")
 	return map[string]string{
-		"REPO_ROOT": filepath.Join(home, "code"),
+		"REPO_ROOT": filepath.Join(Host.Home(), "code"),
 		"CPUS":      "4",
 		"MEMORY":    "8GiB",
 		"DISK":      "50GiB",
@@ -246,7 +245,7 @@ func defaults() map[string]string {
 		"KEYCHAIN_SERVICE": "claude-sandbox-token",
 		"DISTRO":           "debian13",
 		// Where `ptrbox install` offers to symlink the CLI.
-		"BIN_DIR": filepath.Join(home, "bin"),
+		"BIN_DIR": filepath.Join(Host.Home(), "bin"),
 		// LM Studio's default server port. Host-wide: one LM Studio per Mac,
 		// and it is rendered into a guest's nftables ruleset, which is the
 		// DNS_SERVERS argument - part of the wall, not a per-VM preference.

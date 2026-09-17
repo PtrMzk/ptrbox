@@ -5,6 +5,9 @@
 #   make lint    go vet + shell syntax/shellcheck, runs anywhere
 #   make test    unit + simulation tests against a fake lima, runs anywhere
 #                (no Mac, no VM, no network)
+#   make cross   compile for Windows and macOS from wherever this is, and vet
+#                the Windows build - the platform files are otherwise first
+#                compiled on the machine they are for
 #   make smoke   the real VM cycle - macOS + lima only, destroys and recreates
 #                a scratch VM, takes minutes
 #
@@ -20,7 +23,7 @@ BIN := dist/ptrbox
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build install lint govet shlint test gotest check golden smoke clean
+.PHONY: help build install lint govet shlint cross test gotest check golden smoke clean
 
 build: ## Compile the CLI to dist/ptrbox
 	@$(GO) build -o $(BIN) ./cmd/ptrbox
@@ -44,7 +47,16 @@ test: gotest ## Run unit + simulation tests
 gotest:
 	@$(GO) test ./...
 
-check: lint test ## Everything that runs without a Mac
+# vet as well as build for Windows: vet compiles the tests too, and a test file
+# that does not build there is one nobody can run on the PC. A plain build is
+# enough for macOS, whose files are the unix ones the native run already vets
+# (and on a Mac this line is the native build, which costs nothing).
+cross: ## Build for Windows and macOS, vet the Windows build
+	@GOOS=windows $(GO) build ./...
+	@GOOS=windows $(GO) vet ./...
+	@GOOS=darwin $(GO) build ./...
+
+check: lint cross test ## Everything that runs without a Mac
 
 golden: ## Regenerate the golden rendered VM configs - then READ THE DIFF
 	@$(GO) test ./internal/render -run TestGolden -update
