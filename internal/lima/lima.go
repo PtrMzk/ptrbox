@@ -108,13 +108,10 @@ func (c *Client) Stream(w io.Writer, args ...string) error {
 // --- VM state ----------------------------------------------------------------
 
 // StatusRunning is the only status ptrbox tests for by name.
-const StatusRunning = "Running"
+const StatusRunning = backend.StatusRunning
 
 // VM is one entry of `limactl list`.
-type VM struct {
-	Name   string
-	Status string
-}
+type VM = backend.VM
 
 // List returns every VM limactl knows about. A listing that fails returns no
 // VMs and no error: callers use this to decide whether to leave the proxy
