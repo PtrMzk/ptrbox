@@ -162,4 +162,13 @@ type Backend interface {
 	Stream(vm string, user User, w io.Writer, argv ...string) error
 	// Passthrough sends the output to the user, narrated.
 	Passthrough(vm string, user User, argv ...string) error
+
+	// Shell opens an interactive shell in the VM as the agent, in /workspace,
+	// on the streams it is given. Those are the user's terminal and go to the
+	// child untouched: an interactive session is not a log to translate, and
+	// a narrator between a person and their prompt would hold every byte
+	// until the next newline. The error is the shell's own exit, which is the
+	// exit status of whatever ran last in it - the caller's to pass on, not
+	// to report.
+	Shell(vm string, stdin io.Reader, stdout, stderr io.Writer) error
 }

@@ -90,8 +90,8 @@ claude setup-token            # prints a 1-year token; then store it:
 security add-generic-password -a "$USER" -s claude-sandbox-token -w
 
 ptrbox new ~/my-code/my-git-repo   # creates the repo if needed, builds its VM
-ssh lima-my-git-repo
-cd /workspace && claude
+ptrbox shell my-git-repo      # lands in /workspace (ssh lima-my-git-repo works too)
+claude
 ```
 
 `ptrbox install` is idempotent — safe to re-run after every upgrade, and it
@@ -121,6 +121,7 @@ disk. The repo, the VM's config and its allowlist are untouched.
 | `ptrbox rm <repo\|vm>` | Destroy a VM and its artifacts. Leaves the repo alone. |
 | `ptrbox start <repo\|vm>` | Start a stopped VM, bringing the proxy VM up first. |
 | `ptrbox stop <repo\|vm>` | Stop a VM; the proxy VM stops with the last sandbox. |
+| `ptrbox shell <repo\|vm>` | Open a shell in the sandbox, in `/workspace`. Starts it, proxy first, if it is stopped. |
 | `ptrbox logs [--denied]` | Read the proxy log. `--denied` shows what was blocked. |
 | `ptrbox allow <vm> [domain…]` | Add domains to that sandbox's allowlist, or open it in `$EDITOR`; `--list` prints it. Applies live. |
 | `ptrbox sync-proxy` | Push hand-edited allowlists to the proxy now. |

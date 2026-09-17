@@ -2,6 +2,7 @@ package lima_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -180,5 +181,35 @@ func TestAdviceIsSomethingYouCanType(t *testing.T) {
 	}
 	if got, want := facts.DeleteAdvice("ptrbox-proxy"), "limactl delete ptrbox-proxy"; got != want {
 		t.Errorf("DeleteAdvice = %q, want %q", got, want)
+	}
+}
+
+func TestShellGoesPastTheNarratorOnTheCallersStreams(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fake := limafake.New()
+	fake.AddVM("demo", lima.StatusRunning)
+	n := &narrator{Writer: io.Discard}
+	b := lima.Backend{Client: &lima.Client{Runner: fake, Stdout: n, Stderr: n}}
+
+	var out bytes.Buffer
+	if err := b.Shell("demo", strings.NewReader("ls\n"), &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	// --workdir, or limactl tries the host's current directory in the guest.
+	if got, want := fake.CallLog(), "shell --workdir /workspace demo"; got != want {
+		t.Errorf("calls = %q, want %q", got, want)
+	}
+	if len(n.began) != 0 {
+		t.Error("an interactive session was narrated: a prompt has no newline to be released by")
+	}
+	if !strings.Contains(out.String(), "/workspace") || len(fake.Sessions) != 1 || fake.Sessions[0].Typed != "ls\n" {
+		t.Errorf("out = %q, sessions = %+v", out.String(), fake.Sessions)
+	}
+
+	fake.ShellExit = 7
+	err := b.Shell("demo", nil, io.Discard, io.Discard)
+	var exited interface{ ExitCode() int }
+	if !errors.As(err, &exited) || exited.ExitCode() != 7 {
+		t.Errorf("err = %v, want the session's exit status", err)
 	}
 }

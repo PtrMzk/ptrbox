@@ -72,3 +72,16 @@ func (b Backend) Stream(vm string, _ backend.User, w io.Writer, argv ...string) 
 func (b Backend) Passthrough(vm string, _ backend.User, argv ...string) error {
 	return b.Client.Passthrough(ShellArgs(vm, argv...)...)
 }
+
+// Shell is `limactl shell` with nothing in between: straight to the Runner,
+// past the Client's narrated Stdout, on the caller's streams. --workdir
+// because limactl otherwise tries the host's current directory inside the
+// guest, which exists there only when ptrbox happens to be run from the repo.
+func (b Backend) Shell(vm string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return b.Client.Runner.Run(Cmd{
+		Args:   []string{"shell", "--workdir", "/workspace", vm},
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+}

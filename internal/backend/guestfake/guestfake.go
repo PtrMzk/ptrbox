@@ -41,6 +41,11 @@ type Guest struct {
 	VerifyFails      bool // `bash -lc <verify.sh>` reports a failed sandbox
 	ProxyVerifyFails bool // `bash -lc <verify-proxy.sh>` reports dead egress
 	SquidParseFails  bool // in-VM `squid -k parse` rejects the config
+
+	// Sessions are the interactive shells opened, in order. ShellExit is the
+	// status they end with: whatever ran last in a real one.
+	Sessions  []Session
+	ShellExit int
 }
 
 // Exec runs argv inside vm. It handles the shapes ptrbox uses:
@@ -226,4 +231,42 @@ func (g *Guest) WriteFile(vm, path, content string) {
 func (g *Guest) ReadFile(vm, path string) (string, bool) {
 	body, ok := g.Files[vm][path]
 	return body, ok
+}
+
+// Session is one interactive shell somebody opened in a VM.
+type Session struct {
+	VM      string
+	Workdir string
+	// Typed is what arrived on the session's stdin before it closed.
+	Typed string
+}
+
+// ExitError is a shell that ended with a non-zero status. It answers
+// ExitCode() the way *exec.ExitError does, which is all a caller may ask of
+// either.
+type ExitError int
+
+func (e ExitError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+func (e ExitError) ExitCode() int { return int(e) }
+
+// Interactive simulates a person's shell session: it records where the shell
+// was opened and what was typed into it, writes a prompt so that a test can
+// see the session's stdout is the caller's, and ends with ShellExit.
+func (g *Guest) Interactive(vm, workdir string, stdin io.Reader, stdout io.Writer) error {
+	session := Session{VM: vm, Workdir: workdir}
+	if stdin != nil {
+		typed, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		session.Typed = string(typed)
+	}
+	g.Sessions = append(g.Sessions, session)
+	if stdout != nil {
+		fmt.Fprintf(stdout, "[%s] %s $ \n", vm, workdir)
+	}
+	if g.ShellExit != 0 {
+		return ExitError(g.ShellExit)
+	}
+	return nil
 }

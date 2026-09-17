@@ -82,7 +82,7 @@ func (e *Env) now() time.Time {
 // needsConfig lists the commands that cannot run without a resolved config.
 var needsConfig = map[string]bool{
 	"install": true, "new": true, "rm": true, "save": true,
-	"start": true, "stop": true, "logs": true, "allow": true,
+	"start": true, "stop": true, "shell": true, "logs": true, "allow": true,
 	"sync-proxy": true,
 }
 
@@ -121,6 +121,8 @@ func Run(env *Env, args []string) error {
 		return cmdStart(env, args)
 	case "stop":
 		return cmdStop(env, args)
+	case "shell":
+		return cmdShell(env, args)
 	case "logs":
 		return cmdLogs(env, args)
 	case "allow":
@@ -157,6 +159,8 @@ COMMANDS
   rm <repo|vm>       destroy a VM. Never touches the repo on the host.
   start <repo|vm>    boot an already-provisioned VM (seconds, not minutes)
   stop <repo|vm>     power a VM off, keeping its disk and state
+  shell <repo|vm>    open a shell in the sandbox, in /workspace; starts it (and
+                     the proxy) first if it is stopped
   logs [--denied]    tail the proxy log; --denied shows blocked requests only
   allow <vm> [domain...]
                      add domains to that sandbox's egress allowlist, or open
@@ -180,7 +184,7 @@ them over limactl start/stop, which know nothing about the proxy.
 EXAMPLES
   ptrbox new my-api               # -> ~/code/my-api, git init, VM "my-api"
   ptrbox new ~/src/existing       # explicit path, existing repo used as-is
-  ssh lima-my-api                 # then: cd /workspace && claude
+  ptrbox shell my-api             # then: claude
   ptrbox logs --denied            # find the domain your build needs
   ptrbox allow my-api files.example.com   # ...then grant it to that sandbox
 

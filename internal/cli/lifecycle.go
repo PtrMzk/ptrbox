@@ -122,8 +122,20 @@ func cmdStart(env *Env, args []string) error {
 		return err
 	}
 
+	if err := startSandbox(env, name, args[0]); err != nil {
+		return err
+	}
+	env.Out.Say("enter it: %s", env.Backend.Facts().ShellAdvice(name))
+	return nil
+}
+
+// startSandbox is everything `start` does to bring a sandbox up, without the
+// closing advice: the proxy first, the hooks redirect re-asserted, then the
+// VM. `shell` runs it too, for a sandbox it finds stopped. asked is what the
+// user typed, for the message that tells them how to create it.
+func startSandbox(env *Env, name, asked string) error {
 	if !env.Backend.Exists(name) {
-		return fmt.Errorf("no VM named %q - create it with: ptrbox new %s", name, args[0])
+		return fmt.Errorf("no VM named %q - create it with: ptrbox new %s", name, asked)
 	}
 
 	// Proxy first. This also pushes any allowlist edits made while it was down.
@@ -157,7 +169,6 @@ func cmdStart(env *Env, args []string) error {
 	} else if err := env.Backend.Start(name); err != nil {
 		return err
 	}
-	env.Out.Say("enter it: %s", env.Backend.Facts().ShellAdvice(name))
 	return nil
 }
 

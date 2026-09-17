@@ -47,6 +47,7 @@ func main() {
 	}
 
 	err := cli.Run(env, args)
+	var status cli.ExitStatus
 	switch {
 	case err == nil:
 		return
@@ -56,6 +57,9 @@ func main() {
 		os.Exit(2)
 	case errors.Is(err, cli.ErrReported):
 		os.Exit(1)
+	case errors.As(err, &status):
+		// An interactive shell's own exit: passed on, and nothing said.
+		os.Exit(int(status))
 	default:
 		// Whatever the mode, a failed limactl invocation gets its raw bytes
 		// reprinted: the translation is a convenience, and a failure is when

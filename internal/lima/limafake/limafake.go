@@ -76,6 +76,10 @@ func (f *Fake) Run(c lima.Cmd) error {
 	case "delete":
 		return f.delete(c)
 	case "shell":
+		// `shell --workdir <dir> <vm>`, no command: a person's session.
+		if arg(c.Args, 1) == "--workdir" {
+			return f.Interactive(arg(c.Args, 3), arg(c.Args, 2), c.Stdin, c.Stdout)
+		}
 		// `shell <vm> -- <argv...>`: the spelling is limactl's, the rest is
 		// the guest's.
 		return f.Exec(arg(c.Args, 1), c.Args[min(3, len(c.Args)):], c.Stdin, c.Stdout, c.Stderr)
