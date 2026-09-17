@@ -30,6 +30,10 @@ func setup(t *testing.T) (home, configPath string) {
 	// machine running the tests has configured.
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// The production machine's architecture, whatever this one's is: the
+	// image URLs follow config.Arch, and an expectation that moved with the
+	// machine running the suite would be no expectation.
+	pinArch(t, "arm64")
 	return home, configPath
 }
 
@@ -448,5 +452,55 @@ func TestTheLMStudioRuleFollowsTheOpencodeFlag(t *testing.T) {
 	t.Setenv("PTRBOX_OPENCODE", "true")
 	if got := mustLoad(t).LMStudioNftRule("192.168.5.2"); got != "ip daddr 192.168.5.2 tcp dport 4321 accept" {
 		t.Errorf("rule with opencode = %q", got)
+	}
+}
+
+// pinArch sets the architecture guests are built for, for one test.
+func pinArch(t *testing.T, arch string) {
+	t.Helper()
+	real := Arch
+	Arch = arch
+	t.Cleanup(func() { Arch = real })
+}
+
+func TestTheImageFollowsTheMachinesArchitecture(t *testing.T) {
+	for _, tc := range []struct{ arch, distro, want string }{
+		{"arm64", "debian13", "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"},
+		{"amd64", "debian13", "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"},
+		{"arm64", "ubuntu2404", "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"},
+		{"amd64", "ubuntu2404", "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"},
+	} {
+		setup(t)
+		pinArch(t, tc.arch)
+		t.Setenv("PTRBOX_DISTRO", tc.distro)
+		if got := mustLoad(t).ImageURL; got != tc.want {
+			t.Errorf("%s on %s: ImageURL = %q, want %q", tc.distro, tc.arch, got, tc.want)
+		}
+	}
+}
+
+func TestAnArchitectureWithNoImageSaysSoAndNamesTheWayOut(t *testing.T) {
+	setup(t)
+	pinArch(t, "riscv64")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "riscv64") || !strings.Contains(err.Error(), "PTRBOX_IMAGE_URL") {
+		t.Fatalf("err = %v, want the architecture and the key that gets around it", err)
+	}
+
+	// An explicit image is the user's statement about their own machine; it
+	// is not second-guessed.
+	t.Setenv("PTRBOX_IMAGE_URL", "https://example.com/custom-riscv64.qcow2")
+	if cfg := mustLoad(t); cfg.ImageURL != "https://example.com/custom-riscv64.qcow2" {
+		t.Errorf("ImageURL = %q", cfg.ImageURL)
+	}
+}
+
+func TestEveryImageTemplateTakesExactlyOneArchitecture(t *testing.T) {
+	// The URLs are format strings now. One with no verb would ship the same
+	// image to both architectures and print %!(EXTRA ...) into a Lima config.
+	for _, im := range images {
+		if strings.Count(im.url, "%s") != 1 || strings.Count(im.url, "%") != 1 {
+			t.Errorf("%s: %q must contain exactly one %%s and no other verb", im.distro, im.url)
+		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -143,10 +144,24 @@ func Features() []string {
 //
 // Always-current URLs (no pinned build), so fresh VMs pick up security
 // updates.
+//
+// %s is the architecture, in Debian's spelling - which is also Go's, for the
+// two that exist here. Both publishers name their images that way, so an
+// architecture is a word in the URL rather than a second table.
 var images = []struct{ distro, url string }{
-	{"debian13", "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2"},
-	{"ubuntu2404", "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"},
+	{"debian13", "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-%s.qcow2"},
+	{"ubuntu2404", "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-%s.img"},
 }
+
+// Arch is the architecture guests are built for, which is the host's: every
+// backend here virtualises, none emulates. It is the machine's and not a
+// setting - an Apple Silicon Mac gets arm64 images as it always has, a PC
+// gets amd64 - and a variable only so that the suite renders the same URLs on
+// whatever machine runs it.
+var Arch = runtime.GOARCH
+
+// Archs are the architectures both image publishers ship.
+var Archs = []string{"amd64", "arm64"}
 
 // Distros lists the supported PTRBOX_DISTRO values, in declaration order.
 func Distros() []string {
@@ -157,13 +172,24 @@ func Distros() []string {
 	return names
 }
 
+// imageFor is the image for a distro on this machine's architecture, or ""
+// for a distro there is no image for.
 func imageFor(distro string) string {
 	for _, im := range images {
 		if im.distro == distro {
-			return im.url
+			return fmt.Sprintf(im.url, Arch)
 		}
 	}
 	return ""
+}
+
+func knownArch() bool {
+	for _, arch := range Archs {
+		if arch == Arch {
+			return true
+		}
+	}
+	return false
 }
 
 // Config is the resolved configuration for one ptrbox run.
@@ -351,6 +377,13 @@ func load(vm string) (*Config, error) {
 	// image, and nothing anywhere says so. Same layer means the URL was the
 	// more specific statement of the two, so it stands.
 	if values["IMAGE_URL"] == "" || origin["DISTRO"] > origin["IMAGE_URL"] {
+		// Only a derived URL needs an architecture ptrbox has images for. With
+		// an explicit one the image is the user's statement, and what it was
+		// built for is theirs too.
+		if !knownArch() {
+			return nil, fmt.Errorf("no guest image for architecture %q (have: %s) - set PTRBOX_IMAGE_URL to one built for this machine",
+				Arch, strings.Join(Archs, " "))
+		}
 		values["IMAGE_URL"] = imageFor(values["DISTRO"])
 		if values["IMAGE_URL"] == "" {
 			return nil, fmt.Errorf("unknown PTRBOX_DISTRO %q (supported: %s)",

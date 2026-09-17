@@ -93,6 +93,12 @@ func newHarness(t *testing.T) *harness {
 	home := filepath.Join(tmp, "home")
 	mkdir(t, home)
 
+	// The production machine's architecture, whatever this one's is: the image
+	// URL a test reads must not depend on where the suite runs.
+	realArch := config.Arch
+	config.Arch = "arm64"
+	t.Cleanup(func() { config.Arch = realArch })
+
 	// A stray PTRBOX_* in the developer's environment outranks the config
 	// file, so clear the lot.
 	for _, key := range config.Keys {
