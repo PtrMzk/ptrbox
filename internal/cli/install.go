@@ -519,13 +519,14 @@ func preflightProxyPort(env *Env) error {
 // said before the provisioning, not after it.
 func preflightKeychain(env *Env) {
 	if !env.Keychain.Available() {
-		env.Out.Warn("no macOS Keychain (`security`) - VMs will need CLAUDE_CODE_OAUTH_TOKEN set by hand")
+		env.Out.Warn("no %s - VMs will need CLAUDE_CODE_OAUTH_TOKEN set by hand", env.Keychain.Name())
 		return
 	}
 	if env.Keychain.Token(env.Cfg.KeychainService) == "" {
-		env.Out.Warn("no Keychain entry %q - new VMs will be unauthenticated. Create one with:",
-			env.Cfg.KeychainService)
-		env.Out.Detail("claude setup-token")
-		env.Out.Detail("security add-generic-password -a \"$USER\" -s %s -w", env.Cfg.KeychainService)
+		env.Out.Warn("no %s entry %q - new VMs will be unauthenticated. Create one with:",
+			env.Keychain.Name(), env.Cfg.KeychainService)
+		for _, line := range env.Keychain.SetupAdvice(env.Cfg.KeychainService) {
+			env.Out.Detail("%s", line)
+		}
 	}
 }

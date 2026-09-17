@@ -539,7 +539,7 @@ func TestAMissingKeychainEntryIsReportedBeforeProvisioning(t *testing.T) {
 	if err := h.run("install"); err == nil {
 		t.Fatal("install succeeded with a proxy VM that would not start")
 	}
-	h.assertOutputContains("no Keychain entry")
+	h.assertOutputContains("no macOS Keychain entry")
 	h.assertOutputContains("claude setup-token")
 }
 

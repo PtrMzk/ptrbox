@@ -36,7 +36,7 @@ func main() {
 		Out:         out,
 		Stdout:      os.Stdout,
 		Stdin:       os.Stdin,
-		Keychain:    cli.SecurityKeychain{},
+		Keychain:    cli.HostKeychain(),
 		Exe:         executable(),
 		Interactive: interactive(),
 		Editor:      cli.DefaultEditor,

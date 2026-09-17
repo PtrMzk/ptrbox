@@ -31,13 +31,28 @@ import (
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
 
+// fakeKeychain holds the token a test gave it. What it is called and how to
+// set it up are borrowed from a real store - the Mac's unless a test says
+// otherwise - so the wording under test is the wording that ships.
 type fakeKeychain struct {
 	available bool
 	token     string
+	like      Keychain
 }
 
 func (k *fakeKeychain) Available() bool     { return k.available }
 func (k *fakeKeychain) Token(string) string { return k.token }
+func (k *fakeKeychain) Name() string        { return k.store().Name() }
+func (k *fakeKeychain) SetupAdvice(service string) []string {
+	return k.store().SetupAdvice(service)
+}
+
+func (k *fakeKeychain) store() Keychain {
+	if k.like != nil {
+		return k.like
+	}
+	return SecurityKeychain{}
+}
 
 type harness struct {
 	t        *testing.T

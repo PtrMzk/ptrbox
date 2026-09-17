@@ -505,7 +505,7 @@ func TestAMissingKeychainEntryWarnsButStillLeavesAUsableVM(t *testing.T) {
 	h := newHarness(t)
 	h.keychain.token = ""
 	h.mustRun("new", "demo")
-	h.assertOutputContains("no Keychain entry")
+	h.assertOutputContains("no macOS Keychain entry")
 }
 
 func TestNoKeychainAtAllWarnsRatherThanFailing(t *testing.T) {

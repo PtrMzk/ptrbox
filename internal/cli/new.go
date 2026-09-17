@@ -636,27 +636,29 @@ func linkSSHConfig(name string) error {
 	return os.Symlink(target, link)
 }
 
-// injectToken moves the Claude token from the Keychain (encrypted at rest) to
-// the guest's ~/.profile over stdin. Never as a CLI argument (ps and shell
-// history see those) and never substituted into the generated YAML (that
-// persists on disk).
+// injectToken moves the Claude token from the host's secret store (encrypted
+// at rest: the macOS Keychain, Windows Credential Manager) to the guest's
+// ~/.profile over stdin. Never as a CLI argument (ps and shell history see
+// those) and never substituted into the generated YAML (that persists on
+// disk).
 //
 // Deliberately called after verification: an unverified VM does not get
 // credentials.
 func injectToken(env *Env, name string) error {
 	if !env.Keychain.Available() {
-		env.Out.Warn("no macOS Keychain here - set CLAUDE_CODE_OAUTH_TOKEN in the VM yourself")
+		env.Out.Warn("no %s here - set CLAUDE_CODE_OAUTH_TOKEN in the VM yourself", env.Keychain.Name())
 		return nil
 	}
 	token := env.Keychain.Token(env.Cfg.KeychainService)
 	if token == "" {
-		env.Out.Warn("no Keychain entry %q; create one with:", env.Cfg.KeychainService)
-		env.Out.Detail("claude setup-token")
-		env.Out.Detail("security add-generic-password -a \"$USER\" -s %s -w", env.Cfg.KeychainService)
+		env.Out.Warn("no %s entry %q; create one with:", env.Keychain.Name(), env.Cfg.KeychainService)
+		for _, line := range env.Keychain.SetupAdvice(env.Cfg.KeychainService) {
+			env.Out.Detail("%s", line)
+		}
 		return nil
 	}
 	if strings.ContainsAny(token, "\"\\") {
-		return errors.New("the Keychain token contains a quote or backslash; refusing to write a broken ~/.profile")
+		return fmt.Errorf("the %s token contains a quote or backslash; refusing to write a broken ~/.profile", env.Keychain.Name())
 	}
 
 	// Built by concatenation rather than %q: the token has already been
@@ -668,6 +670,6 @@ func injectToken(env *Env, name string) error {
 	if err != nil {
 		return err
 	}
-	env.Out.Say("auth token injected from the Keychain")
+	env.Out.Say("auth token injected from the %s", env.Keychain.Name())
 	return nil
 }
