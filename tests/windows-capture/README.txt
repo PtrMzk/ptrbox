@@ -10,10 +10,18 @@ into it (so the PC needs neither Go nor a checkout):
 
     make -C ~/code/ptrbox windows-capture
 
-then in Explorer open  \\wsl$  , pick the distro, and copy
-home\ptrbox\code\ptrbox\tests\windows-capture  somewhere like
-C:\Users\<you>\ptrbox-capture. Copy it this way rather than through git: the
-line endings of these files matter, and Explorer leaves them alone.
+then, on Windows, in cmd.exe (NOT PowerShell, whose pipes mangle binary data):
+
+    cd /d %USERPROFILE%
+    wsl -d ptrbox tar -C /home/ptrbox/code/ptrbox/tests -cf - windows-capture | tar -xf -
+
+which leaves %USERPROFILE%\windows-capture. This is the way across because the
+development distro runs with interop and automount off, and \\wsl.localhost is
+not reachable on this PC either (tried 2026-09-17); wsl.exe reaching IN needs
+none of them. tar also leaves the line endings alone, which git with autocrlf
+would not, and they matter here. To check the copy, compare
+    certutil -hashfile windows-capture\credread-probe.exe SHA256
+with  sha256sum credread-probe.exe  in WSL.
 
 Needs: Hyper-V on, and Multipass installed
     winget install --exact --id Canonical.Multipass
@@ -35,9 +43,11 @@ Needs: Hyper-V on, and Multipass installed
     (reboot the PC)
     capture.cmd after-reboot
 
-3. Send back the whole out\ folder - copy it to
-   \\wsl$\<distro>\home\ptrbox\code\ptrbox\tests\windows-capture\out  (git
-   ignores it there). The only edit worth making first: replace your Windows
+3. Send back the whole out\ folder, from cmd.exe in this folder:
+
+    tar -cf - out | wsl -d ptrbox tar -C /home/ptrbox/code/ptrbox/tests/windows-capture -xf -
+
+   (git ignores it there). The only edit worth making first: replace your Windows
    user name in paths with "you", if you mind it being in the repo.
 
 What each part answers
