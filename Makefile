@@ -23,7 +23,7 @@ BIN := dist/ptrbox
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build install lint govet shlint cross test gotest check golden smoke clean
+.PHONY: help build install lint govet shlint cross test gotest check golden smoke clean windows-capture
 
 build: ## Compile the CLI to dist/ptrbox
 	@$(GO) build -o $(BIN) ./cmd/ptrbox
@@ -61,6 +61,13 @@ check: lint cross test ## Everything that runs without a Mac
 golden: ## Regenerate the golden rendered VM configs - then READ THE DIFF
 	@$(GO) test ./internal/render -run TestGolden -update
 	@git diff --stat -- tests/golden || true
+
+# The credential probe as a Windows test binary, so the PC needs neither Go nor
+# a checkout: the capture folder is copied out of \\wsl$ with the .exe in it.
+# GOARCH is the machine's - WSL runs on the PC it is building for.
+windows-capture: ## Build the step-0 credential probe into tests/windows-capture
+	@GOOS=windows $(GO) test -c -o tests/windows-capture/credread-probe.exe ./internal/cli
+	@echo "built tests/windows-capture/credread-probe.exe - now copy that folder to Windows"
 
 clean: ## Remove build output
 	@rm -rf dist

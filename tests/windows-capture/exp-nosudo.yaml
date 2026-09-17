@@ -1,0 +1,46 @@
+#cloud-config
+# Step 0 experiment VM. NOT a ptrbox sandbox: no firewall, no hardening.
+# Same as exp.yaml plus one per-boot script that removes the login user's sudo,
+# which is what 90-harden.sh does. The question: does /workspace still mount?
+users:
+  - default
+  - name: agent
+    sudo: false
+    lock_passwd: true
+    shell: /bin/bash
+write_files:
+  - path: /var/lib/ptrbox/backend
+    permissions: '0644'
+    content: |
+      backend=multipass
+  - path: /etc/netplan/60-ptrbox.yaml
+    permissions: '0600'
+    content: |
+      network:
+        version: 2
+        ethernets:
+          eth1:
+            addresses: [172.31.255.17/24]
+  - path: /var/lib/cloud/scripts/per-boot/10-boots.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      mkdir -p /var/lib/ptrbox
+      date >> /var/lib/ptrbox/boots
+  - path: /var/lib/cloud/scripts/per-boot/90-nosudo.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # Boot 1 is left alone, on purpose. Per-boot scripts run inside
+      # cloud-init, and `multipass launch` mounts only AFTER cloud-init is
+      # done - so removing sudo here on boot 1 would test "can Multipass SET
+      # UP a mount without sudo" (it installs its sshfs helper with sudo; the
+      # answer is certainly no) instead of the question that decides the
+      # design: does an established mount COME BACK on later boots.
+      mkdir -p /var/lib/ptrbox
+      if [ ! -e /var/lib/ptrbox/first-boot-over ]; then
+        touch /var/lib/ptrbox/first-boot-over
+        exit 0
+      fi
+      rm -f /etc/sudoers.d/90-cloud-init-users
+      date >> /var/lib/ptrbox/nosudo-ran

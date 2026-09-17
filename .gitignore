@@ -16,5 +16,10 @@ tests/tmp/
 # Compiled CLI
 /dist/
 
+# Step 0 on the PC: the probe is built (make windows-capture), and what the
+# capture produces is checked in as fixtures elsewhere, not from here
+/tests/windows-capture/credread-probe.exe
+/tests/windows-capture/out/
+
 # Half-rendered artifacts (render_file cleans up after itself; belt and braces)
 *.tmp.*

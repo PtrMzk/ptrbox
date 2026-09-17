@@ -1,0 +1,28 @@
+#cloud-config
+# Step 0 experiment VM. NOT a ptrbox sandbox: no firewall, no hardening.
+# It exists to answer questions about Multipass on Hyper-V, nothing else.
+users:
+  - default
+  - name: agent
+    sudo: false
+    lock_passwd: true
+    shell: /bin/bash
+write_files:
+  - path: /var/lib/ptrbox/backend
+    permissions: '0644'
+    content: |
+      backend=multipass
+  - path: /etc/netplan/60-ptrbox.yaml
+    permissions: '0600'
+    content: |
+      network:
+        version: 2
+        ethernets:
+          eth1:
+            addresses: [172.31.255.17/24]
+  - path: /var/lib/cloud/scripts/per-boot/10-boots.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      mkdir -p /var/lib/ptrbox
+      date >> /var/lib/ptrbox/boots
