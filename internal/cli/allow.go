@@ -103,7 +103,7 @@ func cmdAllow(env *Env, args []string) error {
 	// Only the CREATE is gated. A VM whose file already exists is edited
 	// without a question whether the VM is there or not, which is what keeps
 	// the re-create case quiet: the file outliving `ptrbox rm` is the feature.
-	if env.Lima.Available() && !env.Lima.Exists(name) && !hasVMAllowlist(name) {
+	if env.Backend.Available() && !env.Backend.Exists(name) && !hasVMAllowlist(name) {
 		env.Out.Warn("there is no VM named %q", name)
 		switch {
 		case force:

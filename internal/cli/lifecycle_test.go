@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
@@ -446,5 +447,41 @@ func TestTheProxySyncIsRolledBackWhenSquidRejectsTheConfig(t *testing.T) {
 	}
 	if strings.Contains(served, "bad domain entry") {
 		t.Error("the rejected allowlist stayed in the VM")
+	}
+}
+
+// --- what the backend says about itself ---------------------------------------
+
+func TestABackendWithNoSSHConfigGetsNoLinkAndItsOwnAdvice(t *testing.T) {
+	// The commands read these from Facts rather than knowing them about lima:
+	// vary the two a user can see, and lima's spelling must be gone from
+	// everything `new`, `start` and `rm` do and say.
+	h := newHarness(t)
+	h.facts = func(f *backend.Facts) {
+		f.HasSSHConfigLink = false
+		f.ShellAdvice = func(vm string) string { return "otherbox shell " + vm }
+	}
+
+	h.mustRun("new", "demo")
+	if h.exists(config.SSHConfigLink("demo")) {
+		t.Error("an ssh config link was made for a backend that has no ssh config")
+	}
+	h.assertOutputContains("otherbox shell demo")
+	if strings.Contains(h.output(), "ssh lima-") {
+		t.Errorf("lima's shell advice was printed anyway:\n%s", h.output())
+	}
+
+	h.mustRun("stop", "demo")
+	h.mustRun("start", "demo")
+	h.assertOutputContains("enter it: otherbox shell demo")
+
+	err := h.run("new", "demo")
+	if err == nil || !strings.Contains(err.Error(), "Enter it: otherbox shell demo") {
+		t.Errorf("err = %v, want the backend's own advice", err)
+	}
+
+	h.mustRun("rm", "demo")
+	if h.exists(config.GeneratedConfig("demo")) {
+		t.Error("the generated config survived rm")
 	}
 }

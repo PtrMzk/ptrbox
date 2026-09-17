@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/PtrMzk/ptrbox/internal/lima"
+	"github.com/PtrMzk/ptrbox/internal/backend"
 )
 
 // timingsScript prints both records. $HOME is expanded IN THE GUEST: the
@@ -35,7 +35,7 @@ type timing struct {
 // readTimings fetches and parses a VM's records; nil when there are none or
 // the VM could not be asked.
 func readTimings(env *Env, vm string) []timing {
-	out, err := env.Lima.Output(lima.ShellArgs(vm, "bash", "-c", timingsScript)...)
+	out, err := env.Backend.Output(vm, backend.Agent, "bash", "-c", timingsScript)
 	if err != nil {
 		return nil
 	}

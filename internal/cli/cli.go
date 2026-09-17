@@ -12,8 +12,8 @@ import (
 	"io/fs"
 	"time"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
-	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
@@ -22,10 +22,10 @@ import (
 // once in main and, in tests, assembled against fakes - which is what lets the
 // whole lifecycle be simulated without a Mac.
 type Env struct {
-	Cfg    *config.Config
-	Lima   *lima.Client
-	Proxy  *proxy.Proxy
-	Assets fs.FS
+	Cfg     *config.Config
+	Backend backend.Backend
+	Proxy   *proxy.Proxy
+	Assets  fs.FS
 
 	// Out carries progress notes; Stdout carries command output that a caller
 	// might pipe (a log tail, the allowlist).
@@ -196,12 +196,12 @@ OUTPUT
   reprints its raw output either way.
 `
 
-// requireLima is the first thing several commands do, so that a machine
-// without Lima says "run ptrbox install first" rather than failing three
-// layers down.
-func requireLima(env *Env) error {
-	if !env.Lima.Available() {
-		return errors.New("limactl not found - run 'ptrbox install' first")
+// requireBackend is the first thing several commands do, so that a machine
+// without the VM backend says "run ptrbox install first" rather than failing
+// three layers down.
+func requireBackend(env *Env) error {
+	if !env.Backend.Available() {
+		return fmt.Errorf("%s not found - run 'ptrbox install' first", env.Backend.Facts().Deps[0].Tool)
 	}
 	return nil
 }

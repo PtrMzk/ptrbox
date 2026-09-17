@@ -2,6 +2,7 @@ package lima
 
 import (
 	"io"
+	"strings"
 
 	"github.com/PtrMzk/ptrbox/internal/backend"
 )
@@ -36,6 +37,10 @@ func (Backend) Facts() backend.Facts {
 		HasSSHConfigLink: true,
 		ShellAdvice:      func(vm string) string { return "ssh lima-" + vm },
 		ListHint:         Binary + " list",
+		ExecAdvice: func(vm string, argv ...string) string {
+			return Binary + " " + strings.Join(ShellArgs(vm, argv...), " ")
+		},
+		DeleteAdvice: func(vm string) string { return Binary + " delete " + vm },
 		// limactl comes from the `lima` formula, which is the one that trips
 		// people up.
 		Deps: []backend.Dep{{Tool: Binary, Package: "lima"}},

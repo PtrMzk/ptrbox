@@ -34,8 +34,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
-	"github.com/PtrMzk/ptrbox/internal/lima"
 )
 
 // archiveScript streams a gzipped tar of the transcripts to stdout, or
@@ -81,10 +81,10 @@ func cmdSave(env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !env.Lima.Exists(name) {
+	if !env.Backend.Exists(name) {
 		return unknownVM(env, name)
 	}
-	if !env.Lima.Running(name) {
+	if !env.Backend.Running(name) {
 		return fmt.Errorf("VM %q is not running - start it first: ptrbox start %s", name, name)
 	}
 
@@ -114,7 +114,7 @@ func archiveTranscripts(env *Env, name string) (string, error) {
 		return "", err
 	}
 	capped := &capWriter{W: file, Remaining: maxArchive}
-	streamErr := env.Lima.Stream(capped, lima.ShellArgs(name, "bash", "-c", archiveScript)...)
+	streamErr := env.Backend.Stream(name, backend.Agent, capped, "bash", "-c", archiveScript)
 	closeErr := file.Close()
 
 	switch {

@@ -31,8 +31,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
-	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/render"
 )
@@ -66,9 +66,10 @@ func cmdNew(env *Env, args []string) error {
 	if arg == "" {
 		return errors.New("usage: ptrbox new <repo-path | repo-name>")
 	}
-	if err := requireLima(env); err != nil {
+	if err := requireBackend(env); err != nil {
 		return err
 	}
+	facts := env.Backend.Facts()
 
 	// The five steps below are what the wait is made of. Numbered because
 	// "provisioning" on its own could be the first of two things or the first
@@ -90,9 +91,9 @@ func cmdNew(env *Env, args []string) error {
 	if name == config.ProxyVM {
 		return fmt.Errorf("%q is reserved for the egress proxy VM - pick another repo name", name)
 	}
-	if env.Lima.Exists(name) {
-		return fmt.Errorf("VM %q already exists. Enter it: ssh lima-%s   Remove it: ptrbox rm %s",
-			name, name, name)
+	if env.Backend.Exists(name) {
+		return fmt.Errorf("VM %q already exists. Enter it: %s   Remove it: ptrbox rm %s",
+			name, facts.ShellAdvice(name), name)
 	}
 
 	// --- per-VM overrides ---------------------------------------------------
@@ -138,7 +139,7 @@ func cmdNew(env *Env, args []string) error {
 
 	configPath := config.GeneratedConfig(name)
 	cfg := env.Cfg
-	err = render.RenderFile(configPath, env.Assets, "vm/claude-repo.yaml", "vm", render.Values{
+	err = render.RenderFile(configPath, env.Assets, facts.SandboxTemplate, "vm", render.Values{
 		"REPO_DIR":   repoDir,
 		"VM_NAME":    name,
 		"VM_COLOR":   config.VMColor(name),
@@ -148,10 +149,10 @@ func cmdNew(env *Env, args []string) error {
 		"DISK":       cfg.Disk,
 		"PORT_MIN":   fmt.Sprint(cfg.PortMin),
 		"PORT_MAX":   fmt.Sprint(cfg.PortMax),
-		"PROXY_HOST": config.ProxyHost,
+		"PROXY_HOST": facts.ProxyAddr,
 		"PROXY_PORT": fmt.Sprint(proxyPort),
 		// The sixth firewall rule, or the comment saying there is none.
-		"LMSTUDIO_NFT_RULE": cfg.LMStudioNftRule(),
+		"LMSTUDIO_NFT_RULE": cfg.LMStudioNftRule(facts.HostAddr),
 		"LMSTUDIO_PORT":     fmt.Sprint(cfg.LMStudioPort),
 		"OPENCODE":          fmt.Sprint(cfg.Wants("opencode")),
 		// What LM Studio said it serves, as opencode.json wants it. `{}` and
@@ -173,7 +174,7 @@ func cmdNew(env *Env, args []string) error {
 	}
 
 	// Validate before touching any VM state.
-	if err := env.Lima.Validate(configPath); err != nil {
+	if err := env.Backend.Validate(configPath); err != nil {
 		return err
 	}
 
@@ -188,7 +189,15 @@ func cmdNew(env *Env, args []string) error {
 
 	// --- boot 1: provisioning over an open network --------------------------
 	steps.Next("provisioning %s (this takes a few minutes)", name)
-	if err := env.Lima.Create(name, configPath); err != nil {
+	if err := env.Backend.Create(backend.Spec{
+		Name:       name,
+		ConfigPath: configPath,
+		CPUs:       cfg.CPUs,
+		Memory:     cfg.Memory,
+		Disk:       cfg.Disk,
+		Image:      cfg.ImageURL,
+		Mount:      &backend.Mount{Host: repoDir, Guest: "/workspace"},
+	}); err != nil {
 		return err
 	}
 
@@ -197,16 +206,19 @@ func cmdNew(env *Env, args []string) error {
 	// provisioning, because the installers need hosts that are deliberately
 	// off the allowlist.
 	steps.Next("rebooting to activate the egress firewall")
-	if err := env.Lima.Stop(name); err != nil {
+	if err := env.Backend.Stop(name); err != nil {
 		return err
 	}
-	if err := env.Lima.Start(name); err != nil {
+	if err := env.Backend.Start(name); err != nil {
 		return err
 	}
 
 	// --- ssh convenience ----------------------------------------------------
-	if err := linkSSHConfig(name); err != nil {
-		return err
+	// Only where the backend writes an ssh config to link to.
+	if facts.HasSSHConfigLink {
+		if err := linkSSHConfig(name); err != nil {
+			return err
+		}
 	}
 
 	// --- verification -------------------------------------------------------
@@ -215,7 +227,7 @@ func cmdNew(env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := env.Lima.Passthrough(lima.ShellArgs(name, "bash", "-lc", string(verify))...); err != nil {
+	if err := env.Backend.Passthrough(name, backend.Agent, "bash", "-lc", string(verify)); err != nil {
 		return fmt.Errorf("verification FAILED for %q. Do not use this VM; remove it with: ptrbox rm %s",
 			name, name)
 	}
@@ -229,7 +241,7 @@ func cmdNew(env *Env, args []string) error {
 	// changes nothing until the VM is re-created, so create time is the only
 	// moment the file and the VM are known to agree.
 	lines := []string{
-		fmt.Sprintf("ssh lima-%s", name),
+		facts.ShellAdvice(name),
 		"cd /workspace && claude",
 	}
 	if env.Cfg.Wants("opencode") {
@@ -253,7 +265,7 @@ func cmdNew(env *Env, args []string) error {
 	}
 	if env.Cfg.Wants("opencode") {
 		lines = append(lines, fmt.Sprintf("opencode lmstudio/%s via %s:%d on the Mac",
-			firstOf(models), config.ProxyHost, env.Cfg.LMStudioPort))
+			firstOf(models), facts.HostAddr, env.Cfg.LMStudioPort))
 	}
 	if config.HasVMConfig(name) {
 		lines = append(lines, "config   "+config.VMConfigPath(name))
@@ -651,8 +663,8 @@ func injectToken(env *Env, name string) error {
 	// checked for the two characters that would break the assignment, and %q
 	// would additionally re-encode anything non-ASCII in it.
 	payload := "export CLAUDE_CODE_OAUTH_TOKEN=\"" + token + "\"\n"
-	err := env.Lima.Send(strings.NewReader(payload), lima.ShellArgs(name, "bash", "-c",
-		"grep -q CLAUDE_CODE_OAUTH_TOKEN ~/.profile || cat >> ~/.profile")...)
+	err := env.Backend.Send(name, backend.Agent, strings.NewReader(payload), "bash", "-c",
+		"grep -q CLAUDE_CODE_OAUTH_TOKEN ~/.profile || cat >> ~/.profile")
 	if err != nil {
 		return err
 	}

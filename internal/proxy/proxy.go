@@ -30,8 +30,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
-	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/render"
 	"github.com/PtrMzk/ptrbox/internal/ui"
 )
@@ -45,24 +45,24 @@ const (
 
 // Proxy is the egress proxy VM and everything ptrbox pushes into it.
 type Proxy struct {
-	Cfg    *config.Config
-	Lima   *lima.Client
-	Assets fs.FS
-	Out    ui.Printer
+	Cfg     *config.Config
+	Backend backend.Backend
+	Assets  fs.FS
+	Out     ui.Printer
 }
 
-// Name is the proxy VM's Lima name.
+// Name is the proxy VM's name at the backend.
 func (p *Proxy) Name() string { return config.ProxyVM }
 
 // Running reports whether the proxy VM is up.
-func (p *Proxy) Running() bool { return p.Lima.Running(config.ProxyVM) }
+func (p *Proxy) Running() bool { return p.Backend.Running(config.ProxyVM) }
 
 // sudo runs a command inside the proxy VM as root. Root on purpose:
 // everything ptrbox manages there (squid config, allowlist, log) is
 // root-owned, and unlike the sandboxes the proxy VM keeps sudo - no untrusted
 // code ever executes in it.
 func (p *Proxy) sudo(args ...string) (string, error) {
-	return p.Lima.Output(lima.ShellArgs(config.ProxyVM, append([]string{"sudo"}, args...)...)...)
+	return p.Backend.Output(config.ProxyVM, backend.Login, append([]string{"sudo"}, args...)...)
 }
 
 // read returns a file from the proxy VM, or "" if it is not there.
@@ -84,8 +84,7 @@ func (p *Proxy) readOK(path string) (string, bool) {
 // write puts content into a file in the proxy VM. tee, not a redirect: a
 // redirect would be evaluated on the host.
 func (p *Proxy) write(path, content string) error {
-	return p.Lima.Send(strings.NewReader(content),
-		lima.ShellArgs(config.ProxyVM, "sudo", "tee", path)...)
+	return p.Backend.Send(config.ProxyVM, backend.Login, strings.NewReader(content), "sudo", "tee", path)
 }
 
 // --- the host-side allowlist -------------------------------------------------
@@ -297,15 +296,28 @@ func (p *Proxy) Verify() error {
 	if err != nil {
 		return err
 	}
-	err = p.Lima.Passthrough(lima.ShellArgs(config.ProxyVM, "bash", "-lc", string(script))...)
+	err = p.Backend.Passthrough(config.ProxyVM, backend.Login, "bash", "-lc", string(script))
 	if err != nil {
-		return fmt.Errorf("the proxy VM is not serving egress - sandboxes created now would have no network. Look at it with: limactl shell %s -- sudo systemctl status squid",
-			config.ProxyVM)
+		return fmt.Errorf("the proxy VM is not serving egress - sandboxes created now would have no network. Look at it with: %s",
+			p.Backend.Facts().ExecAdvice(config.ProxyVM, "sudo", "systemctl", "status", "squid"))
 	}
 	return nil
 }
 
 // --- lifecycle ---------------------------------------------------------------
+
+// spec is the proxy VM as a backend is told about it. No mount: that is the
+// point of the VM, and what Spec.Mount being nil means.
+func (p *Proxy) spec(configPath string) backend.Spec {
+	return backend.Spec{
+		Name:       config.ProxyVM,
+		ConfigPath: configPath,
+		CPUs:       config.ProxyCPUs,
+		Memory:     config.ProxyMemory,
+		Disk:       config.ProxyDisk,
+		Image:      p.Cfg.ImageURL,
+	}
+}
 
 // Ensure makes sure the proxy VM exists, is running, and serves the current
 // config and allowlist. It reports whether anything had to be done, which is
@@ -321,7 +333,7 @@ func (p *Proxy) Ensure() (changed bool, err error) {
 		return changed, err
 	}
 	configPath := config.GeneratedConfig(config.ProxyVM)
-	err = render.RenderFile(configPath, p.Assets, "vm/proxy.yaml", "vm", render.Values{
+	err = render.RenderFile(configPath, p.Assets, p.Backend.Facts().ProxyTemplate, "vm", render.Values{
 		"IMAGE_URL":        p.Cfg.ImageURL,
 		"PROXY_CPUS":       fmt.Sprint(config.ProxyCPUs),
 		"PROXY_MEMORY":     config.ProxyMemory,
@@ -334,21 +346,21 @@ func (p *Proxy) Ensure() (changed bool, err error) {
 		return changed, err
 	}
 
-	switch p.Lima.Status(config.ProxyVM) {
-	case lima.StatusRunning:
+	switch p.Backend.Status(config.ProxyVM) {
+	case backend.StatusRunning:
 		// Already up; only the sync below can still have work to do.
 	case "":
-		if err := p.Lima.Validate(configPath); err != nil {
+		if err := p.Backend.Validate(configPath); err != nil {
 			return changed, err
 		}
 		p.Out.Say("provisioning the proxy VM (the first run takes a few minutes)")
-		if err := p.Lima.Create(config.ProxyVM, configPath); err != nil {
+		if err := p.Backend.Create(p.spec(configPath)); err != nil {
 			return changed, err
 		}
 		changed = true
 	default:
 		p.Out.Say("starting the proxy VM")
-		if err := p.Lima.Start(config.ProxyVM); err != nil {
+		if err := p.Backend.Start(config.ProxyVM); err != nil {
 			return changed, err
 		}
 		changed = true
@@ -380,13 +392,13 @@ func (p *Proxy) StopIfIdle() error {
 		return nil
 	}
 
-	vms := p.Lima.List()
+	vms := p.Backend.List()
 	if len(vms) == 0 {
 		return nil
 	}
 	running := map[string]bool{}
 	for _, vm := range vms {
-		if vm.Status == lima.StatusRunning {
+		if vm.Status == backend.StatusRunning {
 			running[vm.Name] = true
 		}
 	}
@@ -408,7 +420,7 @@ func (p *Proxy) StopIfIdle() error {
 		}
 	}
 
-	if err := p.Lima.Stop(config.ProxyVM); err != nil {
+	if err := p.Backend.Stop(config.ProxyVM); err != nil {
 		return err
 	}
 	p.Out.Say("no sandboxes left running - stopped the proxy VM")

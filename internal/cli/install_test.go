@@ -925,9 +925,10 @@ func TestEveryDeclaredDependencyIsActuallyUsed(t *testing.T) {
 	// up for no reason.
 	// install.go itself is excluded: the declaration must not count as a use.
 	sources := goSources(t, "..", "install.go")
-	for _, dep := range deps {
-		if !strings.Contains(sources, `"`+dep.tool+`"`) {
-			t.Errorf("%s is declared in deps but never called", dep.tool)
+	env := &Env{Backend: lima.Backend{}}
+	for _, dep := range deps(env) {
+		if !strings.Contains(sources, `"`+dep.Tool+`"`) {
+			t.Errorf("%s is declared in deps but never called", dep.Tool)
 		}
 	}
 }

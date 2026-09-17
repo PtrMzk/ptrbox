@@ -34,7 +34,7 @@ func cmdSyncProxy(env *Env, args []string) error {
 			return fmt.Errorf("sync-proxy: unknown option %q", arg)
 		}
 	}
-	if err := requireLima(env); err != nil {
+	if err := requireBackend(env); err != nil {
 		return err
 	}
 

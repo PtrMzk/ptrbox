@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
 )
 
@@ -406,16 +407,16 @@ func verifyEgress(env *Env) error {
 	// rather than probed once, because the squid restart Ensure may just have
 	// issued takes the forward down with it - see waitForPort.
 	if !waitForPort(config.ProxyPort, forwardDeadline) {
-		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: limactl list",
-			config.ProxyPort, config.ProxyVM)
+		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: %s",
+			config.ProxyPort, config.ProxyVM, env.Backend.Facts().ListHint)
 	}
 	// The sandbox range is a second lima forward, published independently of
 	// the base port's - so the base being up says nothing about it, and it is
 	// the one the sandboxes actually dial. The first port stands in for the
 	// block: they are one forwarding rule, live or not together.
 	if !waitForPort(config.SandboxPortMin(), forwardDeadline) {
-		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s sandbox port range (%d-%d) is not forwarded, so no sandbox could reach the proxy. Check it with: limactl list",
-			config.SandboxPortMin(), config.ProxyVM, config.SandboxPortMin(), config.SandboxPortMax())
+		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s sandbox port range (%d-%d) is not forwarded, so no sandbox could reach the proxy. Check it with: %s",
+			config.SandboxPortMin(), config.ProxyVM, config.SandboxPortMin(), config.SandboxPortMax(), env.Backend.Facts().ListHint)
 	}
 
 	return env.Proxy.Verify()
@@ -423,16 +424,16 @@ func verifyEgress(env *Env) error {
 
 // --- dependencies ------------------------------------------------------------
 
-// Required commands, paired with the Homebrew formula that provides them.
-// limactl comes from the `lima` formula, which is the one that trips people
-// up.
+// Required commands, paired with the package that provides them: the
+// backend's own (its binary first), then what ptrbox needs whatever builds
+// the VMs.
 //
 // Only what ptrbox actually runs on the host - every entry here is a hard
 // blocker on install. (squid used to be listed and ran on the host; it lives
-// inside the proxy VM now and is only ever invoked through limactl shell.)
-var deps = []struct{ tool, formula string }{
-	{"limactl", "lima"},
-	{"git", "git"},
+// inside the proxy VM now and is only ever invoked through the backend.)
+func deps(env *Env) []backend.Dep {
+	all := append([]backend.Dep{}, env.Backend.Facts().Deps...)
+	return append(all, backend.Dep{Tool: "git", Package: "git"})
 }
 
 // ptrbox never installs packages on your behalf. Running a package manager as
@@ -440,10 +441,10 @@ var deps = []struct{ tool, formula string }{
 // so a missing dependency prints the command to run and stops.
 func preflightDeps(env *Env) error {
 	var tools, formulae []string
-	for _, dep := range deps {
-		if !haveTool(env, dep.tool) {
-			tools = append(tools, dep.tool)
-			formulae = append(formulae, dep.formula)
+	for _, dep := range deps(env) {
+		if !haveTool(env, dep.Tool) {
+			tools = append(tools, dep.Tool)
+			formulae = append(formulae, dep.Package)
 		}
 	}
 	if len(tools) == 0 {
@@ -454,11 +455,11 @@ func preflightDeps(env *Env) error {
 	return ErrReported
 }
 
-// haveTool answers for limactl through the lima client, so a test's fake
-// counts as an installed limactl.
+// haveTool answers for the backend's binary through the backend, so a test's
+// fake counts as an installed one.
 func haveTool(env *Env, tool string) bool {
-	if tool == "limactl" {
-		return env.Lima.Available()
+	if tool == env.Backend.Facts().Deps[0].Tool {
+		return env.Backend.Available()
 	}
 	return lookPath(tool)
 }

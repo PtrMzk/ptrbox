@@ -48,10 +48,10 @@ func newHarness(t *testing.T) *harness {
 	out := &bytes.Buffer{}
 	return &harness{
 		Proxy: &proxy.Proxy{
-			Cfg:    cfg,
-			Lima:   &lima.Client{Runner: fake, Stdout: io.Discard, Stderr: io.Discard},
-			Assets: ptrbox.Assets,
-			Out:    ui.Printer{W: out},
+			Cfg:     cfg,
+			Backend: lima.Backend{Client: &lima.Client{Runner: fake, Stdout: io.Discard, Stderr: io.Discard}},
+			Assets:  ptrbox.Assets,
+			Out:     ui.Printer{W: out},
 		},
 		fake: fake,
 		out:  out,

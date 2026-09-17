@@ -22,6 +22,7 @@ import (
 	"time"
 
 	ptrbox "github.com/PtrMzk/ptrbox"
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/lima/limafake"
@@ -51,6 +52,9 @@ type harness struct {
 	tty     bool            // whether prompts can be asked at all
 	stdin   string          // what answers them when they can
 	missing map[string]bool // tools this host pretends not to have
+	// facts, when set, edits what the backend says about itself before a
+	// command reads it: one Fact varied, no second backend written.
+	facts func(*backend.Facts)
 
 	// portInUse answers for the host's TCP ports; see newHarness.
 	portInUse func(port int) bool
@@ -192,11 +196,14 @@ func (h *harness) run(args ...string) error {
 		Interactive: h.tty,
 		Editor:      func(path string) error { return h.editor(path) },
 		// A fixed clock, so an archive filename is the same on every run.
-		Now:  func() time.Time { return time.Date(2026, 8, 17, 20, 45, 0, 0, time.UTC) },
-		Lima: &lima.Client{Runner: h.fake, Stdout: h.narrator, Stderr: h.narrator},
+		Now:     func() time.Time { return time.Date(2026, 8, 17, 20, 45, 0, 0, time.UTC) },
+		Backend: lima.Backend{Client: &lima.Client{Runner: h.fake, Stdout: h.narrator, Stderr: h.narrator}},
 	}
 	if h.missing["limactl"] {
-		env.Lima = &lima.Client{Runner: unavailableRunner{h.fake}, Stdout: h.narrator, Stderr: h.narrator}
+		env.Backend = lima.Backend{Client: &lima.Client{Runner: unavailableRunner{h.fake}, Stdout: h.narrator, Stderr: h.narrator}}
+	}
+	if h.facts != nil {
+		env.Backend = variedBackend{Backend: env.Backend, vary: h.facts}
 	}
 	// Wired the way main wires it, including the per-VM re-resolution: the
 	// layering is only real if the commands go through the same two hooks a
@@ -209,7 +216,7 @@ func (h *harness) run(args ...string) error {
 		// moment anyone knows the distro.
 		h.narrator.Image = cfg.Distro
 		e.Cfg = cfg
-		e.Proxy = &proxy.Proxy{Cfg: cfg, Lima: e.Lima, Assets: e.Assets, Out: e.Out}
+		e.Proxy = &proxy.Proxy{Cfg: cfg, Backend: e.Backend, Assets: e.Assets, Out: e.Out}
 	}
 	env.Load = func(e *Env) error {
 		cfg, err := config.Load()
@@ -413,4 +420,16 @@ func (h *harness) manifestLinks() int {
 		}
 	}
 	return n
+}
+
+// variedBackend is the harness's backend with its Facts edited.
+type variedBackend struct {
+	backend.Backend
+	vary func(*backend.Facts)
+}
+
+func (v variedBackend) Facts() backend.Facts {
+	facts := v.Backend.Facts()
+	v.vary(&facts)
+	return facts
 }

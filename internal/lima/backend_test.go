@@ -3,13 +3,13 @@ package lima_test
 import (
 	"bytes"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/PtrMzk/ptrbox/internal/backend"
-	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/lima/limafake"
 )
@@ -139,13 +139,21 @@ func TestBackendCreateReadsTheConfigAndNothingElse(t *testing.T) {
 	}
 }
 
-func TestFactsAreWhatTheCodeHardcodesToday(t *testing.T) {
-	// Until the call sites read Facts, each of these exists twice. This is
-	// the test that they agree; it shrinks as the literals go away.
+func TestFacts(t *testing.T) {
 	facts := lima.Backend{}.Facts()
 
-	if facts.ProxyAddr != config.ProxyHost || facts.HostAddr != config.ProxyHost {
-		t.Errorf("ProxyAddr %q / HostAddr %q, want both %q", facts.ProxyAddr, facts.HostAddr, config.ProxyHost)
+	// One address for both trips: usernet's gateway relays to the Mac's
+	// loopback, where the proxy VM's forward and LM Studio both are. It used
+	// to be config.ProxyHost, and the IPv4 check came here with it - the
+	// value is rendered into an nftables rule.
+	if ip := net.ParseIP(lima.Gateway); ip == nil || ip.To4() == nil {
+		t.Errorf("Gateway = %q, want an IPv4 address", lima.Gateway)
+	}
+	if facts.ProxyAddr != lima.Gateway || facts.HostAddr != lima.Gateway {
+		t.Errorf("ProxyAddr %q / HostAddr %q, want both %q", facts.ProxyAddr, facts.HostAddr, lima.Gateway)
+	}
+	if facts.SandboxTemplate != "vm/claude-repo.yaml" || facts.ProxyTemplate != "vm/proxy.yaml" {
+		t.Errorf("templates = %q, %q", facts.SandboxTemplate, facts.ProxyTemplate)
 	}
 	if facts.ProxyReach != backend.LoopbackForward {
 		t.Error("lima reaches its proxy through a loopback forward")
@@ -161,5 +169,16 @@ func TestFactsAreWhatTheCodeHardcodesToday(t *testing.T) {
 	}
 	if len(facts.Deps) == 0 || facts.Deps[0] != (backend.Dep{Tool: "limactl", Package: "lima"}) {
 		t.Errorf("Deps = %v, want limactl from the lima formula first", facts.Deps)
+	}
+}
+
+func TestAdviceIsSomethingYouCanType(t *testing.T) {
+	facts := lima.Backend{}.Facts()
+	if got, want := facts.ExecAdvice("ptrbox-proxy", "sudo", "systemctl", "status", "squid"),
+		"limactl shell ptrbox-proxy -- sudo systemctl status squid"; got != want {
+		t.Errorf("ExecAdvice = %q, want %q", got, want)
+	}
+	if got, want := facts.DeleteAdvice("ptrbox-proxy"), "limactl delete ptrbox-proxy"; got != want {
+		t.Errorf("DeleteAdvice = %q, want %q", got, want)
 	}
 }

@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
-	"github.com/PtrMzk/ptrbox/internal/lima"
 )
 
 // deniedMarker is what squid logs for a blocked request.
@@ -61,7 +61,7 @@ func cmdLogs(env *Env, args []string) error {
 		}
 	}
 
-	if err := requireLima(env); err != nil {
+	if err := requireBackend(env); err != nil {
 		return err
 	}
 	if !env.Proxy.Running() {
@@ -73,7 +73,6 @@ func cmdLogs(env *Env, args []string) error {
 		tail = append(tail, "-f")
 	}
 	tail = append(tail, config.SquidLog)
-	argv := lima.ShellArgs(config.ProxyVM, tail...)
 
 	if follow {
 		// Streamed rather than buffered: the whole point of -f is seeing
@@ -86,11 +85,11 @@ func cmdLogs(env *Env, args []string) error {
 			defer filter.Flush()
 			out = filter
 		}
-		return env.Lima.Stream(out, argv...)
+		return env.Backend.Stream(config.ProxyVM, backend.Login, out, tail...)
 	}
 
 	var buf bytes.Buffer
-	if err := env.Lima.Stream(&buf, argv...); err != nil {
+	if err := env.Backend.Stream(config.ProxyVM, backend.Login, &buf, tail...); err != nil {
 		return fmt.Errorf("no proxy log at %s in the proxy VM - has any request been made?", config.SquidLog)
 	}
 

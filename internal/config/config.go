@@ -50,9 +50,11 @@ var Keys = []string{
 //     and the 12x margin costs a few hundred MB of idle host RAM. A knob
 //     whose documentation says "leave this alone" is a comment wearing a
 //     key's clothes.
-//   - ProxyHost is Lima usernet's gateway. If a Lima release ever moves it,
-//     every ptrbox on earth breaks the same way on the same day, and the fix
-//     is a release, not a line each of us edits.
+//   - the address a sandbox dials is not here at all: it is a fact about the
+//     backend that built the VM (lima.Gateway, read through backend.Facts).
+//     If a Lima release ever moves it, every ptrbox on earth breaks the same
+//     way on the same day, and the fix is a release, not a line each of us
+//     edits.
 //   - the log path is inside a VM this project builds. If Debian's squid
 //     moves it, that is a code change too.
 //
@@ -60,7 +62,6 @@ var Keys = []string{
 // process holding that port is something to stop, not something to route
 // around, and preflightProxyPort says so with the lsof line that finds it.
 const (
-	ProxyHost   = "192.168.5.2"
 	ProxyPort   = 8888
 	ProxyCPUs   = 1
 	ProxyMemory = "512MiB"

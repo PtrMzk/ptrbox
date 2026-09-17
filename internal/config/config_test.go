@@ -93,9 +93,6 @@ func TestDefaultsApplyWithNoConfigFile(t *testing.T) {
 // numbers matter to more than taste: the port block has to fit under the
 // ceiling, and the sizing is what item 28 will revisit with a measurement.
 func TestTheFixedProxySettings(t *testing.T) {
-	if !ipv4Re.MatchString(ProxyHost) {
-		t.Errorf("ProxyHost = %q, want an IPv4 address", ProxyHost)
-	}
 	if ProxyPort < 1 || ProxyPort+SandboxProxyPorts > 65535 {
 		t.Errorf("ProxyPort = %d leaves no room for %d sandbox ports", ProxyPort, SandboxProxyPorts)
 	}
@@ -445,11 +442,11 @@ func TestRejectsAnLMStudioPortInsideTheProxyBlock(t *testing.T) {
 func TestTheLMStudioRuleFollowsTheOpencodeFlag(t *testing.T) {
 	setup(t)
 	t.Setenv("PTRBOX_LMSTUDIO_PORT", "4321")
-	if got := mustLoad(t).LMStudioNftRule(); got != "# (PTRBOX_OPENCODE off: no LM Studio rule)" {
+	if got := mustLoad(t).LMStudioNftRule("192.168.5.2"); got != "# (PTRBOX_OPENCODE off: no LM Studio rule)" {
 		t.Errorf("rule without opencode = %q", got)
 	}
 	t.Setenv("PTRBOX_OPENCODE", "true")
-	if got := mustLoad(t).LMStudioNftRule(); got != "ip daddr 192.168.5.2 tcp dport 4321 accept" {
+	if got := mustLoad(t).LMStudioNftRule("192.168.5.2"); got != "ip daddr 192.168.5.2 tcp dport 4321 accept" {
 		t.Errorf("rule with opencode = %q", got)
 	}
 }

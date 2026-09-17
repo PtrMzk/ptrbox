@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
 )
@@ -36,18 +37,18 @@ func cmdRm(env *Env, args []string) error {
 	args = rest
 
 	name, err := sandboxTarget(env, args, "rm",
-		fmt.Sprintf("%q is the shared egress proxy, not a sandbox - it stops by itself when the last sandbox does (limactl delete %s if you really mean to destroy it)",
-			config.ProxyVM, config.ProxyVM))
+		fmt.Sprintf("%q is the shared egress proxy, not a sandbox - it stops by itself when the last sandbox does (%s if you really mean to destroy it)",
+			config.ProxyVM, env.Backend.Facts().DeleteAdvice(config.ProxyVM)))
 	if err != nil {
 		return err
 	}
 
-	if !env.Lima.Exists(name) {
+	if !env.Backend.Exists(name) {
 		// A `new` that failed before the VM existed still allocated a proxy
 		// port and rendered a config. Those must be rm-able, or an abandoned
 		// name holds one of the sixteen slots forever with nothing anywhere
 		// saying how to free it.
-		if removed, err := removeArtifacts(name); err != nil {
+		if removed, err := removeArtifacts(env.Backend.Facts(), name); err != nil {
 			return err
 		} else if removed {
 			env.Out.Say("no VM named %q, but a failed create had left its artifacts - removed them", name)
@@ -65,10 +66,10 @@ func cmdRm(env *Env, args []string) error {
 		}
 	}
 
-	if err := env.Lima.Delete(name); err != nil {
+	if err := env.Backend.Delete(name); err != nil {
 		return err
 	}
-	if _, err := removeArtifacts(name); err != nil {
+	if _, err := removeArtifacts(env.Backend.Facts(), name); err != nil {
 		return err
 	}
 	env.Out.Say("deleted VM %q (the repo on the host is untouched)", name)
@@ -76,12 +77,17 @@ func cmdRm(env *Env, args []string) error {
 }
 
 // removeArtifacts deletes what `new` created outside the VM itself: the
-// rendered config, the ssh symlink, and the proxy-port sidecar - the port is
+// rendered config, the ssh symlink (on a backend that has one), and the
+// proxy-port sidecar - the port is
 // the VM's slot at the proxy, and holding it past the VM would leak one of
 // the sixteen. The VM's allowlist is deliberately NOT among these: it is
 // what makes a later re-create come back with the same egress.
-func removeArtifacts(name string) (removed bool, err error) {
-	for _, path := range []string{config.GeneratedConfig(name), config.SSHConfigLink(name), proxy.PortFile(name)} {
+func removeArtifacts(facts backend.Facts, name string) (removed bool, err error) {
+	paths := []string{config.GeneratedConfig(name), proxy.PortFile(name)}
+	if facts.HasSSHConfigLink {
+		paths = append(paths, config.SSHConfigLink(name))
+	}
+	for _, path := range paths {
 		switch err := os.Remove(path); {
 		case err == nil:
 			removed = true
@@ -116,7 +122,7 @@ func cmdStart(env *Env, args []string) error {
 		return err
 	}
 
-	if !env.Lima.Exists(name) {
+	if !env.Backend.Exists(name) {
 		return fmt.Errorf("no VM named %q - create it with: ptrbox new %s", name, args[0])
 	}
 
@@ -146,12 +152,12 @@ func cmdStart(env *Env, args []string) error {
 		}
 	}
 
-	if env.Lima.Running(name) {
+	if env.Backend.Running(name) {
 		env.Out.Say("VM %q is already running", name)
-	} else if err := env.Lima.Start(name); err != nil {
+	} else if err := env.Backend.Start(name); err != nil {
 		return err
 	}
-	env.Out.Say("enter it: ssh lima-%s", name)
+	env.Out.Say("enter it: %s", env.Backend.Facts().ShellAdvice(name))
 	return nil
 }
 
@@ -162,12 +168,12 @@ func cmdStop(env *Env, args []string) error {
 		return err
 	}
 
-	if !env.Lima.Exists(name) {
+	if !env.Backend.Exists(name) {
 		return unknownVM(env, name)
 	}
 
-	if env.Lima.Running(name) {
-		if err := env.Lima.Stop(name); err != nil {
+	if env.Backend.Running(name) {
+		if err := env.Backend.Stop(name); err != nil {
 			return err
 		}
 		env.Out.Say("stopped VM %q", name)
@@ -188,7 +194,7 @@ func cmdStop(env *Env, args []string) error {
 // the user could act on the advice. Refusing keeps both choices open, and the
 // only way to lose a session is now to ask for it.
 func archiveBeforeRemoval(env *Env, name string) error {
-	if !env.Lima.Running(name) {
+	if !env.Backend.Running(name) {
 		return fmt.Errorf("VM %q is not running, so its Claude transcripts cannot be archived - keep them with: ptrbox start %s && ptrbox save %s && ptrbox rm %s (or discard them with: ptrbox rm --no-archive %s)",
 			name, name, name, name, name)
 	}
@@ -209,7 +215,7 @@ func sandboxTarget(env *Env, args []string, verb, reserved string) (string, erro
 	if len(args) == 0 || args[0] == "" {
 		return "", fmt.Errorf("usage: ptrbox %s <repo-path | vm-name>", verb)
 	}
-	if err := requireLima(env); err != nil {
+	if err := requireBackend(env); err != nil {
 		return "", err
 	}
 	return resolveSandbox(args[0], reserved)
@@ -218,7 +224,7 @@ func sandboxTarget(env *Env, args []string, verb, reserved string) (string, erro
 // unknownVM reports a miss with the list of what does exist, which is almost
 // always what the user needed to see.
 func unknownVM(env *Env, name string) error {
-	if names := env.Lima.Names(); len(names) > 0 {
+	if names := env.Backend.Names(); len(names) > 0 {
 		env.Out.Say("existing VMs: %s", strings.Join(names, " "))
 	}
 	return fmt.Errorf("no VM named %q", name)

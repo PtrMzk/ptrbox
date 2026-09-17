@@ -41,7 +41,7 @@ func main() {
 		Interactive: interactive(),
 		Editor:      cli.DefaultEditor,
 		Now:         time.Now,
-		Lima:        &lima.Client{Runner: lima.Exec{}, Stdout: narrator, Stderr: narrator},
+		Backend:     lima.Backend{Client: &lima.Client{Runner: lima.Exec{}, Stdout: narrator, Stderr: narrator}},
 		Load:        loadWith(narrator),
 		LoadVM:      loadVMWith(narrator),
 	}
@@ -157,7 +157,7 @@ func apply(env *cli.Env, narrator *narrate.Stream, cfg *config.Config) {
 	}
 	narrator.Image = cfg.Distro
 	env.Cfg = cfg
-	env.Proxy = &proxy.Proxy{Cfg: cfg, Lima: env.Lima, Assets: env.Assets, Out: env.Out}
+	env.Proxy = &proxy.Proxy{Cfg: cfg, Backend: env.Backend, Assets: env.Assets, Out: env.Out}
 }
 
 // executable is the path to this binary, with symlinks resolved, so

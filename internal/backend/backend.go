@@ -110,6 +110,11 @@ type Facts struct {
 	ShellAdvice func(vm string) string
 	// ListHint is what to type to see the backend's own view of its VMs.
 	ListHint string
+	// ExecAdvice is what to type to run a command in the VM, for the error
+	// that ends in "look at it with". DeleteAdvice is what to type to destroy
+	// a VM ptrbox itself declines to.
+	ExecAdvice   func(vm string, argv ...string) string
+	DeleteAdvice func(vm string) string
 
 	// Deps are the host commands this backend cannot work without. The first
 	// is the backend's own binary - the one Available answers for.
