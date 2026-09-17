@@ -20,6 +20,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PtrMzk/ptrbox/internal/config"
+	"github.com/PtrMzk/ptrbox/internal/proxy"
 )
 
 // gitConfigOrEmpty is gitConfig for a key that may legitimately be unset -
@@ -155,9 +158,9 @@ func TestStartReAssertsTheHooksRedirect(t *testing.T) {
 }
 
 // The mapping start depends on: a VM name back to the host directory it
-// mounts. Nothing else records it, so this reads the generated Lima config -
-// and must not pick up the image URL, which is the other line of that shape.
-func TestTheMountedRepoIsReadBackFromTheGeneratedConfig(t *testing.T) {
+// mounts. Whichever record answers, it must be the repo - and never the image
+// URL, which is the other line of that shape in a lima config.
+func TestTheMountedRepoIsReadBack(t *testing.T) {
 	h := newHarness(t)
 	h.mustRun("new", "demo")
 
@@ -177,6 +180,80 @@ func TestMountedRepoIsAbsentForAVMThatWasNeverCreated(t *testing.T) {
 	newHarness(t)
 	if _, ok := mountedRepo("nothing-here"); ok {
 		t.Error("mountedRepo answered for a VM with no generated config")
+	}
+}
+
+// Since the sidecar, that config is the FALLBACK: the record `new` writes is
+// its own one-line file, because what a rendered config looks like is the
+// backend's business and only lima's has a mounts: block to read.
+func TestTheMountedRepoComesFromTheSidecarWhateverTheConfigSays(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	want := filepath.Join(h.repos, "demo")
+
+	if got := strings.TrimSpace(readFile(t, config.RepoFile("demo"))); got != want {
+		t.Fatalf("the sidecar holds %q, want %q", got, want)
+	}
+
+	// A config with no mount in it at all - what a backend that takes its
+	// mount as an argument renders.
+	write(t, config.GeneratedConfig("demo"), "#cloud-config\nusers: [default]\n")
+	if got, ok := mountedRepo("demo"); !ok || got != want {
+		t.Errorf("mountedRepo = %q, %v; want %q from the sidecar", got, ok, want)
+	}
+}
+
+func TestAVMFromBeforeTheSidecarIsStillMappedThroughItsLimaConfig(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	if err := os.Remove(config.RepoFile("demo")); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, ok := mountedRepo("demo"); !ok || got != filepath.Join(h.repos, "demo") {
+		t.Errorf("mountedRepo = %q, %v; want the mount read out of the lima config", got, ok)
+	}
+}
+
+func TestADamagedSidecarIsNoSidecar(t *testing.T) {
+	// It names a directory `start` is about to run git in. Anything but one
+	// absolute path falls through to the config, never to somewhere else.
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	want := filepath.Join(h.repos, "demo")
+
+	for _, body := range []string{"", "\n", "relative/path\n", "/one\n/two\n"} {
+		write(t, config.RepoFile("demo"), body)
+		if got, ok := mountedRepo("demo"); !ok || got != want {
+			t.Errorf("sidecar %q: mountedRepo = %q, %v; want the fallback's %q", body, got, ok, want)
+		}
+	}
+}
+
+func TestRmRemovesTheSidecar(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	h.mustRun("rm", "demo")
+	if h.exists(config.RepoFile("demo")) {
+		t.Error("the repo sidecar survived rm: a later VM of that name would inherit a stale mapping")
+	}
+}
+
+func TestTheSidecarIsNotCountedAsASandbox(t *testing.T) {
+	// The generated dir doubles as the registry of sandboxes. A file there
+	// that the idle check mistook for a VM would keep the proxy up forever;
+	// one the port allocator mistook for an allocation would burn a slot.
+	h := newHarness(t)
+	h.mustRun("new", "demo")
+	h.mustRun("stop", "demo")
+	h.assertOutputContains("stopped the proxy VM")
+
+	ports, err := proxy.PortAllocations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 1 {
+		t.Errorf("port allocations = %v, want demo's and nothing else", ports)
 	}
 }
 

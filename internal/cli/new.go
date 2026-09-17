@@ -172,6 +172,12 @@ func cmdNew(env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Beside the config and before the VM: an artifact of this create like
+	// the config is, removed by `rm` like the config is, and already there
+	// for a create that fails halfway and is resumed with `start`.
+	if err := recordRepo(name, repoDir); err != nil {
+		return err
+	}
 
 	// Validate before touching any VM state.
 	if err := env.Backend.Validate(configPath); err != nil {
@@ -569,16 +575,42 @@ func neutraliseHooks(env *Env, cfg *config.Config, repoDir string) error {
 	return git(env, repoDir, "config", "core.hooksPath", "/dev/null")
 }
 
-// mountedRepo is the host directory a VM has mounted, read back out of its
+// recordRepo writes the VM-to-repo sidecar. `ptrbox new` maps a repo to a VM
+// name and nothing else maps back, and `start` needs the way back to
+// re-assert the hooks redirect.
+//
+// Its own file rather than something read out of the rendered config: what
+// that config looks like is the backend's business - a lima template has a
+// mounts: block, another backend's has none, being handed its mount as an
+// argument - and a pattern over one backend's YAML is a second place that
+// knows its shape.
+func recordRepo(name, repoDir string) error {
+	return os.WriteFile(config.RepoFile(name), []byte(repoDir+"\n"), 0o644)
+}
+
+// mountedRepo is the host directory a VM has mounted: the sidecar, else - for
+// a VM created before there was one - the mount read back out of its
 // generated Lima config.
 //
-// There is no other record: `ptrbox new` maps a repo to a VM name and nothing
-// maps back. The rendered config is that record, and invariant 3 is what makes
+// Anything but one absolute path in the sidecar is treated as no sidecar. It
+// names a directory `start` is about to run git in, so a truncated or edited
+// file must fall through to "unknown" rather than to somewhere else.
+func mountedRepo(name string) (string, bool) {
+	if body, err := os.ReadFile(config.RepoFile(name)); err == nil {
+		if repoDir := strings.TrimRight(string(body), "\r\n"); filepath.IsAbs(repoDir) && !strings.ContainsAny(repoDir, "\r\n") {
+			return repoDir, true
+		}
+	}
+	return mountedRepoFromLimaConfig(name)
+}
+
+// mountedRepoFromLimaConfig is how the mapping was recovered before the
+// sidecar existed, kept for the VMs that predate it. Invariant 3 is what makes
 // reading it unambiguous - there is exactly one mount. The image's `location:`
 // is the other line of this shape, and it can never be confused for this one
 // because PTRBOX_IMAGE_URL is validated to be https while a repo is an
 // absolute path.
-func mountedRepo(name string) (string, bool) {
+func mountedRepoFromLimaConfig(name string) (string, bool) {
 	body, err := os.ReadFile(config.GeneratedConfig(name))
 	if err != nil {
 		return "", false

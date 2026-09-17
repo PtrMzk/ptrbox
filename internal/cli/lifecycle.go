@@ -77,13 +77,13 @@ func cmdRm(env *Env, args []string) error {
 }
 
 // removeArtifacts deletes what `new` created outside the VM itself: the
-// rendered config, the ssh symlink (on a backend that has one), and the
-// proxy-port sidecar - the port is
-// the VM's slot at the proxy, and holding it past the VM would leak one of
-// the sixteen. The VM's allowlist is deliberately NOT among these: it is
-// what makes a later re-create come back with the same egress.
+// rendered config, the repo sidecar, the ssh symlink (on a backend that has
+// one), and the proxy-port sidecar - the port is the VM's slot at the proxy,
+// and holding it past the VM would leak one of the sixteen. The VM's
+// allowlist is deliberately NOT among these: it is what makes a later
+// re-create come back with the same egress.
 func removeArtifacts(facts backend.Facts, name string) (removed bool, err error) {
-	paths := []string{config.GeneratedConfig(name), proxy.PortFile(name)}
+	paths := []string{config.GeneratedConfig(name), config.RepoFile(name), proxy.PortFile(name)}
 	if facts.HasSSHConfigLink {
 		paths = append(paths, config.SSHConfigLink(name))
 	}

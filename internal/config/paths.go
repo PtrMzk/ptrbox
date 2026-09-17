@@ -61,6 +61,13 @@ func GeneratedConfig(name string) string {
 	return filepath.Join(GeneratedDir(), name+".yaml")
 }
 
+// RepoFile is the sidecar recording which host directory a VM mounts: the
+// VM-to-repo mapping, written by `ptrbox new` beside the rendered config and
+// removed with it. One line, the absolute path.
+func RepoFile(name string) string {
+	return filepath.Join(GeneratedDir(), name+".repo")
+}
+
 // SSHConfigLink is the symlink into ~/.ssh/config.d that makes `ssh lima-<vm>`
 // work.
 func SSHConfigLink(name string) string {
