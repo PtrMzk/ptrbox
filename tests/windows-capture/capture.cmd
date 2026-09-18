@@ -34,10 +34,10 @@ exit /b 2
 rem ---------------------------------------------------------------------------
 :main
 if not exist "%REPO%" mkdir "%REPO%"
-echo hello from the host> "%REPO%\from-host.txt"
+>"%REPO%\from-host.txt" echo hello from the host
 
 echo == environment
-echo %DATE% %TIME%> "%OUT%\when.txt"
+>"%OUT%\when.txt" echo %DATE% %TIME%
 ver > "%OUT%\windows-version.txt"
 multipass version > "%OUT%\version.txt" 2>&1
 multipass get local.driver > "%OUT%\driver.txt" 2>&1
@@ -47,7 +47,7 @@ multipass find > "%OUT%\find.txt" 2>&1
 
 echo == launch (several minutes)
 multipass launch --name scratch --cpus 2 --memory 2G --disk 10G --cloud-init "%HERE%exp.yaml" --network name=ptrbox,mode=manual --mount "%REPO%:/workspace" 24.04 > "%OUT%\launch.stdout" 2> "%OUT%\launch.stderr"
-echo %ERRORLEVEL%> "%OUT%\launch.exit"
+>"%OUT%\launch.exit" echo %ERRORLEVEL%
 
 echo == after launch
 multipass exec scratch -- cloud-init status --long > "%OUT%\cloud-init-status-after-launch.txt" 2>&1
@@ -61,9 +61,9 @@ echo == users and sudo
 multipass exec scratch -- id > "%OUT%\id-login.txt" 2>&1
 multipass exec scratch -- id agent > "%OUT%\id-agent.txt" 2>&1
 multipass exec scratch -- sudo -n true > "%OUT%\sudo-login.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\sudo-login.exit"
+>"%OUT%\sudo-login.exit" echo %ERRORLEVEL%
 multipass exec scratch -- sudo -u agent -H sudo -n true > "%OUT%\sudo-agent.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\sudo-agent.exit"
+>"%OUT%\sudo-agent.exit" echo %ERRORLEVEL%
 multipass exec scratch -- sudo cat /etc/sudoers.d/90-cloud-init-users > "%OUT%\sudoers-dropin.txt" 2>&1
 multipass exec scratch -- sudo ls -la /etc/sudoers.d > "%OUT%\sudoers-dir.txt" 2>&1
 multipass exec scratch -- sudo cat /home/ubuntu/.ssh/authorized_keys > "%OUT%\authorized-keys-login.txt" 2>&1
@@ -73,23 +73,23 @@ multipass exec scratch -- bash -c "mount | grep -i -e workspace -e sshfs -e fuse
 multipass exec scratch -- ls -ld /workspace > "%OUT%\mount-ls.txt" 2>&1
 multipass exec scratch -- cat /workspace/from-host.txt > "%OUT%\mount-read.txt" 2>&1
 multipass exec scratch -- sudo -u agent -H touch /workspace/written-by-agent > "%OUT%\mount-agent-write.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\mount-agent-write.exit"
+>"%OUT%\mount-agent-write.exit" echo %ERRORLEVEL%
 multipass exec scratch -- sudo -u agent -H ls -ln /workspace > "%OUT%\mount-agent-ls.txt" 2>&1
 multipass exec scratch -- bash -c "ps -eo user,pid,args | grep -i -e sshfs -e sftp | grep -v grep" > "%OUT%\mount-processes.txt" 2>&1
 dir "%REPO%" > "%OUT%\mount-host-dir.txt" 2>&1
 
 echo == stdin, exit status, stream split
 echo hello-from-stdin| multipass exec scratch -- sudo -u agent -H bash -c "cat >> ~/.profile" > "%OUT%\stdin.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\stdin.exit"
+>"%OUT%\stdin.exit" echo %ERRORLEVEL%
 multipass exec scratch -- sudo -u agent -H tail -1 /home/agent/.profile > "%OUT%\stdin-readback.txt" 2>&1
 multipass exec scratch -- bash -c "exit 7" > "%OUT%\exit-status.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\exit-status.exit"
+>"%OUT%\exit-status.exit" echo %ERRORLEVEL%
 multipass exec scratch -- bash -c "echo to-stdout; echo to-stderr >&2" > "%OUT%\streams.stdout" 2> "%OUT%\streams.stderr"
 multipass exec scratch -- bash -lc "echo login-shell-ok; pwd" > "%OUT%\bash-lc.txt" 2>&1
 
 echo == restart (does per-boot run again? does the static address come up?)
 multipass restart scratch > "%OUT%\restart.stdout" 2> "%OUT%\restart.stderr"
-echo %ERRORLEVEL%> "%OUT%\restart.exit"
+>"%OUT%\restart.exit" echo %ERRORLEVEL%
 multipass exec scratch -- cloud-init status --long > "%OUT%\cloud-init-status-after-restart.txt" 2>&1
 multipass exec scratch -- cat /var/lib/ptrbox/boots > "%OUT%\boots-after-restart.txt" 2>&1
 multipass exec scratch -- ip -j addr > "%OUT%\ip-addr-boot2.json" 2>&1
@@ -104,24 +104,24 @@ ipconfig > "%OUT%\ipconfig.txt" 2>&1
 
 echo == stop / start
 multipass stop scratch > "%OUT%\stop.stdout" 2> "%OUT%\stop.stderr"
-echo %ERRORLEVEL%> "%OUT%\stop.exit"
+>"%OUT%\stop.exit" echo %ERRORLEVEL%
 multipass list --format json > "%OUT%\list-stopped.json" 2>&1
 multipass start scratch > "%OUT%\start.stdout" 2> "%OUT%\start.stderr"
-echo %ERRORLEVEL%> "%OUT%\start.exit"
+>"%OUT%\start.exit" echo %ERRORLEVEL%
 multipass exec scratch -- cat /var/lib/ptrbox/boots > "%OUT%\boots-after-start.txt" 2>&1
 
 echo == name rules (both are expected to be refused)
 multipass launch --name 1abc 24.04 > "%OUT%\name-leading-digit.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\name-leading-digit.exit"
+>"%OUT%\name-leading-digit.exit" echo %ERRORLEVEL%
 multipass launch --name -x 24.04 > "%OUT%\name-leading-dash.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\name-leading-dash.exit"
+>"%OUT%\name-leading-dash.exit" echo %ERRORLEVEL%
 multipass delete --purge 1abc > nul 2>&1
 
 echo == errors worth knowing the shape of
 multipass info no-such-vm > "%OUT%\info-missing.stdout" 2> "%OUT%\info-missing.stderr"
-echo %ERRORLEVEL%> "%OUT%\info-missing.exit"
+>"%OUT%\info-missing.exit" echo %ERRORLEVEL%
 multipass exec no-such-vm -- true > "%OUT%\exec-missing.stdout" 2> "%OUT%\exec-missing.stderr"
-echo %ERRORLEVEL%> "%OUT%\exec-missing.exit"
+>"%OUT%\exec-missing.exit" echo %ERRORLEVEL%
 
 echo.
 echo main: done. scratch is left RUNNING for before-reboot/after-reboot.
@@ -131,36 +131,36 @@ exit /b 0
 rem ---------------------------------------------------------------------------
 :sudo
 if not exist "%REPO%" mkdir "%REPO%"
-echo hello from the host> "%REPO%\from-host.txt"
+>"%REPO%\from-host.txt" echo hello from the host
 
 echo == launch scratch2: boot 1 keeps sudo, so the mount is SET UP normally
 multipass launch --name scratch2 --cpus 2 --memory 2G --disk 10G --cloud-init "%HERE%exp-nosudo.yaml" --mount "%REPO%:/workspace" 24.04 > "%OUT%\nosudo-launch.stdout" 2> "%OUT%\nosudo-launch.stderr"
-echo %ERRORLEVEL%> "%OUT%\nosudo-launch.exit"
+>"%OUT%\nosudo-launch.exit" echo %ERRORLEVEL%
 multipass exec scratch2 -- sudo -n true > "%OUT%\nosudo-boot1-sudo.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\nosudo-boot1-sudo.exit"
+>"%OUT%\nosudo-boot1-sudo.exit" echo %ERRORLEVEL%
 multipass exec scratch2 -- ls -la /workspace > "%OUT%\nosudo-boot1-mount.txt" 2>&1
 
 echo == restart: boot 2 removes sudo - but DURING the boot, racing the re-mount,
 echo    so whatever boot 2 shows is a hint and not the answer
 multipass restart scratch2 > "%OUT%\nosudo-restart.stdout" 2> "%OUT%\nosudo-restart.stderr"
-echo %ERRORLEVEL%> "%OUT%\nosudo-restart.exit"
+>"%OUT%\nosudo-restart.exit" echo %ERRORLEVEL%
 multipass exec scratch2 -- sudo -n true > "%OUT%\nosudo-boot2-sudo.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\nosudo-boot2-sudo.exit"
+>"%OUT%\nosudo-boot2-sudo.exit" echo %ERRORLEVEL%
 multipass exec scratch2 -- cat /var/lib/ptrbox/nosudo-ran > "%OUT%\nosudo-ran.txt" 2>&1
 multipass exec scratch2 -- bash -c "mount | grep -i -e workspace -e sshfs -e fuse" > "%OUT%\nosudo-boot2-mount.txt" 2>&1
 multipass exec scratch2 -- ls -la /workspace > "%OUT%\nosudo-boot2-ls.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\nosudo-boot2-ls.exit"
+>"%OUT%\nosudo-boot2-ls.exit" echo %ERRORLEVEL%
 multipass info scratch2 --format json > "%OUT%\nosudo-info.json" 2>&1
 
 echo == stop/start as well: ptrbox reboots that way, not with restart
 multipass stop scratch2 > nul 2>&1
 multipass start scratch2 > "%OUT%\nosudo-start.stdout" 2> "%OUT%\nosudo-start.stderr"
-echo %ERRORLEVEL%> "%OUT%\nosudo-start.exit"
+>"%OUT%\nosudo-start.exit" echo %ERRORLEVEL%
 multipass exec scratch2 -- sudo -n true > "%OUT%\nosudo-boot3-sudo.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\nosudo-boot3-sudo.exit"
+>"%OUT%\nosudo-boot3-sudo.exit" echo %ERRORLEVEL%
 multipass exec scratch2 -- bash -c "mount | grep -i -e workspace -e sshfs -e fuse" > "%OUT%\nosudo-boot3-mount.txt" 2>&1
 multipass exec scratch2 -- ls -la /workspace > "%OUT%\nosudo-boot3-ls.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\nosudo-boot3-ls.exit"
+>"%OUT%\nosudo-boot3-ls.exit" echo %ERRORLEVEL%
 multipass exec scratch2 -- cat /var/lib/ptrbox/boots > "%OUT%\nosudo-boots.txt" 2>&1
 
 echo == the daemon's log says HOW it mounts (may need an admin prompt to read)
@@ -187,16 +187,16 @@ cmdkey /generic:ptrbox-credread-probe /user:token /pass:probe-VALUE-123 > "%OUT%
 cmdkey /list:ptrbox-credread-probe > "%OUT%\cmdkey-list.txt" 2>&1
 set PTRBOX_TEST_CREDENTIAL=1
 "%HERE%credread-probe.exe" -test.run TestCredReadAgainstCmdkey -test.v > "%OUT%\credread.txt" 2>&1
-echo %ERRORLEVEL%> "%OUT%\credread.exit"
+>"%OUT%\credread.exit" echo %ERRORLEVEL%
 cmdkey /delete:ptrbox-credread-probe > nul 2>&1
 
 echo == does a bare /pass PROMPT? Type anything at the prompt (it is deleted again).
 echo    If no prompt appears, that is the finding.
 cmdkey /generic:ptrbox-prompt-probe /user:token /pass
-echo %ERRORLEVEL%> "%OUT%\cmdkey-prompt.exit"
+>"%OUT%\cmdkey-prompt.exit" echo %ERRORLEVEL%
 cmdkey /delete:ptrbox-prompt-probe > nul 2>&1
 set /p PROMPTED=Did cmdkey ask for a password just now? [y/n] 
-echo prompted=%PROMPTED%> "%OUT%\cmdkey-prompt.txt"
+>"%OUT%\cmdkey-prompt.txt" echo prompted=%PROMPTED%
 echo.
 echo credential: done. out\credread.txt should end in PASS.
 exit /b 0
