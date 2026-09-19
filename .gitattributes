@@ -2,5 +2,5 @@
 # cloud-init file ends up inside the scripts it writes ("#!/bin/bash\r"). A
 # checkout on Windows with autocrlf must not get to decide either.
 tests/windows-capture/*.cmd  text eol=crlf
-tests/windows-capture/*.txt  text eol=crlf
+tests/windows-capture/README.txt text eol=crlf
 tests/windows-capture/*.yaml text eol=lf
