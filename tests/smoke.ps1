@@ -41,8 +41,14 @@ function Step($what, [scriptblock]$run) {
 }
 
 Step "ptrbox install" { & $ptrbox install --yes }
-# A leftover from a previous run is not an error.
-& $ptrbox rm sandbox-test 2>$null
+# A leftover from a previous run is not an error. Under ErrorActionPreference
+# Stop, PowerShell 5 turns a native command's stderr into a terminating error,
+# so the complaint about a missing VM has to be swallowed with the preference
+# relaxed, not with 2>$null.
+$eap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $ptrbox rm sandbox-test 2>&1 | Out-Null
+$ErrorActionPreference = $eap
 Step "ptrbox new sandbox-test" { & $ptrbox new sandbox-test --no-edit }
 Step "ptrbox shell sandbox-test (id -un; pwd)" {
     # An interactive shell needs a terminal; this asks the same question the
