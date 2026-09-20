@@ -26,8 +26,8 @@ $ErrorActionPreference = "Stop"
 
 $ptrbox = Get-Command ptrbox -ErrorAction SilentlyContinue
 if (-not $ptrbox) {
-    $local = Join-Path $PSScriptRoot "..\ptrbox.exe"
-    if (Test-Path $local) { $ptrbox = $local } else { throw "ptrbox.exe is neither on PATH nor at $local" }
+    $local = Join-Path $PSScriptRoot "ptrbox.exe"
+    if (Test-Path $local) { $ptrbox = $local } else { throw "ptrbox.exe is neither on PATH nor beside this script at $local" }
 }
 
 function Step($what, [scriptblock]$run) {

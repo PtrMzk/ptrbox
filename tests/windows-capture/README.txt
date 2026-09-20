@@ -79,3 +79,24 @@ Keep going and send what there is - a failure is an answer. The likely ones:
     Multipass cannot see Internal switches - either way that file says it.
   - mounts are disabled: run  multipass set local.privileged-mounts=true
     once, note that you had to, and re-run.
+
+Step 22 - the first real run  (Track C is committed; this is what tests it)
+---------------------------------------------------------------------------
+In WSL:
+    make -C ~/code/ptrbox windows-build
+then copy the folder across as above (the same tar line; it now carries
+ptrbox.exe and smoke.ps1). On the PC, first delete the step-0 VM - it holds
+the first slot address and the mount of ptrbox-scratch:
+    multipass delete --purge scratch
+Store the token if not already (prompts; nothing on the command line):
+    cmdkey /generic:claude-sandbox-token /user:token /pass
+Then, in a NORMAL PowerShell (ptrbox never elevates):
+    %USERPROFILE%\windows-capture\smoke.ps1
+It runs ptrbox install, ptrbox new sandbox-test, a check through the agent
+account, ptrbox rm - and its header lists what a green run proves. Keep the
+whole output. Things a first run is expected to decide (CLAUDE.md, items 76
+and 78): whether cloud-init reports 0 or 2 with the real template, whether
+the per-boot scripts run as the agent under runuser -l as they do under
+lima, and whether 1200s is enough for the launch. Then reboot the PC and run
+    ptrbox start sandbox-test
+before the rm, which is the test the switch and the mount repair exist for.

@@ -23,3 +23,5 @@ tests/tmp/
 
 # Half-rendered artifacts (render_file cleans up after itself; belt and braces)
 *.tmp.*
+/tests/windows-capture/ptrbox.exe
+/tests/windows-capture/smoke.ps1

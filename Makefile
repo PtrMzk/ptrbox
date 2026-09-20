@@ -23,7 +23,7 @@ BIN := dist/ptrbox
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build install lint govet shlint cross test gotest check golden smoke clean windows-capture
+.PHONY: help build install lint govet shlint cross test gotest check golden smoke clean windows-capture windows-build
 
 build: ## Compile the CLI to dist/ptrbox
 	@$(GO) build -o $(BIN) ./cmd/ptrbox
@@ -68,6 +68,14 @@ golden: ## Regenerate the golden rendered VM configs - then READ THE DIFF
 windows-capture: ## Build the step-0 credential probe into tests/windows-capture
 	@GOOS=windows $(GO) test -c -o tests/windows-capture/credread-probe.exe ./internal/cli
 	@echo "built tests/windows-capture/credread-probe.exe - now copy that folder to Windows"
+
+# The binary for the PC, into the same folder the capture recipe copies across,
+# with the smoke script beside it: the PC needs neither Go nor a checkout.
+# GOARCH is the machine's - WSL runs on the PC it is building for.
+windows-build: ## Build ptrbox.exe and tests/smoke.ps1 into tests/windows-capture for the PC
+	@GOOS=windows $(GO) build -o tests/windows-capture/ptrbox.exe ./cmd/ptrbox
+	@cp tests/smoke.ps1 tests/windows-capture/smoke.ps1
+	@echo "built tests/windows-capture/ptrbox.exe and smoke.ps1 - now copy that folder to Windows (README.txt says how)"
 
 clean: ## Remove build output
 	@rm -rf dist
