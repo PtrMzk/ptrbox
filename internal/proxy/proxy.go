@@ -361,6 +361,20 @@ func (p *Proxy) Ensure() (changed bool, err error) {
 		if err := p.Backend.Create(p.spec(configPath)); err != nil {
 			return changed, err
 		}
+		if p.Backend.Facts().ProxyReach == backend.DirectAddress {
+			// The address the sandboxes will dial is a netplan file
+			// cloud-init writes on the first boot and applies on the next
+			// one, so a freshly created proxy is not reachable where the
+			// verification below is about to dial until it has rebooted
+			// once. The sandboxes take the same reboot in `ptrbox new`.
+			p.Out.Say("rebooting the proxy VM so it takes its address on the switch")
+			if err := p.Backend.Stop(config.ProxyVM); err != nil {
+				return changed, err
+			}
+			if err := p.Backend.Start(config.ProxyVM); err != nil {
+				return changed, err
+			}
+		}
 		changed = true
 	default:
 		p.Out.Say("starting the proxy VM")

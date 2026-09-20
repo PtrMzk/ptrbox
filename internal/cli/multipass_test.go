@@ -7,6 +7,7 @@ package cli
 // spellings - not the guest, which is the same guestfake as lima's.
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -42,10 +43,79 @@ func newMultipassHarness(t *testing.T) *harness {
 		return []net.Addr{&net.IPNet{IP: net.ParseIP(multipass.HostAddr), Mask: net.CIDRMask(24, 32)}}, nil
 	}
 	t.Cleanup(func() { multipass.InterfaceAddrs = realAddrs })
-	// Until the DirectAddress egress check exists, the proxy's reachability
-	// is answered the lima way: by the proxy VM being up.
-	h.portInUse = func(int) bool { return h.mp.VMStatus(config.ProxyVM) == backend.StatusRunning }
+	// The proxy answers at its switch address exactly while its VM is up.
+	// A test that wants a different host - the address never coming up, a
+	// squid that is not listening - replaces h.dial.
+	realDial := dialable
+	h.dial = func(addr string, port int) bool {
+		return addr == multipass.ProxyAddr && h.mp.VMStatus(config.ProxyVM) == backend.StatusRunning
+	}
+	dialable = func(addr string, port int) bool { return h.dial(addr, port) }
+	// And nothing on this PC's loopback is ptrbox's business: a listener
+	// there is not a conflict, and its absence is not a dead forward.
+	h.portInUse = func(int) bool {
+		t.Fatal("the loopback was asked about on a backend with no loopback forward")
+		return false
+	}
+	t.Cleanup(func() { dialable = realDial })
 	return h
+}
+
+// --- install's egress check ----------------------------------------------------
+
+func TestOnThePCInstallRebootsTheProxyThenDialsItsSwitchAddress(t *testing.T) {
+	h := newMultipassHarness(t)
+	var dialed []string
+	realDial := h.dial
+	h.dial = func(addr string, port int) bool {
+		dialed = append(dialed, fmt.Sprintf("%s:%d", addr, port))
+		return realDial(addr, port)
+	}
+	h.mustRun("install")
+
+	// Launch, then the reboot that applies the netplan address, then the
+	// pushes and the verification.
+	if !h.mp.InOrder("launch --name ptrbox-proxy", "stop ptrbox-proxy") ||
+		!h.mp.InOrder("stop ptrbox-proxy", "start ptrbox-proxy") ||
+		!h.mp.InOrder("start ptrbox-proxy", "sudo tee /etc/squid/squid.conf") {
+		t.Errorf("want launch, stop, start, then the config pushed:\n%s", h.mp.CallLog())
+	}
+	if !strings.Contains(strings.Join(dialed, " "), "172.31.255.2:8888") || !strings.Contains(strings.Join(dialed, " "), "172.31.255.2:8889") {
+		t.Errorf("the host did not dial the proxy's base and first sandbox port at its switch address: %v", dialed)
+	}
+	h.assertOutputContains("reached at 172.31.255.2:8888")
+	if strings.Contains(h.output(), "127.0.0.1") {
+		t.Errorf("the summary names the loopback on a backend with no forward:\n%s", h.output())
+	}
+}
+
+func TestOnThePCAProxyThatNeverAnswersAtItsAddressFailsTheInstall(t *testing.T) {
+	// The VM is up, squid may well be healthy, and nothing answers at the
+	// switch address - the netplan did not take, or the switch is wrong. The
+	// sandboxes dial exactly this, so it is a failed install.
+	h := newMultipassHarness(t)
+	h.dial = func(string, int) bool { return false }
+	err := h.run("install")
+	if err == nil || !strings.Contains(err.Error(), "172.31.255.2:8888") || !strings.Contains(err.Error(), "switch address") {
+		t.Errorf("err = %v, want a failure naming the address and the switch", err)
+	}
+	if strings.Contains(h.output(), "setup complete") {
+		t.Error("install claimed success anyway")
+	}
+}
+
+func TestOnThePCASecondInstallHasNothingToDoAndStillVerifies(t *testing.T) {
+	h := newMultipassHarness(t)
+	h.mustRun("install")
+	h.mp.Reset()
+	h.mustRun("install")
+	h.assertOutputContains("nothing to do")
+	if h.mp.Called("launch") || h.mp.Called("stop ptrbox-proxy") {
+		t.Errorf("a second install relaunched or rebooted the proxy:\n%s", h.mp.CallLog())
+	}
+	if !h.mp.Called("bash -lc <script") {
+		t.Errorf("the second install did not verify the proxy:\n%s", h.mp.CallLog())
+	}
 }
 
 // --- install's preflight -----------------------------------------------------

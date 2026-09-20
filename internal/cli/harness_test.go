@@ -76,8 +76,11 @@ type harness struct {
 	// command reads it: one Fact varied, no second backend written.
 	facts func(*backend.Facts)
 
-	// portInUse answers for the host's TCP ports; see newHarness.
+	// portInUse answers for the host's TCP ports; see newHarness. dial
+	// answers for what the host can reach at an address, which is the
+	// question on a PC; see newMultipassHarness.
 	portInUse func(port int) bool
+	dial      func(addr string, port int) bool
 
 	// lmstudio is what LM Studio on this fake Mac answers when asked for its
 	// models. The default is a Mac without one - an error - so the opencode

@@ -134,7 +134,7 @@ func cmdInstall(env *Env, args []string) error {
 	env.Out.Summary(headline,
 		"next: ptrbox new <repo>",
 		"",
-		fmt.Sprintf("proxy     %s, reached at 127.0.0.1:%d", config.ProxyVM, config.ProxyPort),
+		fmt.Sprintf("proxy     %s, reached at %s", config.ProxyVM, proxyReached(env)),
 		fmt.Sprintf("template  %s (what new VMs may reach)", config.AllowlistPath()),
 		fmt.Sprintf("settings  %s", config.Path()),
 		fmt.Sprintf("per VM    %s/<vm-name>", config.VMDir()),
@@ -398,25 +398,55 @@ func reportAllowlist(env *Env, update bool) error {
 // merely parsed - and a proxy that is down surfaces later as an agent with no
 // network, which is a much harder thing to trace back to here.
 func verifyEgress(env *Env) error {
-	// The host's entire share of the proxy is this forward. Nothing listening
-	// means Lima never published it, and every sandbox's traffic would go to a
-	// closed port however healthy squid is on the other side. Waited for
-	// rather than probed once, because the squid restart Ensure may just have
-	// issued takes the forward down with it - see waitForPort.
-	if !waitForPort(config.ProxyPort, forwardDeadline) {
-		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: %s",
-			config.ProxyPort, config.ProxyVM, env.Backend.Facts().ListHint)
-	}
-	// The sandbox range is a second lima forward, published independently of
-	// the base port's - so the base being up says nothing about it, and it is
-	// the one the sandboxes actually dial. The first port stands in for the
-	// block: they are one forwarding rule, live or not together.
-	if !waitForPort(config.SandboxPortMin(), forwardDeadline) {
-		return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s sandbox port range (%d-%d) is not forwarded, so no sandbox could reach the proxy. Check it with: %s",
-			config.SandboxPortMin(), config.ProxyVM, config.SandboxPortMin(), config.SandboxPortMax(), env.Backend.Facts().ListHint)
+	facts := env.Backend.Facts()
+	switch facts.ProxyReach {
+	case backend.LoopbackForward:
+		// The host's entire share of the proxy is this forward. Nothing
+		// listening means Lima never published it, and every sandbox's
+		// traffic would go to a closed port however healthy squid is on the
+		// other side. Waited for rather than probed once, because the squid
+		// restart Ensure may just have issued takes the forward down with it
+		// - see waitForPort.
+		if !waitForPort(config.ProxyPort, forwardDeadline) {
+			return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s port forward is not up, so no sandbox could reach the proxy. Check it with: %s",
+				config.ProxyPort, config.ProxyVM, facts.ListHint)
+		}
+		// The sandbox range is a second lima forward, published independently
+		// of the base port's - so the base being up says nothing about it,
+		// and it is the one the sandboxes actually dial. The first port
+		// stands in for the block: they are one forwarding rule, live or not
+		// together.
+		if !waitForPort(config.SandboxPortMin(), forwardDeadline) {
+			return fmt.Errorf("nothing is listening on 127.0.0.1:%d - the %s sandbox port range (%d-%d) is not forwarded, so no sandbox could reach the proxy. Check it with: %s",
+				config.SandboxPortMin(), config.ProxyVM, config.SandboxPortMin(), config.SandboxPortMax(), facts.ListHint)
+		}
+	case backend.DirectAddress:
+		// No forward: the proxy VM has an address of its own and the host
+		// dials exactly what a sandbox dials. Two ports for the same reason
+		// as above - the base port is the host's own way in, the first
+		// sandbox port stands in for the block squid must be listening on.
+		// Nothing answering means the VM's switch address is not up (its
+		// netplan applies on the second boot) or squid is not listening on
+		// it, and either way no sandbox could reach the proxy.
+		for _, port := range []int{config.ProxyPort, config.SandboxPortMin()} {
+			if !waitForDial(facts.ProxyAddr, port, forwardDeadline) {
+				return fmt.Errorf("nothing answers at %s:%d - the %s VM is not reachable at its switch address, so no sandbox could reach the proxy. Check it with: %s",
+					facts.ProxyAddr, port, config.ProxyVM, facts.ListHint)
+			}
+		}
 	}
 
 	return env.Proxy.Verify()
+}
+
+// proxyReached is the address the summary reports the proxy at: the host's
+// own way in, which is where the verification just dialed.
+func proxyReached(env *Env) string {
+	facts := env.Backend.Facts()
+	if facts.ProxyReach == backend.DirectAddress {
+		return fmt.Sprintf("%s:%d", facts.ProxyAddr, config.ProxyPort)
+	}
+	return fmt.Sprintf("127.0.0.1:%d", config.ProxyPort)
 }
 
 // --- dependencies ------------------------------------------------------------
@@ -481,8 +511,13 @@ func preflight(env *Env) error {
 	if err := env.Backend.Preflight(); err != nil {
 		return err
 	}
-	if err := preflightProxyPort(env); err != nil {
-		return err
+	// Only a backend that publishes the proxy on the host's loopback has a
+	// port there to conflict over; one whose proxy has its own address has
+	// nothing on the host to check.
+	if env.Backend.Facts().ProxyReach == backend.LoopbackForward {
+		if err := preflightProxyPort(env); err != nil {
+			return err
+		}
 	}
 	preflightKeychain(env)
 	return nil

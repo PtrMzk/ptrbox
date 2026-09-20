@@ -64,6 +64,35 @@ func waitForPort(port int, deadline time.Duration) bool {
 	}
 }
 
+// dialable reports whether something accepts a TCP connection at addr:port -
+// the question for a backend whose proxy VM has an address of its own
+// (backend.DirectAddress), where there is no host-side forward to look at and
+// the host simply dials what the sandboxes dial. A variable for the same
+// reason portInUse is.
+var dialable = func(addr string, port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(addr, fmt.Sprint(port)), forwardPoll)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// waitForDial is dialable with waitForPort's patience, for the same reason:
+// Ensure may just have restarted squid, and a listener that is a beat away
+// from being back must read as patience rather than as a dead proxy.
+func waitForDial(addr string, port int, deadline time.Duration) bool {
+	for waited := time.Duration(0); ; waited += forwardPoll {
+		if dialable(addr, port) {
+			return true
+		}
+		if waited >= deadline {
+			return false
+		}
+		sleep(forwardPoll)
+	}
+}
+
 // openEditor is the default Env.Editor: $VISUAL, else $EDITOR, else the
 // platform's fallback (vi, notepad).
 func openEditor(path string) error {
