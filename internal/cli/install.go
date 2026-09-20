@@ -137,7 +137,7 @@ func cmdInstall(env *Env, args []string) error {
 		fmt.Sprintf("proxy     %s, reached at %s", config.ProxyVM, proxyReached(env)),
 		fmt.Sprintf("template  %s (what new VMs may reach)", config.AllowlistPath()),
 		fmt.Sprintf("settings  %s", config.Path()),
-		fmt.Sprintf("per VM    %s/<vm-name>", config.VMDir()),
+		fmt.Sprintf("per VM    %s", filepath.Join(config.VMDir(), "<vm-name>")),
 	)
 	return nil
 }
