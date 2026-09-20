@@ -77,7 +77,7 @@ func TestAHostRebootLeavesTheMountOnRecordAndRestartRepairsIt(t *testing.T) {
 	if err := b.Start("demo"); err != nil {
 		t.Fatal(err)
 	}
-	if !f.InOrder("grep -qsF", "restart demo") || strings.Count(f.CallLog(), "grep -qsF") != 2 {
+	if !f.InOrder("sh /workspace", "restart demo") || strings.Count(f.CallLog(), "sh /workspace") != 2 {
 		t.Errorf("want a mount check, a restart, and a check again:\n%s", f.CallLog())
 	}
 }
@@ -148,5 +148,20 @@ func TestTheShellIsASessionInTheWorkspace(t *testing.T) {
 	}
 	if len(f.Sessions) != 1 || f.Sessions[0].VM != "demo" || f.Sessions[0].Workdir != "/workspace" || f.Sessions[0].Typed != "ls\n" {
 		t.Errorf("sessions = %+v", f.Sessions)
+	}
+}
+
+func TestADeadMountIsListedAndRepairedByRestart(t *testing.T) {
+	b, f := newBackend()
+	if err := b.Create(spec(t, true)); err != nil {
+		t.Fatal(err)
+	}
+	f.DeadMounts["demo"] = true
+	f.Reset()
+	if err := b.Ready("demo"); err != nil {
+		t.Fatal(err)
+	}
+	if !f.Called("restart demo") {
+		t.Errorf("a dead mount did not get the restart:\n%s", f.CallLog())
 	}
 }

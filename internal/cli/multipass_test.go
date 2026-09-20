@@ -170,7 +170,7 @@ func TestOnThePCNewLaunchesRebootsVerifiesAndInjectsThroughTransfer(t *testing.T
 		`launch --name demo --cpus \d+ --memory \d+G --disk \d+G --cloud-init <script:\d+> --network name=ptrbox,mode=manual --timeout 1200 --mount <script:\d+> 24\.04`,
 		// Every launch and start is followed by cloud-init, then the mount.
 		`exec demo --no-map-working-directory -- cloud-init status --wait`,
-		`exec demo --no-map-working-directory -- grep -qsF .*/proc/mounts`,
+		`exec demo --no-map-working-directory -- sh -c <script:\d+> sh /workspace`,
 		// The reboot that raises the wall.
 		`stop demo`, `start demo`,
 		// Verification as the agent, through the daemon user's sudo - its
@@ -254,7 +254,7 @@ func TestOnThePCStartRepairsAMountAHostRebootLost(t *testing.T) {
 	h.mp.Reset()
 
 	h.mustRun("start", "demo")
-	if !h.mp.InOrder("grep -qsF", "restart demo") {
+	if !h.mp.InOrder("sh /workspace", "restart demo") {
 		t.Errorf("the missing mount was not repaired with a restart:\n%s", h.mp.CallLog())
 	}
 }
@@ -341,5 +341,23 @@ func TestOnThePCLogsComeBackWholeAndFollowIsRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not available on the multipass backend") ||
 		!strings.Contains(err.Error(), "multipass exec ptrbox-proxy -- sudo tail -f") {
 		t.Errorf("err = %v, want a refusal with the console command", err)
+	}
+}
+
+func TestOnThePCStartRepairsAMountLeftDeadByAHostReboot(t *testing.T) {
+	// The first real run: after the PC rebooted, the sandbox was Running,
+	// its mount listed in /proc/mounts, and every access to it stuck for
+	// good. "Listed" is not "alive"; start must find that out and restart.
+	h := newMultipassHarness(t)
+	h.mustRun("new", "demo")
+	h.mp.DeadMounts["demo"] = true
+	h.mp.Reset()
+
+	h.mustRun("start", "demo")
+	if !h.mp.Called("restart demo") {
+		t.Errorf("the dead mount was not repaired with a restart:\n%s", h.mp.CallLog())
+	}
+	if h.mp.DeadMounts["demo"] {
+		t.Error("the mount is still dead after start")
 	}
 }

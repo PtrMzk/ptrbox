@@ -391,11 +391,12 @@ func (b Backend) waitCloudInit(vm string) error {
 	return fmt.Errorf("cloud-init did not finish cleanly in %s: %w\n%s", vm, err, strings.TrimSpace(out))
 }
 
-// Ready compares the daemon's mount record with the guest's /proc/mounts and
-// restarts the VM once if they disagree. It is the second half of Start, and
-// on its own it is what `ptrbox start` asks of a VM the daemon already
-// brought back after a host reboot - Running, with the mount on record and
-// absent from the guest (step 0, stage 9).
+// Ready compares the daemon's mount record with the guest's own view - listed
+// and alive, see mountProbe - and restarts the VM once if they disagree. It
+// is the second half of Start, and on its own it is what `ptrbox start` asks
+// of a VM the daemon already brought back after a host reboot: Running, with
+// the mount on record and either absent from the guest (step 0, stage 9) or
+// listed and dead (the first real run). A restart clears both.
 func (b Backend) Ready(vm string) error {
 	guests, err := b.Mounts(vm)
 	if err != nil {
@@ -424,19 +425,72 @@ func (b Backend) Ready(vm string) error {
 	return nil
 }
 
-// mounted reads the guest's own view. An empty directory at the mount point
-// is what an unmounted mount looks like, so `ls` succeeding proves nothing;
-// a /proc/mounts line is the test - asked as an exit status, because
-// /proc/mounts itself can be longer than a direct exec can carry (see
-// capture).
+// MountProbe is what the guest is asked about a mount point, as an exit
+// status: 1 if nothing is mounted there, 124 if something is listed but does
+// not answer, 0 if it is listed and alive.
+//
+// Listed is not alive. After a host reboot the first real run found the
+// sshfs mount still in /proc/mounts and every access to it stuck for good:
+// the host-side half had died with the reboot, and a dead FUSE mount blocks
+// its callers in the kernel where not even `timeout` can kill them. So the
+// probe stats the mount point (a plain stat: sshfs here does not implement
+// statfs, so `stat -f` fails even on a healthy mount) in a background
+// subshell with every descriptor closed (or the ssh channel would stay open
+// with it), writes a marker when the stat returns, and gives up after ten
+// seconds - leaving a
+// stuck stat behind, which the restart that follows will take with it. An
+// empty directory at the mount point is what an unmounted mount looks like,
+// so `ls` succeeding proves nothing; and /proc/mounts can be longer than a
+// direct exec can carry, so it is grepped, not read.
+const MountProbe = `grep -qsF " $1 " /proc/mounts || exit 1
+m="/tmp/ptrbox-alive-$$"
+( stat "$1" >/dev/null 2>&1 </dev/null; echo ok >"$m" ) >/dev/null 2>&1 </dev/null &
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  [ -e "$m" ] && { rm -f "$m"; exit 0; }
+  sleep 1
+done
+exit 124`
+
+// mountState asks the guest whether a mount point is listed and alive.
+func (b Backend) mountState(vm, guest string) (listed, alive bool) {
+	_, err := b.Client.Output(execArgs(vm, backend.Login, "sh", "-c", MountProbe, "sh", guest)...)
+	switch exitCode(err) {
+	case 0:
+		return true, true
+	case 124:
+		return true, false
+	}
+	return false, false
+}
+
+// mounted is the guest's own view: listed AND answering.
 func (b Backend) mounted(vm, guest string) bool {
-	_, err := b.Client.Output(execArgs(vm, backend.Login, "grep", "-qsF", " "+guest+" ", "/proc/mounts")...)
-	return err == nil
+	_, alive := b.mountState(vm, guest)
+	return alive
+}
+
+// exitCode is the guest command's exit status behind a client error, 0 for
+// no error and -1 for a failure with no status.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	return -1
 }
 
 func (b Backend) requireMount(vm, guest string) error {
-	if b.mounted(vm, guest) {
+	listed, alive := b.mountState(vm, guest)
+	switch {
+	case alive:
 		return nil
+	case listed:
+		return fmt.Errorf("%s's mount at %s is listed but does not answer - a dead mount, which a host reboot leaves behind; "+
+			"`multipass restart %s` did not clear it. Look at it with: %s",
+			vm, guest, vm, Binary+" exec "+vm+" -- grep "+guest+" /proc/mounts")
 	}
 	return fmt.Errorf("%s has no mount at %s: multipass has it on record but the guest shows nothing there "+
 		"(mounts disabled on this host? `multipass set local.privileged-mounts=true`, then `ptrbox start %s`)",

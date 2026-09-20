@@ -35,9 +35,13 @@ type Fake struct {
 	// Mounts is the daemon's record: Mounts[vm][guest path] = host path.
 	Mounts map[string]map[string]string
 	// Unmounted marks VMs whose recorded mounts the guest does not have -
-	// what a host reboot leaves behind. `restart` clears it, as it did on
-	// the PC.
-	Unmounted map[string]bool
+	// what a host reboot left behind in step 0. DeadMounts marks VMs whose
+	// recorded mounts the guest lists but cannot use - what the first real
+	// run's host reboot left behind: the host half of the sshfs died and
+	// every access blocks in the kernel. `restart` clears both, as it did
+	// on the PC.
+	Unmounted  map[string]bool
+	DeadMounts map[string]bool
 
 	// The host.
 	MountsDisabled bool // local.privileged-mounts is false: launch skips the mount, exit 0
@@ -52,7 +56,7 @@ type Fake struct {
 
 // New returns a Fake with no VMs.
 func New() *Fake {
-	return &Fake{Mounts: map[string]map[string]string{}, Unmounted: map[string]bool{}}
+	return &Fake{Mounts: map[string]map[string]string{}, Unmounted: map[string]bool{}, DeadMounts: map[string]bool{}}
 }
 
 // Available reports that multipass is usable, which for a fake it always is.
@@ -87,6 +91,7 @@ func (f *Fake) Run(c backend.Cmd) error {
 		return f.setStatus(arg(c.Args, 1), "Stopped")
 	case "restart":
 		delete(f.Unmounted, arg(c.Args, 1))
+		delete(f.DeadMounts, arg(c.Args, 1))
 		return f.setStatus(arg(c.Args, 1), backend.StatusRunning)
 	case "delete":
 		return f.delete(c)
@@ -272,6 +277,7 @@ func (f *Fake) delete(c backend.Cmd) error {
 	f.VMs = kept
 	delete(f.Mounts, name)
 	delete(f.Unmounted, name)
+	delete(f.DeadMounts, name)
 	return nil
 }
 
@@ -325,16 +331,17 @@ func (f *Fake) exec(c backend.Cmd) error {
 	case joined == "cloud-init status --long":
 		fmt.Fprint(c.Stdout, "status: done\nextended_status: degraded done\nrecoverable_errors:\nWARNING:\n  - cloud-config failed schema validation!\n")
 		return nil
-	case len(argv) == 4 && argv[0] == "grep" && argv[1] == "-qsF" && argv[3] == "/proc/mounts":
-		// The mount check: an exit status, no output.
-		if !f.Unmounted[name] {
-			for _, guest := range f.guests(name) {
-				if argv[2] == " "+guest+" " {
-					return nil
-				}
-			}
+	case len(argv) == 5 && argv[0] == "sh" && argv[1] == "-c" && argv[3] == "sh" && strings.Contains(argv[2], "/proc/mounts") && strings.Contains(argv[2], "stat "):
+		// The mount probe: an exit status, no output. 1 not listed, 124
+		// listed but dead, 0 alive.
+		guest := argv[4]
+		if f.Unmounted[name] || f.Mounts[name][guest] == "" {
+			return guestfake.ExitError(1)
 		}
-		return guestfake.ExitError(1)
+		if f.DeadMounts[name] {
+			return guestfake.ExitError(124)
+		}
+		return nil
 	case len(argv) > 0 && argv[0] == "mkdir":
 		return nil
 	case len(argv) > 0 && argv[0] == "rm":

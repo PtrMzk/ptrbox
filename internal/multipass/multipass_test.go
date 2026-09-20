@@ -96,7 +96,7 @@ const (
 	listArgv  = "list --format json"
 	infoArgv  = "info scratch --format json"
 	waitArgv  = "exec scratch --no-map-working-directory -- cloud-init status --wait"
-	mountArgv = "exec scratch --no-map-working-directory -- grep -qsF  /workspace  /proc/mounts"
+	mountArgv = "exec scratch --no-map-working-directory -- sh -c " + multipass.MountProbe + " sh /workspace"
 	// The line the capture saw for the mount, backslashes octal-escaped.
 	mountLine = `:C:\134Users\134you\134code\134ptrbox-scratch /workspace fuse.sshfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,allow_other 0 0` + "\n"
 )
@@ -655,5 +655,45 @@ func TestAFailedSendReportsTheGuestsStderr(t *testing.T) {
 	err := b.Send("scratch", backend.Login, strings.NewReader("x"), "sudo", "tee", "/etc/nope/x")
 	if err == nil || !strings.Contains(err.Error(), "No such file") || !strings.Contains(err.Error(), "sudo tee /etc/nope/x") {
 		t.Errorf("err = %v, want the guest's stderr and the command", err)
+	}
+}
+
+// The first real run's host reboot left the sshfs mount LISTED and dead:
+// every access stuck in the kernel. The probe answers 124 for that, and it
+// is the same repair as a missing mount - one restart.
+func TestAListedButDeadMountGetsTheRestart(t *testing.T) {
+	b, s := newBackend(t)
+	s.answer(infoArgv, fixture(t, "info.json"))
+	s.exits[mountArgv] = []int{124, 0}
+
+	if err := b.Start("scratch"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(s.calls, "\n"), "restart scratch") {
+		t.Errorf("a dead mount did not get the restart:\n%s", strings.Join(s.calls, "\n"))
+	}
+}
+
+func TestAMountStillDeadAfterTheRestartSaysSo(t *testing.T) {
+	b, s := newBackend(t)
+	s.answer(infoArgv, fixture(t, "info.json"))
+	s.exits[mountArgv] = []int{124, 124}
+	err := b.Start("scratch")
+	if err == nil || !strings.Contains(err.Error(), "does not answer") || !strings.Contains(err.Error(), "/workspace") {
+		t.Errorf("err = %v, want the dead mount named as such", err)
+	}
+}
+
+func TestTheMountProbeCannotItselfGetStuck(t *testing.T) {
+	// The stat runs in the background with every descriptor closed, a marker
+	// says when it returned, and the probe gives up after ten seconds: a
+	// stat stuck in the kernel is left behind for the restart to take.
+	for _, want := range []string{`grep -qsF " $1 " /proc/mounts || exit 1`, `( stat "$1" >/dev/null 2>&1 </dev/null; echo ok >"$m" ) >/dev/null 2>&1 </dev/null &`, `exit 124`} {
+		if !strings.Contains(multipass.MountProbe, want) {
+			t.Errorf("the probe lacks %q", want)
+		}
+	}
+	if strings.Contains(multipass.MountProbe, "timeout ") || strings.Contains(multipass.MountProbe, "stat -f") {
+		t.Error("the probe uses timeout(1) or stat -f, neither of which returns on this mount")
 	}
 }
