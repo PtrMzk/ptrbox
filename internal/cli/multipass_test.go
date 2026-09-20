@@ -280,3 +280,27 @@ func TestOnThePCRmPurgesAndStopsTheProxyWhenLast(t *testing.T) {
 		t.Error("the generated config survived rm")
 	}
 }
+
+// --- opencode ------------------------------------------------------------------
+
+func TestOnThePCOpencodeIsRefusedInThePlanBeforeAnyVM(t *testing.T) {
+	// LM Studio is reached through a firewall rule toward the host's
+	// address, and this backend has no such trip yet. Refused when the plan
+	// is made, naming the key and where to turn it off; LM Studio is never
+	// dialed and nothing is launched.
+	h := newMultipassHarness(t)
+	h.mustRun("install")
+	h.mp.Reset()
+	t.Setenv("PTRBOX_OPENCODE", "true")
+	err := h.run("new", "demo")
+	if err == nil || !strings.Contains(err.Error(), "PTRBOX_OPENCODE") || !strings.Contains(err.Error(), "multipass") ||
+		!strings.Contains(err.Error(), config.VMConfigPath("demo")) {
+		t.Errorf("err = %v, want a refusal naming the key, the backend and the per-VM file", err)
+	}
+	if h.lmstudio.calls != 0 {
+		t.Error("LM Studio was dialed on a backend that cannot route to it")
+	}
+	if h.mp.Called("launch") {
+		t.Errorf("a VM was launched for a plan that was refused:\n%s", h.mp.CallLog())
+	}
+}

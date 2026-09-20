@@ -384,6 +384,15 @@ func printPlan(env *Env, name, repoDir string) ([]lmModel, error) {
 	}
 	var models []lmModel
 	if cfg.Wants("opencode") {
+		// opencode is LM Studio on the host, reached through one firewall
+		// rule toward the host's address. A backend with no such trip has
+		// nowhere for that rule to point, so the request is refused here -
+		// in the plan, before any VM state - rather than rendered into a
+		// wall that would silently drop it.
+		if facts := env.Backend.Facts(); !facts.HostServices {
+			return nil, fmt.Errorf("PTRBOX_OPENCODE is on, but the %s backend cannot reach LM Studio on the host yet - "+
+				"turn PTRBOX_OPENCODE off for this VM (%s)", facts.Name, config.VMConfigPath(name))
+		}
 		var err error
 		if models, err = lmstudioModels(cfg.LMStudioPort); err != nil {
 			return nil, fmt.Errorf("PTRBOX_OPENCODE is on but LM Studio is not answering on 127.0.0.1:%d - "+
