@@ -211,6 +211,10 @@ func TestEverySetuidBinaryWithNoCallerIsStripped(t *testing.T) {
 		"/usr/lib/openssh/ssh-keysign",
 		"/usr/lib/polkit-1/polkit-agent-helper-1",
 		"/usr/bin/mount", "/usr/bin/umount",
+		// Ubuntu 24.04's four, found by verify.sh on the first real run.
+		"/usr/bin/fusermount3", "/usr/bin/crontab",
+		"/usr/lib/x86_64-linux-gnu/utempter/utempter", "/usr/lib/aarch64-linux-gnu/utempter/utempter",
+		"/usr/sbin/pam_extrausers_chkpwd",
 	} {
 		mustMatch(t, stripped, regexp.QuoteMeta(binary),
 			"is not in the setuid strip list: "+binary)

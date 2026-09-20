@@ -73,11 +73,12 @@ done
 
 # --- the mechanism -----------------------------------------------------------
 
-# Every binary below was checked against a live guest and has no caller here.
-# The package stays installed in each case; only the bit goes, which is what
-# keeps cloud-init's dependency on sudo satisfied while making the binary
-# unable to escalate. `sudo -n true` still fails, so vm/verify.sh's existing
-# check reads the same.
+# Every binary below was checked against a live guest - Debian 13 on lima,
+# and Ubuntu 24.04 on Multipass, whose four extras the first real run found
+# with verify.sh (2026-09-20) - and has no caller here. The package stays
+# installed in each case; only the bit goes, which is what keeps cloud-init's
+# dependency on sudo satisfied while making the binary unable to escalate.
+# `sudo -n true` still fails, so vm/verify.sh's existing check reads the same.
 #
 #   sudo            no sudoers entry, and cloud-init runs as root - it depends
 #                   on the package, never invokes the command. KEPT when there
@@ -95,6 +96,14 @@ done
 #                   mount unit, or via the daemon user's sudo - not through
 #                   the setuid binary. The agent loses manual mounting, which
 #                   it has no business doing.
+#   fusermount3     the unprivileged FUSE helper (Ubuntu). The sshfs mount on
+#                   Multipass is made by root through the daemon user's sudo,
+#                   which mounts directly; nothing here mounts as the agent.
+#   crontab         setgid crontab (Ubuntu); nothing schedules jobs here
+#   utempter        setgid utmp (Ubuntu); lets tmux record sessions in utmp,
+#                   so `who` loses tmux panes and nothing else
+#   pam_extrausers_chkpwd
+#                   Ubuntu's PAM helper for /var/lib/extrausers, unused
 #
 # Deliberately LEFT setuid, because each has a caller or a cost:
 #   unix_chkpwd     PAM's password checker, on the login path; small upside
@@ -115,7 +124,12 @@ for binary in \
   /usr/lib/openssh/ssh-keysign \
   /usr/lib/polkit-1/polkit-agent-helper-1 \
   /usr/bin/mount \
-  /usr/bin/umount; do
+  /usr/bin/umount \
+  /usr/bin/fusermount3 \
+  /usr/bin/crontab \
+  /usr/lib/x86_64-linux-gnu/utempter/utempter \
+  /usr/lib/aarch64-linux-gnu/utempter/utempter \
+  /usr/sbin/pam_extrausers_chkpwd; do
   if [ -n "$DAEMON_USER" ] && [ "$binary" = /usr/bin/sudo ]; then
     continue
   fi

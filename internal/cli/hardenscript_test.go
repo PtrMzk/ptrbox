@@ -88,6 +88,9 @@ func hardenScript(t *testing.T, daemonUser string) hardenGuest {
 	plant(t, filepath.Join(g.root, "usr/bin/sudo"), 0o755|os.ModeSetuid)
 	plant(t, filepath.Join(g.root, "usr/bin/su"), 0o755|os.ModeSetuid)
 	plant(t, filepath.Join(g.root, "usr/bin/ssh-agent"), 0o755|os.ModeSetgid)
+	// Ubuntu 24.04's extras, as the first real run found them.
+	plant(t, filepath.Join(g.root, "usr/bin/fusermount3"), 0o755|os.ModeSetuid)
+	plant(t, filepath.Join(g.root, "usr/lib/x86_64-linux-gnu/utempter/utempter"), 0o755|os.ModeSetgid)
 
 	// verify.sh's egress probes are not what these cases are about, and a
 	// test host is not a sandbox; the quiet stubs answer them in a second.
@@ -195,6 +198,9 @@ func TestWithoutADaemonUserNobodyKeepsRoot(t *testing.T) {
 	}
 	if !g.setuid(t, "usr/bin/ssh-agent") {
 		t.Error("ssh-agent lost its setgid bit; it is on the deliberate-keep list")
+	}
+	if g.setuid(t, "usr/bin/fusermount3") || g.setuid(t, "usr/lib/x86_64-linux-gnu/utempter/utempter") {
+		t.Error("an Ubuntu extra kept its bit")
 	}
 	// And it records its timing under its own name, like every other script.
 	timings, err := os.ReadFile(filepath.Join(g.state, "timings"))
