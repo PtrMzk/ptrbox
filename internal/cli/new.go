@@ -151,6 +151,8 @@ func cmdNew(env *Env, args []string) error {
 		"PORT_MAX":   fmt.Sprint(cfg.PortMax),
 		"PROXY_HOST": facts.ProxyAddr,
 		"PROXY_PORT": fmt.Sprint(proxyPort),
+		// The account 90-harden.sh leaves root with, or "" for nobody.
+		"DAEMON_USER": facts.DaemonUser,
 		// The sixth firewall rule, or the comment saying there is none.
 		"LMSTUDIO_NFT_RULE": cfg.LMStudioNftRule(facts.HostAddr),
 		"LMSTUDIO_PORT":     fmt.Sprint(cfg.LMStudioPort),

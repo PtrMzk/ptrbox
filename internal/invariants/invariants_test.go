@@ -148,11 +148,34 @@ func TestTheTemplateDoesNotInheritALimaBaseConfig(t *testing.T) {
 // --- no root -----------------------------------------------------------------
 
 func TestPasswordlessSudoIsRemoved(t *testing.T) {
-	rendered, _ := sandbox(t)
-	mustMatch(t, rendered, `rm -f /etc/sudoers\.d/90-cloud-init-users`,
-		"cloud-init's passwordless sudo is not removed")
-	mustMatch(t, rendered, `grep -rl 'NOPASSWD' /etc/sudoers\.d/`,
-		"leftover NOPASSWD drop-ins are not swept")
+	// Every drop-in under /etc/sudoers.d that grants NOPASSWD is swept - the
+	// sweep is what removes cloud-init's 90-cloud-init-users, and it is a
+	// sweep rather than one name so that a differently named drop-in goes
+	// too. The loop is executed against a planted directory in
+	// internal/cli/hardenscript_test.go; this holds the rendered lima script
+	// to the real directory and the real verb.
+	rendered, stripped := sandbox(t)
+	mustMatch(t, rendered, `sudoers_dir="\$\{2:-/etc/sudoers\.d\}"`,
+		"the sudoers sweep does not default to /etc/sudoers.d")
+	mustMatch(t, stripped, `grep -q 'NOPASSWD' "\$dropin"`,
+		"NOPASSWD drop-ins are not swept")
+	mustMatch(t, stripped, `rm -f "\$dropin"`,
+		"a NOPASSWD drop-in found by the sweep is not removed")
+}
+
+// The two-user model, held to the backend that has it. A daemon user is the
+// one account 90-harden.sh leaves root with - its NOPASSWD grant kept, sudo's
+// setuid bit kept - and lima has no such account: its one user is the agent.
+// So the lima rendering must name nobody, and the script must make both
+// exceptions conditional on the name rather than on anything else.
+func TestLimaNamesNoDaemonUser(t *testing.T) {
+	rendered, stripped := sandbox(t)
+	mustMatch(t, rendered, `(?m)^\s*DAEMON_USER=""$`,
+		"the lima sandbox names a daemon user, or does not render the key at all")
+	mustMatch(t, stripped, `\[ -n "\$DAEMON_USER" \] && \[ "\$binary" = /usr/bin/sudo \]`,
+		"sudo's setuid bit is not gated on the daemon user alone")
+	mustMatch(t, stripped, `\[ -n "\$DAEMON_USER" \] && ! grep 'NOPASSWD' "\$dropin" \| grep -vqE`,
+		"a NOPASSWD drop-in is kept for something other than the daemon user's own lines")
 }
 
 func TestNothingGrantsNOPASSWDBack(t *testing.T) {
@@ -1001,10 +1024,15 @@ func TestTheVerificationScriptChecksWhatMatters(t *testing.T) {
 	// A verify.sh that quietly stopped testing the wall would be worse than
 	// none.
 	verify := asset(t, "vm/verify.sh")
-	for _, want := range []string{"sudo -n true", "noproxy", "mount -t virtiofs",
-		"extra-packages.failed", "setuid stripped", "perm -4000",
+	for _, want := range []string{"sudo -n true", "noproxy", `mount -t "$mount_type"`,
+		`mount_type="virtiofs"`, "extra-packages.failed", "setuid stripped", "perm -4000",
 		"no multicast dns", ".credentials.json", "no stored login", "lm studio reachable",
-		"egress fails fast", "exit 1"} {
+		"egress fails fast", "exit 1",
+		// The two-user model's assertions, and the marker that carries the
+		// backend's answers into the guest: read from $state, and only when
+		// the agent could not have written it.
+		"daemon user isolated", `marker="$state/backend"`, `[ -w "$marker" ] || [ -w "$state" ]`,
+		"sudo -n -u", "daemon-user=", "mount-type="} {
 		if !strings.Contains(verify, want) {
 			t.Errorf("vm/verify.sh no longer checks %q", want)
 		}

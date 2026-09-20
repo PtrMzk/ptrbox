@@ -10,7 +10,7 @@
 # Note on mounts: virtiofs mounts don't show host paths in `mount` output (they
 # appear as opaque lima-<hash> tags), so host exposure is checked by the
 # absence of the /Users path Lima would mirror a home mount to, plus a strict
-# count of virtiofs mounts.
+# count of mounts of the backend's type.
 # =============================================================================
 set -u
 
@@ -31,6 +31,35 @@ bad() {
   fails=$((fails + 1))
 }
 
+# --- which backend built this ------------------------------------------------
+
+# Two things below differ by backend: what kind of mount the repo arrives as,
+# and whether an account in the guest keeps root. Lima writes no marker and
+# gets lima's answers - a virtiofs mount, nobody keeps root. A cloud-init
+# backend writes `$state/backend` as root with `mount-type=` and
+# `daemon-user=` lines, the second naming the account its daemon logs in as
+# (Multipass needs sudo in the guest on every boot; that account keeps it,
+# and sudo keeps its setuid bit for it).
+#
+# The marker is what licenses a setuid sudo, so it must be something the
+# agent - the user running this - could not have written: neither the file
+# nor its directory may be writable by this account. A marker that fails that
+# test is reported and then IGNORED, so the sudo check below falls back to
+# the strict answer rather than the one the marker asked for.
+mount_type="virtiofs"
+daemon_user=""
+marker="$state/backend"
+if [ -f "$marker" ]; then
+  if [ -w "$marker" ] || [ -w "$state" ]; then
+    bad "backend marker" "$marker is writable by $(id -un), so nothing it says can be trusted"
+  else
+    ok "backend marker"
+    mount_type="$(sed -n 's/^mount-type=//p' "$marker" | head -n 1)"
+    daemon_user="$(sed -n 's/^daemon-user=//p' "$marker" | head -n 1)"
+    : "${mount_type:=virtiofs}"
+  fi
+fi
+
 # --- isolation ---------------------------------------------------------------
 
 if [ ! -e /Users ]; then
@@ -39,11 +68,11 @@ else
   bad "host home hidden" "/Users is visible in the guest"
 fi
 
-mounts="$(mount -t virtiofs | wc -l | tr -d ' ')"
+mounts="$(mount -t "$mount_type" | wc -l | tr -d ' ')"
 if [ "$mounts" -eq 1 ]; then
   ok "exactly one mount"
 else
-  bad "exactly one mount" "found $mounts virtiofs mounts, expected 1"
+  bad "exactly one mount" "found $mounts $mount_type mounts, expected 1"
 fi
 
 if [ -d /workspace ] && [ -w /workspace ]; then
@@ -60,6 +89,20 @@ else
   ok "sudo removed"
 fi
 
+# On a backend with a daemon user, that account holds root and this one must
+# not be it and must have no way to become it. `sudo -n -u` is the way sudo
+# would grant - the agent has no sudoers entry, so it fails - and su lost its
+# setuid bit in the sweep below, which is the other way.
+if [ -n "$daemon_user" ]; then
+  if [ "$(id -un)" = "$daemon_user" ]; then
+    bad "daemon user isolated" "this is running as $daemon_user, the account that keeps root"
+  elif sudo -n -u "$daemon_user" true 2>/dev/null; then
+    bad "daemon user isolated" "the agent can become $daemon_user, and $daemon_user has root"
+  else
+    ok "daemon user isolated"
+  fi
+fi
+
 # The other half of "no root": 90-harden.sh strips the setuid bit from every
 # binary that has no caller in a sandbox, because a setuid-root binary is the
 # mechanism that turns "no root" back into "root" whatever the sudoers file
@@ -73,7 +116,13 @@ fi
 # Space-padded matching, the same idiom 30-toolchain.sh uses for its runtime
 # list: a bare substring test would accept /usr/bin/ssh because the expected
 # list happens to contain /usr/bin/ssh-agent. No path here contains a space.
+#
+# sudo joins the list only on the word of a trusted marker: with a daemon user
+# it is that account's channel to root and 90-harden.sh leaves the bit on.
 expected_setuid=" /usr/lib/dbus-1.0/dbus-daemon-launch-helper /usr/bin/ssh-agent /usr/sbin/unix_chkpwd "
+if [ -n "$daemon_user" ]; then
+  expected_setuid="${expected_setuid}/usr/bin/sudo "
+fi
 unexpected=""
 for binary in $(find "$scan_root" -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | sort); do
   # Compared as an absolute path. Under test the sweep starts somewhere in

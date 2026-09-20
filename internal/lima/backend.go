@@ -27,13 +27,16 @@ var _ backend.Backend = Backend{}
 
 func (Backend) Facts() backend.Facts {
 	return backend.Facts{
-		Name:             "lima",
-		ProxyAddr:        Gateway,
-		ProxyReach:       backend.LoopbackForward,
-		HostAddr:         Gateway,
-		HostServices:     true,
-		SandboxTemplate:  "vm/claude-repo.yaml",
-		ProxyTemplate:    "vm/proxy.yaml",
+		Name:            "lima",
+		ProxyAddr:       Gateway,
+		ProxyReach:      backend.LoopbackForward,
+		HostAddr:        Gateway,
+		HostServices:    true,
+		SandboxTemplate: "vm/claude-repo.yaml",
+		ProxyTemplate:   "vm/proxy.yaml",
+		// One account, and it loses root: nothing lima does after the first
+		// boot needs sudo in the guest.
+		DaemonUser:       "",
 		HasSSHConfigLink: true,
 		ShellAdvice:      func(vm string) string { return "ssh lima-" + vm },
 		ListHint:         Binary + " list",

@@ -103,6 +103,14 @@ type Facts struct {
 	SandboxTemplate string
 	ProxyTemplate   string
 
+	// DaemonUser is the guest account the backend's own daemon logs in as
+	// and needs root through, on a backend that needs one - Multipass
+	// mounts and updates through the guest's sudo on every boot. That
+	// account keeps its NOPASSWD grant and sudo keeps its setuid bit; the
+	// agent is a different account with neither. Empty on a backend with
+	// one account, where that account loses root: lima.
+	DaemonUser string
+
 	// HasSSHConfigLink: the backend writes an ssh config per VM that ptrbox
 	// links into ~/.ssh/config.d, and removes with the VM.
 	HasSSHConfigLink bool

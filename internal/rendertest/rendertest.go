@@ -42,7 +42,10 @@ func Args() render.Values {
 		"PROXY_HOST":     "192.168.5.2",
 		// The VM's own allocated port, not the base port: since item 37 every
 		// sandbox dials its own, and 8889 is the first allocation.
-		"PROXY_PORT":     "8889",
+		"PROXY_PORT": "8889",
+		// Lima: one account, and it loses root. The invariants hold this
+		// rendering to an empty daemon user.
+		"DAEMON_USER":    "",
 		"GIT_USER_NAME":  "Example Dev",
 		"GIT_USER_EMAIL": "dev@example.com",
 		"CLAUDE_MODEL":   "opus",
