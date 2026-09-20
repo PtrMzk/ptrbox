@@ -74,6 +74,11 @@ type Stream struct {
 	// image".
 	Image string
 
+	// Tool is the binary whose output this is, for the failure replay's
+	// heading: "what multipass printed". Empty reads as limactl, which is
+	// what every line of the patterns below is.
+	Tool string
+
 	partial  strings.Builder // bytes since the last newline
 	raw      []string        // this invocation's lines, for a failure replay
 	overflow bool
@@ -133,7 +138,7 @@ func (s *Stream) Replay() {
 	if !s.failed || len(s.raw) == 0 {
 		return
 	}
-	s.Out.Say("what limactl printed:")
+	s.Out.Say("what %s printed:", s.tool())
 	if s.overflow {
 		s.Out.Detail("(earlier lines dropped)")
 	}
@@ -315,6 +320,14 @@ func (s *Stream) translate(line string, e entry) {
 	default:
 		s.Out.Dim(line)
 	}
+}
+
+// tool is the binary named in the failure replay.
+func (s *Stream) tool() string {
+	if s.Tool == "" {
+		return "limactl"
+	}
+	return s.Tool
 }
 
 func (s *Stream) image() string {

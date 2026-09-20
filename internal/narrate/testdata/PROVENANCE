@@ -102,3 +102,36 @@ still have no patterns:
 Both files are replayed: the translator's tests read each directly, and
 limafake serves the cold capture for a create (StartOutput) and this one for
 a restart (RestartOutput), which is the same split real lima makes.
+
+
+multipass-launch.log, multipass-launch-nomount.log, multipass-start-failed.log
+==============================================================================
+
+What `multipass launch` and `multipass start` print on the Windows PC, for
+the Multipass backend. THESE COPIES ARE CAPTURED - by hand, one command at a
+time, the output pasted (tests/windows-capture/FINDINGS.md, stages 2 and 7).
+
+    captured   2026-09-19
+    multipass  1.16.4+win (multipassd 1.16.4+win, driver hyperv)
+    host       Windows 11, Hyper-V
+    guest      Ubuntu 24.04.5 LTS via the `24.04` alias
+
+    multipass-launch.log
+        multipass launch --name scratch2 --cpus 2 --memory 2G --disk 10G
+          --cloud-init exp-nosudo.yaml --mount %USERPROFILE%\code\ptrbox-scratch:/workspace 24.04
+        with mounts enabled: the two lines launch writes to stdout, exit 0.
+    multipass-launch-nomount.log
+        the same launch shape (--name scratch, --network name=ptrbox,mode=manual
+        as well) with mounts DISABLED on the host: launch skips the mount,
+        says so, and still exits 0.
+    multipass-start-failed.log
+        multipass start scratch2, boot 3 of the sudo experiment, exit 2: the
+        four lines (one blank) start writes when the guest's login user has no
+        sudo and the mount cannot be re-established.
+
+The only edit is C:\Users\<you> -> C:\Users\you. Multipass writes these to
+stdout, not to a log stream, and they carry no timestamps or levels: nothing
+in them matches a lima pattern, and nothing should. narrate shows every one
+verbatim, dimmed - the designed degradation - and a test holds it to that.
+No multipass pattern is written until a capture justifies one; these three
+files are the whole of what has been captured, and they do not justify any.

@@ -304,3 +304,18 @@ func TestOnThePCOpencodeIsRefusedInThePlanBeforeAnyVM(t *testing.T) {
 		t.Errorf("a VM was launched for a plan that was refused:\n%s", h.mp.CallLog())
 	}
 }
+
+// --- what multipass prints -------------------------------------------------------
+
+func TestOnThePCMultipassOutputIsShownVerbatim(t *testing.T) {
+	// No translation exists for multipass's lines and none is pretended: the
+	// launch's two lines reach the terminal as multipass wrote them.
+	h := newMultipassHarness(t)
+	h.mp.LaunchOutput = []byte("Launched: demo\nMounted 'C:\\Users\\you\\code\\demo' into 'demo:/workspace'\n")
+	h.mustRun("new", "demo")
+	for _, want := range []string{"Launched: demo", "Mounted 'C:\\Users\\you\\code\\demo' into 'demo:/workspace'"} {
+		if !strings.Contains(h.stderr, want) {
+			t.Errorf("multipass's line %q did not reach the terminal:\n%s", want, h.stderr)
+		}
+	}
+}

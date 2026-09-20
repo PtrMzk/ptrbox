@@ -1,0 +1,4 @@
+start failed: The following errors occurred:
+Error enabling mount support in 'scratch2'
+
+Please install the 'multipass-sshfs' snap manually inside the instance.
