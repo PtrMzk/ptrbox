@@ -135,6 +135,11 @@ type Facts struct {
 	// HasSSHConfigLink: the backend writes an ssh config per VM that ptrbox
 	// links into ~/.ssh/config.d, and removes with the VM.
 	HasSSHConfigLink bool
+	// StreamsLive: Stream delivers a guest command's output as it arrives,
+	// so a command that never ends (`tail -f`) can be followed. False on a
+	// backend that has to bring output back whole after the command is
+	// done, where such a command would never return.
+	StreamsLive bool
 	// ShellAdvice is what to type to get a shell in the VM.
 	ShellAdvice func(vm string) string
 	// ListHint is what to type to see the backend's own view of its VMs.

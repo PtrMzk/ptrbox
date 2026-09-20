@@ -170,11 +170,14 @@ func TestOnThePCNewLaunchesRebootsVerifiesAndInjectsThroughTransfer(t *testing.T
 		`launch --name demo --cpus \d+ --memory \d+G --disk \d+G --cloud-init <script:\d+> --network name=ptrbox,mode=manual --timeout 1200 --mount <script:\d+> 24\.04`,
 		// Every launch and start is followed by cloud-init, then the mount.
 		`exec demo --no-map-working-directory -- cloud-init status --wait`,
-		`exec demo --no-map-working-directory -- cat /proc/mounts`,
+		`exec demo --no-map-working-directory -- grep -qsF .*/proc/mounts`,
 		// The reboot that raises the wall.
 		`stop demo`, `start demo`,
-		// Verification as the agent, through the daemon user's sudo.
-		`exec demo --no-map-working-directory -- sudo -n -u agent -H bash -lc <script:\d+>`,
+		// Verification as the agent, through the daemon user's sudo - its
+		// output redirected into a file of the daemon user's and brought back by
+		// transfer, since a direct exec stalls past 4096 bytes of output.
+		`exec demo --no-map-working-directory -- sh -c f=\$1; shift; sudo -n -u agent -H "\$@" >"\$f" 2>"\$f\.err" sh /home/ubuntu/\.ptrbox/out-[0-9a-f]+ bash -lc <script:\d+>`,
+		`transfer demo:/home/ubuntu/\.ptrbox/out-[0-9a-f]+ -`,
 		// The token: transferred into the daemon user's private directory,
 		// then redirected into the agent's command.
 		`transfer - demo:/home/ubuntu/\.ptrbox/stdin-[0-9a-f]+`,
@@ -251,7 +254,7 @@ func TestOnThePCStartRepairsAMountAHostRebootLost(t *testing.T) {
 	h.mp.Reset()
 
 	h.mustRun("start", "demo")
-	if !h.mp.InOrder("cat /proc/mounts", "restart demo") {
+	if !h.mp.InOrder("grep -qsF", "restart demo") {
 		t.Errorf("the missing mount was not repaired with a restart:\n%s", h.mp.CallLog())
 	}
 }
@@ -317,5 +320,26 @@ func TestOnThePCMultipassOutputIsShownVerbatim(t *testing.T) {
 		if !strings.Contains(h.stderr, want) {
 			t.Errorf("multipass's line %q did not reach the terminal:\n%s", want, h.stderr)
 		}
+	}
+}
+
+// --- logs ----------------------------------------------------------------------
+
+func TestOnThePCLogsComeBackWholeAndFollowIsRefused(t *testing.T) {
+	h := newMultipassHarness(t)
+	h.mustRun("install")
+	h.mp.WriteFile(config.ProxyVM, config.SquidLog, "first request\nsecond request TCP_DENIED\n")
+
+	h.mustRun("logs")
+	if !strings.Contains(h.stdout, "second request TCP_DENIED") {
+		t.Errorf("the log did not come back:\n%s", h.output())
+	}
+
+	// A command that never ends never comes back through a file; refused,
+	// with the console command that does work.
+	err := h.run("logs", "--follow")
+	if err == nil || !strings.Contains(err.Error(), "not available on the multipass backend") ||
+		!strings.Contains(err.Error(), "multipass exec ptrbox-proxy -- sudo tail -f") {
+		t.Errorf("err = %v, want a refusal with the console command", err)
 	}
 }

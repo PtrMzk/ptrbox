@@ -74,6 +74,11 @@ func cmdLogs(env *Env, args []string) error {
 	}
 	tail = append(tail, config.SquidLog)
 
+	if follow && !env.Backend.Facts().StreamsLive {
+		facts := env.Backend.Facts()
+		return fmt.Errorf("--follow is not available on the %s backend, whose guest output comes back whole once a command ends; watch the log from a console with: %s",
+			facts.Name, facts.ExecAdvice(config.ProxyVM, "sudo", "tail", "-f", config.SquidLog))
+	}
 	if follow {
 		// Streamed rather than buffered: the whole point of -f is seeing
 		// requests as they arrive. Filtering happens line by line here, which

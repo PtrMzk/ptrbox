@@ -22,11 +22,11 @@ type script struct {
 	stdins  []string
 	outputs map[string][]string
 	fails   map[string]string
-	exits   map[string]int
+	exits   map[string][]int // consumed in order like outputs; 0 is success
 }
 
 func newScript() *script {
-	return &script{outputs: map[string][]string{}, fails: map[string]string{}, exits: map[string]int{}}
+	return &script{outputs: map[string][]string{}, fails: map[string]string{}, exits: map[string][]int{}}
 }
 
 func (s *script) Available() bool { return true }
@@ -58,8 +58,14 @@ func (s *script) Run(c backend.Cmd) error {
 		}
 		return errors.New("exit status 1")
 	}
-	if code, ok := s.exits[key]; ok {
-		return exitStatus(code)
+	if codes, ok := s.exits[key]; ok && len(codes) > 0 {
+		code := codes[0]
+		if len(codes) > 1 {
+			s.exits[key] = codes[1:]
+		}
+		if code != 0 {
+			return exitStatus(code)
+		}
 	}
 	return nil
 }
@@ -90,7 +96,7 @@ const (
 	listArgv  = "list --format json"
 	infoArgv  = "info scratch --format json"
 	waitArgv  = "exec scratch --no-map-working-directory -- cloud-init status --wait"
-	mountArgv = "exec scratch --no-map-working-directory -- cat /proc/mounts"
+	mountArgv = "exec scratch --no-map-working-directory -- grep -qsF  /workspace  /proc/mounts"
 	// The line the capture saw for the mount, backslashes octal-escaped.
 	mountLine = `:C:\134Users\134you\134code\134ptrbox-scratch /workspace fuse.sshfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,allow_other 0 0` + "\n"
 )
@@ -188,7 +194,7 @@ func TestCreateRefusesADistroMultipassHasNoImageFor(t *testing.T) {
 func TestALaunchThatSkippedTheMountIsAFailedCreate(t *testing.T) {
 	// Mounts disabled on the host: launch says "Skipping mount" and exits 0.
 	b, s := newBackend(t)
-	s.answer(mountArgv, "proc /proc proc rw 0 0\n")
+	s.exits[mountArgv] = []int{1}
 	err := b.Create(spec(t))
 	if err == nil || !strings.Contains(err.Error(), "/workspace") || !strings.Contains(err.Error(), "privileged-mounts") {
 		t.Errorf("err = %v, want a failure naming the mount and the setting", err)
@@ -212,7 +218,7 @@ func TestACloudInitDoneWithWarningsIsDoneAndTheWarningsAreShown(t *testing.T) {
 	var shown strings.Builder
 	b, s := newBackendWith(t, &shown)
 	s.answer(waitArgv, "status: done\n")
-	s.exits[waitArgv] = 2
+	s.exits[waitArgv] = []int{2}
 	s.answer("exec scratch --no-map-working-directory -- cloud-init status --long",
 		"status: done\nextended_status: degraded done\nrecoverable_errors:\nWARNING:\n  - cloud-config failed schema validation!\n")
 	s.answer(mountArgv, mountLine)
@@ -259,8 +265,7 @@ func TestARecordedMountTheGuestLacksGetsOneRestart(t *testing.T) {
 	// re-established it.
 	b, s := newBackend(t)
 	s.answer(infoArgv, fixture(t, "info.json"))
-	s.answer(mountArgv, "proc /proc proc rw 0 0\n")
-	s.answer(mountArgv, mountLine)
+	s.exits[mountArgv] = []int{1, 0}
 
 	if err := b.Start("scratch"); err != nil {
 		t.Fatal(err)
@@ -274,7 +279,7 @@ func TestARecordedMountTheGuestLacksGetsOneRestart(t *testing.T) {
 func TestAMountStillMissingAfterTheRestartIsAFailedStart(t *testing.T) {
 	b, s := newBackend(t)
 	s.answer(infoArgv, fixture(t, "info.json"))
-	s.answer(mountArgv, "proc /proc proc rw 0 0\n")
+	s.exits[mountArgv] = []int{1, 1}
 
 	err := b.Start("scratch")
 	if err == nil || !strings.Contains(err.Error(), "/workspace") {
@@ -318,29 +323,109 @@ func TestValidateWantsCloudConfigOnLineOne(t *testing.T) {
 
 // --- in-guest execution ------------------------------------------------------
 
-func TestTheAgentIsReachedThroughTheDaemonUsersSudoAndTheLoginUserDirectly(t *testing.T) {
-	b, s := newBackend(t)
-	s.answer("exec scratch --no-map-working-directory -- sudo -n -u agent -H id -un", "agent\n")
-	s.answer("exec scratch --no-map-working-directory -- id -un", "ubuntu\n")
+// fixScratch makes the daemon user's scratch file names predictable.
+func fixScratch(t *testing.T) {
+	t.Helper()
+	real := multipass.ScratchName
+	multipass.ScratchName = func() string { return "fixed" }
+	t.Cleanup(func() { multipass.ScratchName = real })
+}
 
-	if out, err := b.Output("scratch", backend.Agent, "id", "-un"); err != nil || out != "agent\n" {
-		t.Errorf("Agent Output = %q, %v", out, err)
+const (
+	outFile   = "/home/ubuntu/.ptrbox/out-fixed"
+	mkdirArgv = "exec scratch --no-map-working-directory -- mkdir -p -m 0700 /home/ubuntu/.ptrbox"
+	rmArgv    = "exec scratch --no-map-working-directory -- rm -f " + outFile + " " + outFile + ".err"
+)
+
+// The first real run (2026-09-20) found `multipass exec` stalling for good
+// once a command wrote more than 4096 bytes to a piped stdout. So nothing a
+// caller asks for crosses the exec channel: the command writes to files the
+// daemon user owns, the exec carries the exit status, transfer brings the
+// files back over SFTP, and they are removed.
+func TestOutputRunsToAFileAndBringsItBackOverSFTP(t *testing.T) {
+	b, s := newBackend(t)
+	fixScratch(t)
+	s.answer("transfer scratch:"+outFile+" -", "agent\n")
+
+	out, err := b.Output("scratch", backend.Agent, "id", "-un")
+	if err != nil || out != "agent\n" {
+		t.Fatalf("Output = %q, %v", out, err)
 	}
-	if out, err := b.Output("scratch", backend.Login, "id", "-un"); err != nil || out != "ubuntu\n" {
-		t.Errorf("Login Output = %q, %v", out, err)
+	want := []string{
+		mkdirArgv,
+		// The daemon user's shell does the redirecting, so the file is its
+		// own whatever the command runs as.
+		`exec scratch --no-map-working-directory -- sh -c f=$1; shift; sudo -n -u agent -H "$@" >"$f" 2>"$f.err" sh ` + outFile + " id -un",
+		"transfer scratch:" + outFile + " -",
+		rmArgv,
 	}
-	var buf strings.Builder
-	if err := b.Stream("scratch", backend.Login, &buf, "id", "-un"); err != nil || buf.String() != "ubuntu\n" {
-		t.Errorf("Stream = %q, %v", buf.String(), err)
+	if strings.Join(s.calls, "\n") != strings.Join(want, "\n") {
+		t.Errorf("calls:\n%s\nwant:\n%s", strings.Join(s.calls, "\n"), strings.Join(want, "\n"))
 	}
 }
 
-func TestOutputPutsMultipassStderrInTheError(t *testing.T) {
+func TestALoginUserCommandRunsWithoutTheSudoWrapper(t *testing.T) {
 	b, s := newBackend(t)
-	s.fails["exec scratch --no-map-working-directory -- cat /nope"] = "cat: /nope: No such file or directory\n"
+	fixScratch(t)
+	s.answer("transfer scratch:"+outFile+" -", "ubuntu\n")
+	out, err := b.Output("scratch", backend.Login, "id", "-un")
+	if err != nil || out != "ubuntu\n" {
+		t.Fatalf("Output = %q, %v", out, err)
+	}
+	if got := s.calls[1]; !strings.Contains(got, `sh -c f=$1; shift; "$@" >"$f" 2>"$f.err" sh `) || strings.Contains(got, "agent") {
+		t.Errorf("exec = %q, want the command itself redirected, no sudo", got)
+	}
+}
+
+func TestAFailedCommandsStderrComesBackFromItsFile(t *testing.T) {
+	b, s := newBackend(t)
+	fixScratch(t)
+	s.fails[`exec scratch --no-map-working-directory -- sh -c f=$1; shift; "$@" >"$f" 2>"$f.err" sh `+outFile+" cat /nope"] = ""
+	s.answer("transfer scratch:"+outFile+" -", "")
+	s.answer("transfer scratch:"+outFile+".err -", "cat: /nope: No such file or directory\n")
+
 	_, err := b.Output("scratch", backend.Login, "cat", "/nope")
-	if err == nil || !strings.Contains(err.Error(), "No such file") || !strings.Contains(err.Error(), "multipass exec scratch") {
-		t.Errorf("err = %v, want multipass's stderr and the invocation", err)
+	if err == nil || !strings.Contains(err.Error(), "No such file") ||
+		!strings.Contains(err.Error(), "multipass exec scratch --no-map-working-directory -- cat /nope") {
+		t.Errorf("err = %v, want the guest's stderr and the invocation a person could retype", err)
+	}
+	if !strings.Contains(strings.Join(s.calls, "\n"), rmArgv) {
+		t.Error("the files were not removed after a failure")
+	}
+}
+
+func TestStreamAndPassthroughDeliverTheCapturedOutput(t *testing.T) {
+	var shown strings.Builder
+	b, s := newBackendWith(t, &shown)
+	fixScratch(t)
+	s.answer("transfer scratch:"+outFile+" -", "line 1\nline 2\n")
+	s.answer("transfer scratch:"+outFile+" -", "  sudo removed          OK\n")
+
+	var buf strings.Builder
+	if err := b.Stream("scratch", backend.Login, &buf, "tail", "-n", "2", "/var/log/x"); err != nil || buf.String() != "line 1\nline 2\n" {
+		t.Errorf("Stream = %q, %v", buf.String(), err)
+	}
+	if err := b.Passthrough("scratch", backend.Agent, "bash", "-lc", "verify"); err != nil || !strings.Contains(shown.String(), "sudo removed") {
+		t.Errorf("Passthrough shown = %q, %v", shown.String(), err)
+	}
+}
+
+func TestNothingACallerAsksForCrossesTheExecChannel(t *testing.T) {
+	// The invariant behind the whole detour: the only execs that may carry
+	// output are the ones this package issues for itself, whose answers it
+	// knows to be small.
+	b, s := newBackend(t)
+	fixScratch(t)
+	s.answer("transfer scratch:"+outFile+" -", strings.Repeat("x", 100000))
+	out, err := b.Output("scratch", backend.Login, "cat", "/etc/squid/squid.conf")
+	if err != nil || len(out) != 100000 {
+		t.Errorf("a large output did not come back whole: %d bytes, %v", len(out), err)
+	}
+	for _, call := range s.calls {
+		if strings.HasPrefix(call, "exec ") && !strings.Contains(call, `>"$f"`) &&
+			!strings.HasPrefix(call, mkdirArgv) && !strings.HasPrefix(call, rmArgv) {
+			t.Errorf("an exec that may carry the command's output: %q", call)
+		}
 	}
 }
 

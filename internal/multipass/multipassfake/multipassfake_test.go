@@ -77,7 +77,7 @@ func TestAHostRebootLeavesTheMountOnRecordAndRestartRepairsIt(t *testing.T) {
 	if err := b.Start("demo"); err != nil {
 		t.Fatal(err)
 	}
-	if !f.InOrder("cat /proc/mounts", "restart demo") || strings.Count(f.CallLog(), "cat /proc/mounts") != 2 {
+	if !f.InOrder("grep -qsF", "restart demo") || strings.Count(f.CallLog(), "grep -qsF") != 2 {
 		t.Errorf("want a mount check, a restart, and a check again:\n%s", f.CallLog())
 	}
 }

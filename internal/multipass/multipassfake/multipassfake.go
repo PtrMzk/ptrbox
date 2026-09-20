@@ -325,18 +325,26 @@ func (f *Fake) exec(c backend.Cmd) error {
 	case joined == "cloud-init status --long":
 		fmt.Fprint(c.Stdout, "status: done\nextended_status: degraded done\nrecoverable_errors:\nWARNING:\n  - cloud-config failed schema validation!\n")
 		return nil
-	case joined == "cat /proc/mounts":
-		fmt.Fprintln(c.Stdout, "/dev/sda1 / ext4 rw,relatime 0 0")
+	case len(argv) == 4 && argv[0] == "grep" && argv[1] == "-qsF" && argv[3] == "/proc/mounts":
+		// The mount check: an exit status, no output.
 		if !f.Unmounted[name] {
 			for _, guest := range f.guests(name) {
-				fmt.Fprintf(c.Stdout, "%s %s fuse.sshfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,allow_other 0 0\n",
-					":"+strings.ReplaceAll(f.Mounts[name][guest], `\`, `\134`), guest)
+				if argv[2] == " "+guest+" " {
+					return nil
+				}
+			}
+		}
+		return guestfake.ExitError(1)
+	case len(argv) > 0 && argv[0] == "mkdir":
+		return nil
+	case len(argv) > 0 && argv[0] == "rm":
+		for _, path := range argv[1:] {
+			if path != "-f" {
+				delete(f.Files[name], path)
 			}
 		}
 		return nil
-	case len(argv) > 0 && argv[0] == "mkdir":
-		return nil
-	case len(argv) >= 5 && argv[0] == "sh" && argv[1] == "-c" && argv[3] == "sh":
+	case len(argv) >= 5 && argv[0] == "sh" && argv[1] == "-c" && argv[3] == "sh" && strings.Contains(argv[2], `<"$f"`):
 		// The Send redirect: `sh -c <script> sh <file> <argv...>`. The file
 		// arrived by transfer; it is the command's stdin and it goes away.
 		file := argv[4]
@@ -347,27 +355,53 @@ func (f *Fake) exec(c backend.Cmd) error {
 		}
 		delete(f.Files[name], file)
 		return f.Exec(name, argv[5:], strings.NewReader(payload), c.Stdout, c.Stderr)
+	case len(argv) >= 5 && argv[0] == "sh" && argv[1] == "-c" && argv[3] == "sh" && strings.Contains(argv[2], `>"$f"`):
+		// The capture redirect: the command's stdout and stderr land in two
+		// files for transfer to bring back; the exec carries the exit status
+		// and nothing else - which is the whole point, since a real exec
+		// stalls past 4096 bytes of output.
+		file := argv[4]
+		var stdout, stderr strings.Builder
+		err := f.Exec(name, argv[5:], c.Stdin, &stdout, &stderr)
+		f.WriteFile(name, file, stdout.String())
+		f.WriteFile(name, file+".err", stderr.String())
+		return err
 	case joined == "bash -l":
 		return f.Interactive(name, workdir, c.Stdin, c.Stdout)
 	}
 	return f.Exec(name, argv, c.Stdin, c.Stdout, c.Stderr)
 }
 
-// transfer is `transfer - <vm>:<path>`: the client's stdin into a guest file.
+// transfer is `transfer - <vm>:<path>` (the client's stdin into a guest
+// file) or `transfer <vm>:<path> -` (a guest file onto the client's stdout).
+// SFTP, not the exec channel: any size comes through.
 func (f *Fake) transfer(c backend.Cmd) error {
-	if arg(c.Args, 1) != "-" {
-		return fmt.Errorf("multipassfake: only `transfer -` is simulated, got %v", c.Args)
+	switch {
+	case arg(c.Args, 1) == "-":
+		name, path, ok := strings.Cut(arg(c.Args, 2), ":")
+		if !ok || c.Stdin == nil {
+			return errors.New("multipassfake: transfer needs <vm>:<path> and stdin")
+		}
+		body, err := io.ReadAll(c.Stdin)
+		if err != nil {
+			return err
+		}
+		f.WriteFile(name, path, string(body))
+		return nil
+	case arg(c.Args, 2) == "-":
+		name, path, ok := strings.Cut(arg(c.Args, 1), ":")
+		if !ok {
+			return errors.New("multipassfake: transfer needs <vm>:<path>")
+		}
+		body, exists := f.ReadFile(name, path)
+		if !exists {
+			fmt.Fprintf(c.Stderr, "transfer failed: [sftp] cannot open remote file %s: No such file\n", path)
+			return guestfake.ExitError(1)
+		}
+		io.WriteString(c.Stdout, body)
+		return nil
 	}
-	name, path, ok := strings.Cut(arg(c.Args, 2), ":")
-	if !ok || c.Stdin == nil {
-		return errors.New("multipassfake: transfer needs <vm>:<path> and stdin")
-	}
-	body, err := io.ReadAll(c.Stdin)
-	if err != nil {
-		return err
-	}
-	f.WriteFile(name, path, string(body))
-	return nil
+	return fmt.Errorf("multipassfake: only `transfer -` shapes are simulated, got %v", c.Args)
 }
 
 // --- state helpers for tests -------------------------------------------------

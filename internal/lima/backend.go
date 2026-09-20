@@ -45,8 +45,10 @@ func (Backend) Facts() backend.Facts {
 		// VM_ADDR to render, so this is "" for every port.
 		GuestAddr:        func(int) string { return "" },
 		HasSSHConfigLink: true,
-		ShellAdvice:      func(vm string) string { return "ssh lima-" + vm },
-		ListHint:         Binary + " list",
+		// `limactl shell` relays the guest's stdout as it is written.
+		StreamsLive: true,
+		ShellAdvice: func(vm string) string { return "ssh lima-" + vm },
+		ListHint:    Binary + " list",
 		ExecAdvice: func(vm string, argv ...string) string {
 			return Binary + " " + strings.Join(ShellArgs(vm, argv...), " ")
 		},

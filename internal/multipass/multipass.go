@@ -204,8 +204,11 @@ func (Backend) Facts() backend.Facts {
 		// `multipass shell <vm>` would land as the daemon user; the only way
 		// in as the agent is ptrbox's own.
 		HasSSHConfigLink: false,
-		ShellAdvice:      func(vm string) string { return "ptrbox shell " + vm },
-		ListHint:         Binary + " list",
+		// Output comes back whole, through a file: nothing can be followed
+		// as it arrives (see capture).
+		StreamsLive: false,
+		ShellAdvice: func(vm string) string { return "ptrbox shell " + vm },
+		ListHint:    Binary + " list",
 		ExecAdvice: func(vm string, argv ...string) string {
 			return Binary + " exec " + vm + " -- " + strings.Join(argv, " ")
 		},
@@ -423,18 +426,12 @@ func (b Backend) Ready(vm string) error {
 
 // mounted reads the guest's own view. An empty directory at the mount point
 // is what an unmounted mount looks like, so `ls` succeeding proves nothing;
-// a /proc/mounts line is the test.
+// a /proc/mounts line is the test - asked as an exit status, because
+// /proc/mounts itself can be longer than a direct exec can carry (see
+// capture).
 func (b Backend) mounted(vm, guest string) bool {
-	out, err := b.Client.Output(execArgs(vm, backend.Login, "cat", "/proc/mounts")...)
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if fields := strings.Fields(line); len(fields) > 1 && fields[1] == guest {
-			return true
-		}
-	}
-	return false
+	_, err := b.Client.Output(execArgs(vm, backend.Login, "grep", "-qsF", " "+guest+" ", "/proc/mounts")...)
+	return err == nil
 }
 
 func (b Backend) requireMount(vm, guest string) error {
@@ -453,6 +450,17 @@ func (b Backend) requireMount(vm, guest string) error {
 // that account's sudo, with -H so $HOME is the agent's. Never mapping the
 // working directory, because multipass otherwise tries the host's current
 // directory inside the guest.
+//
+// A direct exec is for commands whose output is known to be small. On
+// Windows 1.16.4 the client STALLS, never returning, once a command has
+// written more than 4096 bytes - one pipe buffer - to a stdout that is not
+// a console, a pipe or a file alike, and ptrbox's is always a pipe (first
+// real run, 2026-09-20: the fourth `sudo cat` of the install, the first file
+// over that size, hung for good; `head -c 4096` returns, `head -c 4097` does
+// not). So this package runs a command directly only when it knows the
+// answer fits - an exit status, `cloud-init status`, a mkdir - and
+// everything a caller asks for goes through capture, which never lets
+// output cross the exec channel at all.
 func execArgs(vm string, user backend.User, argv ...string) []string {
 	args := []string{"exec", vm, "--no-map-working-directory", "--"}
 	if user == backend.Agent {
@@ -461,16 +469,112 @@ func execArgs(vm string, user backend.User, argv ...string) []string {
 	return append(args, argv...)
 }
 
+// asUser is the shell fragment that runs "$@" as the given account, from a
+// shell that is the daemon user's.
+func asUser(user backend.User) string {
+	if user == backend.Agent {
+		return `sudo -n -u ` + AgentUser + ` -H "$@"`
+	}
+	return `"$@"`
+}
+
+// ScratchName names a fresh file in the daemon user's private directory. A
+// variable so tests can know the name in advance.
+var ScratchName = func() string {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(suffix[:])
+}
+
+// scratch makes the daemon user's private directory and returns a fresh path
+// in it: 0700, so only that account and root can read what lands there.
+func (b Backend) scratch(vm, kind string) (string, error) {
+	dir := "/home/" + DaemonUser + "/.ptrbox"
+	if _, err := b.Client.Output(execArgs(vm, backend.Login, "mkdir", "-p", "-m", "0700", dir)...); err != nil {
+		return "", err
+	}
+	return dir + "/" + kind + "-" + ScratchName(), nil
+}
+
+// capture runs argv in the guest as the given account and returns what it
+// wrote, without any of it crossing the exec channel: the command's stdout
+// and stderr go to two files the daemon user owns, the exec carries only the
+// exit status, and the files come back over `multipass transfer` - SFTP, a
+// different path that carries any size - and are removed. Three or four
+// multipass calls instead of one; the one would hang on the first file
+// bigger than a pipe buffer.
+//
+// The redirection is done by the daemon user's shell, so the file is that
+// account's whatever the command ran as - the agent's output lands in a
+// directory the agent cannot open, and the agent's stderr with it.
+func (b Backend) capture(vm string, user backend.User, argv ...string) (stdout, stderr string, err error) {
+	base, err := b.scratch(vm, "out")
+	if err != nil {
+		return "", "", err
+	}
+	script := `f=$1; shift; ` + asUser(user) + ` >"$f" 2>"$f.err"`
+	args := append([]string{"sh", "-c", script, "sh", base}, argv...)
+	_, runErr := b.Client.Output(execArgs(vm, backend.Login, args...)...)
+
+	stdout, err = b.Client.Output("transfer", vm+":"+base, "-")
+	if err != nil {
+		return "", "", err
+	}
+	if runErr != nil {
+		stderr, _ = b.Client.Output("transfer", vm+":"+base+".err", "-")
+	}
+	if _, err := b.Client.Output(execArgs(vm, backend.Login, "rm", "-f", base, base+".err")...); err != nil {
+		return "", "", err
+	}
+	if runErr != nil {
+		// The guest command's own failure, with its stderr, spelled as the
+		// invocation a person could retype - not the wrapper.
+		cause := runErr
+		if u := errors.Unwrap(runErr); u != nil {
+			cause = u
+		}
+		return stdout, stderr, &backend.Error{Binary: Binary, Args: execArgs(vm, user, argv...), Stderr: stderr, Err: cause}
+	}
+	return stdout, "", nil
+}
+
+// Output captures stdout; any stderr becomes part of the error.
 func (b Backend) Output(vm string, user backend.User, argv ...string) (string, error) {
-	return b.Client.Output(execArgs(vm, user, argv...)...)
+	out, _, err := b.capture(vm, user, argv...)
+	return out, err
 }
 
+// Stream writes the command's output to w - once it has all arrived, since
+// nothing here streams. A command that never ends (`tail -f`) never returns;
+// Facts.StreamsLive says so, and the caller refuses it.
 func (b Backend) Stream(vm string, user backend.User, w io.Writer, argv ...string) error {
-	return b.Client.Stream(w, execArgs(vm, user, argv...)...)
+	out, _, err := b.capture(vm, user, argv...)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, out)
+	return err
 }
 
+// Passthrough shows the command's output to the user, narrated as one
+// invocation, once the command is done.
 func (b Backend) Passthrough(vm string, user backend.User, argv ...string) error {
-	return b.Client.Passthrough(execArgs(vm, user, argv...)...)
+	args := execArgs(vm, user, argv...)
+	n, narrated := b.Client.Stdout.(backend.Narrator)
+	if narrated {
+		n.Begin(args)
+	}
+	out, stderr, err := b.capture(vm, user, argv...)
+	io.WriteString(b.Client.Stdout, out)
+	if stderr != "" && b.Client.Stderr != nil {
+		io.WriteString(b.Client.Stderr, stderr)
+	}
+	if narrated {
+		n.End(err)
+	}
+	return err
 }
 
 // Send gets a payload into a guest command's stdin on a backend whose exec
@@ -483,25 +587,16 @@ func (b Backend) Passthrough(vm string, user backend.User, argv ...string) error
 // reads a file it could not open. The payload is never on an argv; the file
 // is the price of this backend, and it is gone before Send returns.
 func (b Backend) Send(vm string, user backend.User, stdin io.Reader, argv ...string) error {
-	dir := "/home/" + DaemonUser + "/.ptrbox"
-	if _, err := b.Client.Output(execArgs(vm, backend.Login, "mkdir", "-p", "-m", "0700", dir)...); err != nil {
+	file, err := b.scratch(vm, "stdin")
+	if err != nil {
 		return err
 	}
-	var suffix [8]byte
-	if _, err := rand.Read(suffix[:]); err != nil {
-		return err
-	}
-	file := dir + "/stdin-" + hex.EncodeToString(suffix[:])
 	if err := b.Client.Send(stdin, "transfer", "-", vm+":"+file); err != nil {
 		return err
 	}
-	run := `"$@"`
-	if user == backend.Agent {
-		run = `sudo -n -u ` + AgentUser + ` -H "$@"`
-	}
-	script := `f=$1; shift; ` + run + ` <"$f"; s=$?; rm -f "$f"; exit $s`
+	script := `f=$1; shift; ` + asUser(user) + ` <"$f"; s=$?; rm -f "$f"; exit $s`
 	args := append([]string{"sh", "-c", script, "sh", file}, argv...)
-	_, err := b.Client.Output(execArgs(vm, backend.Login, args...)...)
+	_, err = b.Client.Output(execArgs(vm, backend.Login, args...)...)
 	return err
 }
 
