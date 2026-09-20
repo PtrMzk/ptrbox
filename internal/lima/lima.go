@@ -11,7 +11,6 @@
 package lima
 
 import (
-	"bytes"
 	"io"
 	"strings"
 
@@ -39,10 +38,6 @@ func (Exec) Run(c Cmd) error { return backend.ExecRunner{Binary: Binary}.Run(c) 
 // Available reports whether limactl is on PATH.
 func (Exec) Available() bool { return backend.ExecRunner{Binary: Binary}.Available() }
 
-// availabler lets a Runner answer "is limactl usable here" for itself, which
-// is how the fake reports yes without a limactl anywhere on the machine.
-type availabler interface{ Available() bool }
-
 // Client is the typed interface to limactl. Stdout and Stderr are where
 // passthrough output goes - the provisioning chatter of `limactl start`, say,
 // which belongs on the user's terminal rather than in a buffer.
@@ -52,58 +47,33 @@ type Client struct {
 	Stderr io.Writer
 }
 
+// invoker is the four invocation shapes, which are the backend package's;
+// the fields stay on Client so that every constructor and the fake read as
+// they always did.
+func (c *Client) invoker() backend.Invoker {
+	return backend.Invoker{Binary: Binary, Runner: c.Runner, Stdout: c.Stdout, Stderr: c.Stderr}
+}
+
 // Available reports whether limactl can be run at all. Several commands lead
 // with this so the failure is "run ptrbox install first" rather than an exec
 // error from three layers down.
-func (c *Client) Available() bool {
-	if a, ok := c.Runner.(availabler); ok {
-		return a.Available()
-	}
-	return false
-}
+func (c *Client) Available() bool { return c.invoker().Available() }
 
 // Passthrough runs limactl with its output going straight to the user.
-func (c *Client) Passthrough(args ...string) error {
-	if n, ok := c.Stdout.(Narrator); ok {
-		n.Begin(args)
-		err := c.Runner.Run(Cmd{Args: args, Stdout: c.Stdout, Stderr: c.Stderr})
-		n.End(err)
-		return err
-	}
-	return c.Runner.Run(Cmd{Args: args, Stdout: c.Stdout, Stderr: c.Stderr})
-}
+func (c *Client) Passthrough(args ...string) error { return c.invoker().Passthrough(args...) }
 
 // Output runs limactl and captures stdout. Any stderr becomes part of the
 // error, so a caller that fails has something to print.
-func (c *Client) Output(args ...string) (string, error) {
-	var stdout, stderr bytes.Buffer
-	err := c.Runner.Run(Cmd{Args: args, Stdout: &stdout, Stderr: &stderr})
-	if err != nil {
-		return stdout.String(), &Error{Binary: Binary, Args: args, Stderr: stderr.String(), Err: err}
-	}
-	return stdout.String(), nil
-}
+func (c *Client) Output(args ...string) (string, error) { return c.invoker().Output(args...) }
 
 // Send runs limactl with stdin wired to r and captures nothing. Used for the
 // auth token, which must reach the guest without ever appearing in an
 // argument vector.
-func (c *Client) Send(stdin io.Reader, args ...string) error {
-	var stderr bytes.Buffer
-	if err := c.Runner.Run(Cmd{Args: args, Stdin: stdin, Stderr: &stderr}); err != nil {
-		return &Error{Binary: Binary, Args: args, Stderr: stderr.String(), Err: err}
-	}
-	return nil
-}
+func (c *Client) Send(stdin io.Reader, args ...string) error { return c.invoker().Send(stdin, args...) }
 
 // Stream runs limactl with stdout going to w, for output that is consumed as
 // it arrives (following a log).
-func (c *Client) Stream(w io.Writer, args ...string) error {
-	var stderr bytes.Buffer
-	if err := c.Runner.Run(Cmd{Args: args, Stdout: w, Stderr: &stderr}); err != nil {
-		return &Error{Binary: Binary, Args: args, Stderr: stderr.String(), Err: err}
-	}
-	return nil
-}
+func (c *Client) Stream(w io.Writer, args ...string) error { return c.invoker().Stream(w, args...) }
 
 // --- VM state ----------------------------------------------------------------
 
