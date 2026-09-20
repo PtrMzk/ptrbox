@@ -586,6 +586,12 @@ func (b Backend) Passthrough(vm string, user backend.User, argv ...string) error
 // daemon user's sudo, which inherits the open descriptor - so the agent
 // reads a file it could not open. The payload is never on an argv; the file
 // is the price of this backend, and it is gone before Send returns.
+//
+// The command's stdout goes to /dev/null and its stderr to a file, for the
+// same reason capture exists: Send captures nothing, and `sudo tee` - the
+// proxy's config push - echoes every byte it writes back to stdout, which
+// on the first real run was the second way a squid.conf stalled the exec
+// channel. Nothing a guest command prints may cross it.
 func (b Backend) Send(vm string, user backend.User, stdin io.Reader, argv ...string) error {
 	file, err := b.scratch(vm, "stdin")
 	if err != nil {
@@ -594,10 +600,24 @@ func (b Backend) Send(vm string, user backend.User, stdin io.Reader, argv ...str
 	if err := b.Client.Send(stdin, "transfer", "-", vm+":"+file); err != nil {
 		return err
 	}
-	script := `f=$1; shift; ` + asUser(user) + ` <"$f"; s=$?; rm -f "$f"; exit $s`
+	script := `f=$1; shift; ` + asUser(user) + ` <"$f" >/dev/null 2>"$f.err"; s=$?; rm -f "$f"; exit $s`
 	args := append([]string{"sh", "-c", script, "sh", file}, argv...)
-	_, err = b.Client.Output(execArgs(vm, backend.Login, args...)...)
-	return err
+	_, runErr := b.Client.Output(execArgs(vm, backend.Login, args...)...)
+	var stderr string
+	if runErr != nil {
+		stderr, _ = b.Client.Output("transfer", vm+":"+file+".err", "-")
+	}
+	if _, err := b.Client.Output(execArgs(vm, backend.Login, "rm", "-f", file+".err")...); err != nil {
+		return err
+	}
+	if runErr != nil {
+		cause := runErr
+		if u := errors.Unwrap(runErr); u != nil {
+			cause = u
+		}
+		return &backend.Error{Binary: Binary, Args: execArgs(vm, user, argv...), Stderr: stderr, Err: cause}
+	}
+	return nil
 }
 
 // Shell is an interactive login shell as the agent, in /workspace, on the

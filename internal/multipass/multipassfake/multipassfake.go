@@ -354,7 +354,12 @@ func (f *Fake) exec(c backend.Cmd) error {
 			return guestfake.ExitError(2)
 		}
 		delete(f.Files[name], file)
-		return f.Exec(name, argv[5:], strings.NewReader(payload), c.Stdout, c.Stderr)
+		// The command's stdout is discarded in the guest and its stderr
+		// filed, as the script says; the exec carries the exit status.
+		var stderr strings.Builder
+		err := f.Exec(name, argv[5:], strings.NewReader(payload), io.Discard, &stderr)
+		f.WriteFile(name, file+".err", stderr.String())
+		return err
 	case len(argv) >= 5 && argv[0] == "sh" && argv[1] == "-c" && argv[3] == "sh" && strings.Contains(argv[2], `>"$f"`):
 		// The capture redirect: the command's stdout and stderr land in two
 		// files for transfer to bring back; the exec carries the exit status

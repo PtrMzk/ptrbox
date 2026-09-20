@@ -435,8 +435,8 @@ func TestSendTransfersThePayloadAndRedirectsItNeverOnAnArgv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.calls) != 3 {
-		t.Fatalf("calls = %v, want mkdir, transfer, exec", s.calls)
+	if len(s.calls) != 4 {
+		t.Fatalf("calls = %v, want mkdir, transfer, exec, rm of the stderr file", s.calls)
 	}
 	if s.calls[0] != "exec scratch --no-map-working-directory -- mkdir -p -m 0700 /home/ubuntu/.ptrbox" {
 		t.Errorf("first call = %q, want the daemon user's private directory made", s.calls[0])
@@ -454,7 +454,7 @@ func TestSendTransfersThePayloadAndRedirectsItNeverOnAnArgv(t *testing.T) {
 	run := s.calls[2]
 	for _, want := range []string{
 		"exec scratch --no-map-working-directory -- sh -c ",
-		`sudo -n -u agent -H "$@" <"$f"`, `rm -f "$f"`, `exit $s`,
+		`sudo -n -u agent -H "$@" <"$f" >/dev/null 2>"$f.err"`, `rm -f "$f"`, `exit $s`,
 		" sh " + file + " bash -c cat >> ~/.profile",
 	} {
 		if !strings.Contains(run, want) {
@@ -472,7 +472,7 @@ func TestSendAsTheLoginUserRunsTheCommandDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := s.calls[2]
-	if strings.Contains(run, "-u agent") || !strings.Contains(run, `shift; "$@" <"$f"`) {
+	if strings.Contains(run, "-u agent") || !strings.Contains(run, `shift; "$@" <"$f" >/dev/null`) {
 		t.Errorf("exec = %q, want the command run as the login user itself", run)
 	}
 }
@@ -626,5 +626,34 @@ func TestPreflightNeverRunsAnythingButTwoReadOnlyQueries(t *testing.T) {
 	_ = b.Preflight()
 	if got := strings.Join(s.calls, "\n"); got != "networks --format json\nget local.privileged-mounts" {
 		t.Errorf("calls = %q; ptrbox never changes a host setting itself", got)
+	}
+}
+
+func TestSendDiscardsTheCommandsStdoutInTheGuest(t *testing.T) {
+	// `sudo tee` echoes what it writes; a squid.conf pushed that way is the
+	// second way the exec channel stalled on the first real run. Send
+	// captures nothing, so nothing may leave the guest.
+	b, s := newBackend(t)
+	fixScratch(t)
+	if err := b.Send("scratch", backend.Login, strings.NewReader("conf"), "sudo", "tee", "/etc/squid/squid.conf"); err != nil {
+		t.Fatal(err)
+	}
+	run := s.calls[2]
+	if !strings.Contains(run, `<"$f" >/dev/null 2>"$f.err"`) {
+		t.Errorf("exec = %q, want stdout discarded and stderr filed in the guest", run)
+	}
+	if s.calls[3] != "exec scratch --no-map-working-directory -- rm -f /home/ubuntu/.ptrbox/stdin-fixed.err" {
+		t.Errorf("last call = %q, want the stderr file removed", s.calls[3])
+	}
+}
+
+func TestAFailedSendReportsTheGuestsStderr(t *testing.T) {
+	b, s := newBackend(t)
+	fixScratch(t)
+	s.fails[`exec scratch --no-map-working-directory -- sh -c f=$1; shift; "$@" <"$f" >/dev/null 2>"$f.err"; s=$?; rm -f "$f"; exit $s sh /home/ubuntu/.ptrbox/stdin-fixed sudo tee /etc/nope/x`] = ""
+	s.answer("transfer scratch:/home/ubuntu/.ptrbox/stdin-fixed.err -", "tee: /etc/nope/x: No such file or directory\n")
+	err := b.Send("scratch", backend.Login, strings.NewReader("x"), "sudo", "tee", "/etc/nope/x")
+	if err == nil || !strings.Contains(err.Error(), "No such file") || !strings.Contains(err.Error(), "sudo tee /etc/nope/x") {
+		t.Errorf("err = %v, want the guest's stderr and the command", err)
 	}
 }
