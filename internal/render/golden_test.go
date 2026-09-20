@@ -26,6 +26,9 @@ func TestGolden(t *testing.T) {
 	}{
 		{"sandbox", "../../tests/golden/claude-repo.rendered.yaml", rendertest.Sandbox},
 		{"proxy", "../../tests/golden/proxy.rendered.yaml", rendertest.Proxy},
+		// The same two VMs as cloud-init user-data, for the Multipass backend.
+		{"sandbox-cloud-init", "../../tests/golden/claude-repo.cloud-init.rendered.yaml", rendertest.CloudInit},
+		{"proxy-cloud-init", "../../tests/golden/proxy.cloud-init.rendered.yaml", rendertest.ProxyCloudInit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.render(t)

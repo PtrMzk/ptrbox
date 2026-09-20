@@ -1,0 +1,51 @@
+#cloud-config
+# =============================================================================
+# proxy.cloud-init.yaml - the shared egress proxy VM ("ptrbox-proxy"), as
+# cloud-init user-data for the Multipass backend (Windows, Hyper-V).
+#
+# DO NOT launch this file directly. `ptrbox install` renders it and hands the
+# result to `multipass launch --cloud-init`, with the sizing and the image as
+# arguments and NO mount argument - that absence is this VM's reason to exist,
+# and the backend's fake is held to it. vm/proxy.yaml is the same VM for lima;
+# vm/provision-proxy/10-squid.sh is shared byte for byte.
+#
+# One account, the image's default user, with the sudo cloud-init gives it:
+# Multipass needs it for its own upkeep and ptrbox pushes squid's config
+# through it (`sudo tee`, `systemctl reload`), as it does through lima's
+# default user. Nothing of the user's runs here, so there is no agent account
+# and nothing to isolate it from.
+#
+# The address is the fixed one every sandbox's firewall names as its proxy:
+# 172.31.255.2 on the ptrbox switch, set by netplan on the second NIC. It is
+# a literal here rather than a placeholder because it IS the design - the
+# sandboxes render it as PROXY_HOST from the same backend fact, and an
+# invariant holds the two spellings together. Applied on the restart that
+# follows the launch, since a netplan file written by cloud-init is not
+# applied on the boot that writes it.
+#
+# Sandboxes reach squid directly at that address; there is no host-side port
+# forward and nothing on the host's loopback. Squid's listener is still bound
+# to every interface, so the first NIC's address can reach it too - from the
+# host only, which the default switch is - and squid's own source rule is
+# what narrows clients to the switch.
+# =============================================================================
+
+users:
+  - default
+
+write_files:
+  - path: /var/lib/ptrbox/backend
+    content: |
+      backend=multipass
+  - path: /etc/netplan/60-ptrbox.yaml
+    permissions: 0o600
+    content: |
+      network:
+        version: 2
+        ethernets:
+          eth1:
+            addresses: [172.31.255.2/24]
+  - path: /var/lib/cloud/scripts/per-boot/10-squid.sh
+    permissions: 0o755
+    content: |
+      __INCLUDE:provision-proxy/10-squid.sh__

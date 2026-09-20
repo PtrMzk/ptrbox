@@ -1,0 +1,1132 @@
+#cloud-config
+# =============================================================================
+# claude-repo.cloud-init.yaml - per-repo Claude Code sandbox VM, as cloud-init
+# user-data for the Multipass backend (Windows, Hyper-V).
+#
+# DO NOT launch this file directly. `ptrbox new` renders it - substituting the
+# double-underscore placeholders and inlining vm/provision/*.sh at the INCLUDE
+# markers - writes the result under the generated dir, and hands THAT to
+# `multipass launch --cloud-init` beside the sizing, the image, the network and
+# the one mount, which Multipass takes as arguments rather than from this file.
+# So: this file says what the guest CONTAINS; the launch arguments say what
+# the VM IS. vm/claude-repo.yaml is the same sandbox for lima, and the two
+# share every script under vm/provision/ byte for byte - an invariant holds
+# them to it. What differs is here, and it is three things.
+#
+# THE ACCOUNTS. Multipass logs into the guest as the image's default user
+# (`ubuntu`) and needs sudo there on every boot: its sshfs mount runs through
+# `sudo -n bash -c`, its helper snap through `sudo snap`. So that account stays
+# the daemon's, with the NOPASSWD grant cloud-init gives it, and a second
+# account - `agent`, no sudo rule, no password, no groups - is what Claude Code
+# and everything of the user's runs as. 90-harden.sh is rendered with the
+# daemon user's name and keeps exactly its grant and sudo's setuid bit, and
+# vm/verify.sh asserts the agent is neither that account nor able to become
+# it. CLAUDE.md item 75 has the argument; this is the whole of the delta.
+#
+# THE SCRIPTS. Lima installs vm/provision/*.sh as per-boot scripts itself;
+# here they are written into cloud-init's own per-boot directory, where they
+# run on every boot as root, in lexical order, with the same done-marker
+# contract. The two that lima runs as the user (30, 40) are written as
+# root-owned bodies under /usr/local/lib/ptrbox/ and run through a per-boot
+# wrapper as the agent, via runuser. Order is lexical, so 90 runs after 30
+# and 40 here and before them on lima; nothing depends on it. The mode of a
+# file is spelled 0o755 rather than '0755': Multipass re-emits this document
+# and drops the quotes, and '0755' unquoted is an integer to cloud-init's
+# parser, which then fails the schema check on every boot. 0o755 is a string
+# to that parser and an octal to the code that applies it (step 0, stage 5).
+#
+# THE ADDRESS. The VM gets a second NIC on the ptrbox Hyper-V switch
+# (`--network name=ptrbox,mode=manual`); the netplan file below gives it a
+# static address there, with no gateway and no resolver, so it is a path to
+# the proxy VM and nothing else. The first NIC stays on Multipass's default
+# switch for boot-1 internet, exactly as lima's does. A netplan file written
+# by cloud-init is not applied on the boot that writes it; it takes effect
+# on the post-provision reboot `ptrbox new` already performs.
+#
+# LIFECYCLE: as lima's - boot 1 open, the firewall written and enabled but
+# not started; the reboot raises the wall; every later boot re-runs the
+# per-boot scripts, which exit in milliseconds behind their guards.
+# =============================================================================
+
+users:
+  - default
+  - name: agent
+    # No `sudo` key at all: the default is no rule, and that spelling is the
+    # one cloud-init has not deprecated (`false` is, `null` is its
+    # replacement). The uid is pinned because step 0 saw the two accounts
+    # come out in the order they did (agent=1000, ubuntu=1001) and a mount's
+    # ownership map is written against a number, not a name.
+    uid: 1000
+    lock_passwd: true
+    shell: /bin/bash
+
+write_files:
+  # Root-owned, 0644 by default: verify.sh trusts it precisely because the
+  # agent cannot write it or its directory. Keys are spelled as verify.sh
+  # reads them; the daemon user is the same value 90-harden.sh is rendered
+  # with, so the two cannot disagree.
+  - path: /var/lib/ptrbox/backend
+    content: |
+      backend=multipass
+      mount-type=fuse.sshfs
+      daemon-user=ubuntu
+  # The second NIC. Multipass's own netplan claims the first by MAC, so the
+  # second is eth1, unclaimed, and named here. One address, nothing else.
+  - path: /etc/netplan/60-ptrbox.yaml
+    permissions: 0o600
+    content: |
+      network:
+        version: 2
+        ethernets:
+          eth1:
+            addresses: [172.31.255.17/24]
+  # The provision scripts, as root, every boot.
+  - path: /var/lib/cloud/scripts/per-boot/05-apt.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 05-apt.sh - make apt cheap before anything calls it. Runs as root, first.
+      #
+      # Boot 1 spends most of its minutes in apt (item 57 measures it), and some of
+      # that is work a disposable sandbox has no use for. Everything here is a
+      # setting apt and dpkg read on their next run, which is why this script is
+      # numbered ahead of 10-base.sh: a knob turned after the first apt-get is a
+      # knob turned for nothing.
+      #
+      # Two things this does NOT change. `apt-get upgrade -y` stays in 10-base.sh -
+      # it is what keeps a VM built from Lima's never-expiring image cache patched,
+      # and dropping it is a security decision, not a speedup. And the packages a
+      # user names in PTRBOX_EXTRA_PACKAGES keep apt's default recommends, because
+      # that list is theirs.
+      #
+      # Linted, not executed, by the suite: everything below writes under /etc.
+      # =============================================================================
+      set -eux
+
+      state="${1:-/var/lib/ptrbox}"
+
+      if [ -f "$state/apt.done" ]; then
+        exit 0
+      fi
+
+      mkdir -p "$state"
+      # Timing record; see 10-base.sh.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "05-apt %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
+      # --- the apt timers, off before the first apt-get -----------------------------
+
+      # Masked rather than disabled: these are the apt machinery, and a package
+      # upgrade is exactly the event that re-enables them. unattended-upgrades cannot
+      # reach the Debian mirrors once the firewall is up (they are not on the
+      # allowlist, and apt does not use the proxy), so it would wake, fail, and
+      # sleep - a root process doing nothing but retrying. Patching happens at
+      # provision time in 10-base.sh, and the image URLs track current builds.
+      #
+      # Here rather than in 25-services.sh, where the rest of the trim lives, because
+      # apt-daily.timer is Persistent= and fires on a fresh image's first boot - so
+      # on boot 1 it races the provisioning apt-get for the dpkg lock. --now stops a
+      # timer that has already fired; the explicit stop catches a service it already
+      # started.
+      systemctl mask --now unattended-upgrades.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+      systemctl stop apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+
+      # --- dpkg: no docs, no fsync per file ----------------------------------------
+
+      # force-unsafe-io skips dpkg's per-file fsync. The cost is a torn install if
+      # the VM dies mid-unpack, and a VM that dies during boot 1 is re-created, not
+      # repaired. /usr/share/doc goes except copyright files, which is the one part
+      # of it anyone is obliged to keep. Man pages stay: the agent reads them.
+      mkdir -p /etc/dpkg/dpkg.cfg.d
+      cat >/etc/dpkg/dpkg.cfg.d/01-ptrbox <<'DPKG'
+      # Written by ptrbox: this VM is disposable and re-created, never repaired.
+      force-unsafe-io
+      path-exclude=/usr/share/doc/*
+      path-include=/usr/share/doc/*/copyright
+      DPKG
+
+      # man-db rebuilds its index in a dpkg trigger after every install - the
+      # classic apt slowdown, and item 50 only disabled the daily timer. Turning the
+      # debconf answer off skips the trigger while leaving `man` itself working;
+      # the index is simply not maintained, which for pages read by name is nothing.
+      echo 'man-db man-db/auto-update boolean false' | debconf-set-selections
+
+      # --- apt: no translations -----------------------------------------------------
+
+      mkdir -p /etc/apt/apt.conf.d
+      cat >/etc/apt/apt.conf.d/01-ptrbox <<'APT'
+      // Written by ptrbox: no package-description translations to download.
+      Acquire::Languages "none";
+      APT
+
+      touch "$state/apt.done"
+  - path: /var/lib/cloud/scripts/per-boot/10-base.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 10-base.sh - OS packages. Runs as root inside the guest, on EVERY boot.
+      #
+      # APT-FAMILY ONLY. This script is shared by every supported distro
+      # (PTRBOX_DISTRO: debian13, ubuntu2404) because both are apt-based and, since
+      # Debian's time_t transition, use identical package names - including the t64
+      # suffixes below, which are the same on trixie and noble. Supporting a dnf or
+      # pacman distro means a sibling script selected by distro, not edits here.
+      #
+      # Rendered into the generated Lima config; never executed on the host.
+      # Network is open while this runs (the firewall is enabled but not started
+      # until the post-provision reboot), which is why the done-marker guard matters:
+      # without it, post-firewall boots would hang here until cloud-init gives up.
+      # =============================================================================
+      set -eux
+
+      # -e: stop on first error. -u: error on unset variables. -x: echo each command
+      # (shows up in `journalctl -u cloud-final` inside the guest).
+
+      # An argument with the real path as its default, purely so the test suite can
+      # run this against a state directory it controls - ptrbox passes nothing.
+      state="${1:-/var/lib/ptrbox}"
+
+      if [ -f "$state/base.done" ]; then
+        exit 0
+      fi
+
+      mkdir -p "$state"
+      # How long this script took, recorded on exit as `<script> <start> <end>` in
+      # epoch seconds. `ptrbox new` reads the file back and prints one line per
+      # script in its summary, which is what turns "provisioning takes minutes" into
+      # a number per step. Installed AFTER the done-marker guard, so a guarded re-run
+      # on a later boot records nothing; a run that dies under set -e still records,
+      # because EXIT fires either way. Every provision script carries this trap; a
+      # test asserts the name in each one is the script's own.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "10-base %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
+      export DEBIAN_FRONTEND=noninteractive # apt must never prompt in a script
+
+      apt-get update
+      # Apply current security patches at provision time. Lima's image cache is
+      # keyed by URL and never expires, so the cached base image goes stale - this
+      # line is what actually keeps fresh VMs patched.
+      apt-get upgrade -y
+
+      # curl/git: installers + cloning.  build-essential: gcc/make, needed when npm
+      # or pip packages compile native extensions.  ca-certificates: TLS trust roots
+      # so https works at all.  jq: JSON wrangling in shell.  nftables: the firewall
+      # itself.  tmux: long-running agent sessions that survive ssh disconnects.
+      # less: git's pager, which --no-install-recommends would otherwise drop.
+      # unzip: what curl|bash installers unpack their archives with.
+      #
+      # --no-install-recommends here and not below: this list is ours, and every
+      # recommend it would pull is either named here or unwanted. The Playwright
+      # set keeps recommends, because fonts and ICU are exactly the kind of
+      # dependency that breaks a browser silently rather than at install time.
+      apt-get install -y --no-install-recommends curl git build-essential ca-certificates jq nftables tmux less unzip
+
+      # What opencode needs from apt, only when PTRBOX_OPENCODE asked for it. Its
+      # search tools use the system rg when there is one and otherwise download
+      # ripgrep from GitHub releases with a proxy-blind fetch, which the wall
+      # refuses - so without this the first Grep in an opencode sandbox fails.
+      # Claude Code bundles its own ripgrep and needs nothing here. Same shape as
+      # the Playwright block below: the list is recorded BEFORE the install so
+      # vm/verify.sh can check each package actually arrived.
+      OPENCODE="false"
+      if [ "$OPENCODE" = "true" ]; then
+        printf 'ripgrep\n' >"$state/opencode-packages"
+        apt-get install -y --no-install-recommends ripgrep
+      else
+        rm -f "$state/opencode-packages"
+      fi
+
+      # Chromium runtime dependencies (Playwright headless browser testing), only
+      # when PTRBOX_PLAYWRIGHT asked for them. This is what
+      # `npx playwright install-deps chromium` would install - listed explicitly
+      # because the VM has no root post-provision, so anything the agent's toolchain
+      # needs at the OS level must be baked in here. (t64 suffixes come from Debian's
+      # time_t transition; if apt errors on one, the non-t64 name is the fallback.)
+      #
+      # It is the largest package set in the guest by a wide margin, and nothing
+      # else in a sandbox uses GTK, X11 or desktop fonts - so a VM that will never
+      # drive a browser does not carry them. The same flag gates the Playwright CDN
+      # group in the egress allowlist, which is what keeps the two halves of this
+      # capability from disagreeing about whether the VM has it.
+      PLAYWRIGHT="true"
+      if [ "$PLAYWRIGHT" = "true" ]; then
+        playwright_packages="libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64
+          libcups2t64 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1
+          libxfixes3 libxrandr2 libgbm1 libasound2t64 libatspi2.0-0t64
+          libx11-xcb1 libxcursor1 libgtk-3-0t64 fonts-liberation"
+        # Recorded BEFORE the install, so the record is a request rather than a
+        # self-report: if apt dies, `set -e` stops the script here and the file
+        # still says these were wanted. vm/verify.sh reads it and checks each one
+        # actually arrived - the same shape as the toolchain record next door.
+        # shellcheck disable=SC2086 # deliberate word splitting: one package per line
+        printf '%s\n' $playwright_packages >"$state/playwright-packages"
+        # shellcheck disable=SC2086 # deliberate word splitting: a package list
+        apt-get install -y $playwright_packages
+      else
+        rm -f "$state/playwright-packages"
+      fi
+
+      touch "$state/base.done"
+  - path: /var/lib/cloud/scripts/per-boot/15-extra-packages.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 15-extra-packages.sh - user-configured apt packages. Runs as root inside the
+      # guest, on EVERY boot.
+      #
+      # The list is substituted in at render time from HOST-side config
+      # (PTRBOX_EXTRA_PACKAGES in ~/.config/ptrbox/config, or the environment) and
+      # validated on the host first. Deliberately never read from a file at boot,
+      # and especially not from the repo mount: a repo-provided package list would
+      # let the agent install software into its own sandbox. Which packages exist in
+      # a VM stays a human, host-side decision.
+      #
+      # A separate script rather than an edit surface in 10-base.sh, so per-user
+      # additions never mean forking the shared base list. Changing the list means
+      # re-creating the VM, like every other provisioning change.
+      #
+      # The host can only validate the SHAPE of a name; whether trixie has a package
+      # called that is a question only apt can answer, and only in here. A name that
+      # is well-formed but wrong - a typo, a package that exists on noble and not on
+      # trixie, a runtime whose Debian name is not what anyone guesses - used to fail
+      # inside this script on boot 1, where nobody is watching: `ptrbox new` still
+      # printed that the VM was ready, and the missing tool turned up days later as
+      # something that could not run. So each failure now leaves a marker file, and
+      # vm/verify.sh turns that marker into a failed check, which fails `ptrbox new`.
+      # =============================================================================
+      set -eux
+
+      # An argument with the real path as its default, purely so the test suite can
+      # run this for real against a stub apt - ptrbox passes nothing.
+      state="${1:-/var/lib/ptrbox}"
+      done_marker="$state/extra-packages.done"
+      fail_marker="$state/extra-packages.failed"
+
+      if [ -f "$done_marker" ]; then
+        exit 0
+      fi
+
+      mkdir -p "$state"
+      # Timing record; see 10-base.sh. A `fail` below exits through this too.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "15-extra-packages %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
+      export DEBIAN_FRONTEND=noninteractive # apt must never prompt in a script
+
+      # Rendered from host config; empty when no extra packages are configured.
+      EXTRA_PACKAGES=""
+
+      # Cleared first, so the marker always describes THIS boot. The script has no
+      # done marker until it succeeds, so a failed boot 1 re-runs on the reboot that
+      # raises the firewall - and every step below works off the package lists on
+      # disk, so that re-run needs no network and reaches the same verdict.
+      rm -f "$fail_marker"
+
+      # fail records why, then stops the boot script. The marker is what survives to
+      # be read: this script's own exit status is lost in cloud-init's log.
+      fail() {
+        printf '%s\n' "$1" >"$fail_marker"
+        printf 'ptrbox: extra packages: %s\n' "$1" >&2
+        exit 1
+      }
+
+      if [ -n "$EXTRA_PACKAGES" ]; then
+        # Resolve every name BEFORE installing any of them, so a typo in the third
+        # package does not leave the first two installed and the VM half-configured.
+        # --simulate resolves against the lists on disk (no network) and covers more
+        # than existence: a version pin that matches nothing, or a dependency that
+        # cannot be satisfied on this suite, fails here too.
+        #
+        # No apt-get update here: 10-base.sh ran one moments earlier in this same
+        # boot (both scripts only do real work on boot 1, before their done markers
+        # exist).
+        unresolved=""
+        for pkg in $EXTRA_PACKAGES; do
+          if ! apt-get install -y --simulate "$pkg" >/dev/null 2>&1; then
+            unresolved="$unresolved $pkg"
+          fi
+        done
+        if [ -n "$unresolved" ]; then
+          fail "no such package on this distro:$unresolved (check the name for this suite)"
+        fi
+
+        # shellcheck disable=SC2086  # word splitting is the point: one arg per package
+        if ! apt-get install -y $EXTRA_PACKAGES; then
+          fail "apt-get install failed for: $EXTRA_PACKAGES"
+        fi
+
+        # Belt and braces: resolvable and apt-get happy still is not installed. This
+        # is the check that holds whatever the reason - a mirror that went away
+        # mid-install, a postinst that failed - because it asks dpkg the question the
+        # user actually cares about.
+        absent=""
+        for pkg in $EXTRA_PACKAGES; do
+          status="$(dpkg-query -W -f='${db:Status-Status}' "${pkg%%=*}" 2>/dev/null || true)"
+          if [ "$status" != installed ]; then
+            absent="$absent $pkg"
+          fi
+        done
+        if [ -n "$absent" ]; then
+          fail "installed by apt-get but missing afterwards:$absent"
+        fi
+      fi
+
+      touch "$done_marker"
+  - path: /var/lib/cloud/scripts/per-boot/20-firewall.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 20-firewall.sh - default-deny egress. Runs as root inside the guest.
+      #
+      # The ruleset is WRITTEN here and ACTIVATED on the next boot: the user
+      # provisioning scripts still need open network for their installers, so the
+      # unit is enabled but not started. `ptrbox new` reboots the VM afterwards,
+      # which is the moment the wall goes up.
+      #
+      # Widening any rule here is a security decision, not a bugfix.
+      # =============================================================================
+      set -eux
+
+      if [ -f /var/lib/ptrbox/firewall.done ]; then
+        exit 0
+      fi
+
+      mkdir -p /var/lib/ptrbox
+      # Timing record; see 10-base.sh.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "20-firewall %s %s\n" "$ptrbox_t0" "$(date +%s)" >>/var/lib/ptrbox/timings || true' EXIT
+
+      # Root-owned + chmod 600 so the agent user can't read or edit it - which only
+      # means something combined with the sudo removal in 90-harden.sh.
+      cat >/etc/nftables-sandbox.nft <<'NFT'
+      table inet sandbox {
+        chain output {
+          # Hook every OUTGOING packet; the verdict for anything not matched by a
+          # rule below is DROP. Default-deny: we enumerate what is allowed instead
+          # of trying to enumerate everything bad.
+          type filter hook output priority 0; policy drop;
+          oif "lo" accept                     # loopback: the VM talking to itself
+                                              # (dev servers, tests, local DBs)
+          ct state established,related accept # connection tracking: once a permitted
+                                              # connection is open, its packets keep
+                                              # flowing both ways
+          # DNS: pinned to the resolvers written to /etc/resolv.conf below. Unpinned
+          # port-53 egress is a covert exfiltration channel - any process could
+          # smuggle data in queries to an attacker-run nameserver. Pinning narrows
+          # (does not close: DNS tunneling can transit recursive resolvers) that
+          # channel. Note these are v4 rules; IPv6 egress has no allow rules at all
+          # in this table, so it is implicitly default-denied.
+          ip daddr { 9.9.9.9, 1.1.1.1 } udp dport 53 accept
+          ip daddr { 9.9.9.9, 1.1.1.1 } tcp dport 53 accept
+          # THE road out: the Squid allowlist proxy on the Mac, reached at the
+          # vzNAT gateway address.
+          ip daddr 172.31.255.2 tcp dport 8889 accept
+          # The one exception, and only in a sandbox with PTRBOX_OPENCODE: LM
+          # Studio's server on the Mac, the same gateway trip on PTRBOX_LMSTUDIO_PORT.
+          # Rendered on the host from a validated port that can never fall inside
+          # the proxy's block, or rendered as a comment - never a range, never a
+          # second proxy identity. Everything the agent sends there is input to a
+          # process on the Mac, which is the exposure SECURITY.md names.
+          # (PTRBOX_OPENCODE off: no LM Studio rule)
+          # Everything else is refused, not silently dropped. On an OUTPUT chain
+          # the packet never leaves the VM either way - reject only hands the local
+          # socket an error instead of a timeout - so the "drop reveals nothing to
+          # a scanner" argument does not apply here; that is an input-chain
+          # argument. What it buys: a tool that ignores the proxy (anything
+          # Bun-based, a phone-home whose switch was missed) fails in a
+          # millisecond with ECONNREFUSED rather than hanging for a minute on
+          # every attempt. The policy stays drop as the backstop for whatever
+          # reject cannot express. These two lines change no verdict.
+          meta l4proto tcp reject with tcp reset
+          reject with icmpx type admin-prohibited
+        }
+      }
+      NFT
+      chmod 600 /etc/nftables-sandbox.nft
+
+      # systemd unit that loads the ruleset at every boot.
+      # Type=oneshot: run the command once and exit (it's not a daemon).
+      # RemainAfterExit: systemd still reports the unit "active" afterwards, so
+      # `systemctl status sandbox-firewall` tells you the wall is up.
+      cat >/etc/systemd/system/sandbox-firewall.service <<'UNIT'
+      [Unit]
+      Description=Default-deny egress firewall (ptrbox sandbox)
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/sbin/nft -f /etc/nftables-sandbox.nft
+      RemainAfterExit=yes
+      [Install]
+      WantedBy=multi-user.target
+      UNIT
+
+      systemctl daemon-reload
+      # "enable" = start on future boots. Deliberately NOT "systemctl start": the
+      # user provisioning scripts still need open network for their installers.
+      systemctl enable sandbox-firewall.service
+
+      # Pin the resolver to match the firewall's DNS rules. A static resolv.conf made
+      # immutable (chattr +i) is the distro-agnostic way to stop any network manager
+      # (systemd-resolved, dhclient, networkd) from rewriting it back to the
+      # DHCP-provided resolver - which the firewall would then block, breaking all
+      # name resolution. This also bypasses Lima's built-in DNS relay entirely.
+      rm -f /etc/resolv.conf
+      # shellcheck disable=SC2043  # renders to a space-separated list of resolvers
+      for ns in 9.9.9.9 1.1.1.1; do
+        printf 'nameserver %s\n' "$ns" >>/etc/resolv.conf
+      done
+      chattr +i /etc/resolv.conf
+
+      touch /var/lib/ptrbox/firewall.done
+  - path: /var/lib/cloud/scripts/per-boot/25-services.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 25-services.sh - turn off what a sandbox does not run. Runs as root.
+      #
+      # Attack surface reduction, not privilege: 90-harden.sh takes root away, this
+      # takes away things that listen or wake up. Nothing here is load-bearing for a
+      # sandbox, and each one is either unreachable by design or unable to do its job
+      # behind the firewall.
+      #
+      # Everything takes effect on the post-provision reboot rather than immediately,
+      # which is why nothing here restarts a unit. That is the same bargain
+      # 20-firewall.sh makes next door: `ptrbox new` reboots, and the reboot is when
+      # the guest becomes what the template says it is.
+      #
+      # NOT disabled, deliberately:
+      #   apparmor            the one service in the list actively helping
+      #   fstrim.timer        the diffdisk is sparse, and fstrim is what lets the Mac
+      #                       reclaim space the guest has freed
+      #   systemd-resolved    still the stub resolver; only its multicast protocols
+      #                       go (see below)
+      # =============================================================================
+      set -eux
+
+      state="${1:-/var/lib/ptrbox}"
+
+      if [ -f "$state/services.done" ]; then
+        exit 0
+      fi
+
+      mkdir -p "$state"
+      # Timing record; see 10-base.sh.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "25-services %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
+      # --- multicast name resolution ------------------------------------------------
+
+      # LLMNR and mDNS listen on every interface (udp/tcp 5355, udp 5353) and resolve
+      # names by shouting on the local segment. This VM resolves through pinned
+      # resolvers and reaches everything else through the proxy, so both protocols
+      # answer a question nobody asks - while LLMNR response spoofing is a standard
+      # lateral-movement technique, and both are parsers reachable from the network.
+      #
+      # Turning them off also removes the four `bind: address already in use`
+      # warnings for port 5355 that lima logs on every single boot: they are lima
+      # failing to forward a guest port that, after this, no longer exists.
+      mkdir -p /etc/systemd/resolved.conf.d
+      cat >/etc/systemd/resolved.conf.d/ptrbox-no-multicast.conf <<'RESOLVED'
+      # Written by ptrbox: a sandbox has no use for link-local name resolution.
+      [Resolve]
+      LLMNR=no
+      MulticastDNS=no
+      RESOLVED
+
+      # --- units with nothing to do -------------------------------------------------
+
+      # The apt timers and unattended-upgrades are masked in 05-apt.sh, ahead of the
+      # first apt-get, because on boot 1 they contend with it for the dpkg lock.
+
+      # Disabled rather than masked: nothing re-enables these, and masking would be
+      # a stronger claim than the reasoning supports.
+      #
+      #   systemd-pstore          firmware crash-dump collection, for hardware
+      #   uuidd.socket            UUID daemon nothing here asks for
+      #   cloud-init-hotplugd     device hotplug, in a VM whose devices are fixed
+      #   man-db / dpkg-db-backup / e2scrub_all
+      #                           housekeeping timers for a machine meant to live for
+      #                           years; this one is disposable and re-created
+      for unit in \
+        systemd-pstore.service \
+        uuidd.socket \
+        cloud-init-hotplugd.socket \
+        man-db.timer \
+        dpkg-db-backup.timer \
+        e2scrub_all.timer; do
+        # Absent is fine and not an error: debian13 and ubuntu2404 ship slightly
+        # different unit sets, and a unit that is not installed is already off.
+        systemctl disable "$unit" 2>/dev/null || true
+      done
+
+      touch "$state/services.done"
+  # The two user-side scripts: a root-owned body the agent can read and not
+  # write, and a wrapper that runs it as the agent with a login environment.
+  - path: /usr/local/lib/ptrbox/30-toolchain.sh
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 30-toolchain.sh - developer toolchain. Runs as the unprivileged agent user.
+      #
+      # Which tools land here is host-side config (one boolean each: PTRBOX_GO,
+      # PTRBOX_NODE, PTRBOX_UV for the runtimes, PTRBOX_OPENCODE for a second coding
+      # agent, all off by default), resolved into the list rendered in below and
+      # validated on the host first - the same rule as the apt list in
+      # 15-extra-packages.sh, and for the same reason: a list read from the repo
+      # mount would let the agent decide what its own sandbox contains.
+      #
+      # Claude Code is not part of that list. It is installed unconditionally,
+      # because it is what a ptrbox VM exists to run, and it is a native binary that
+      # needs neither node nor Python.
+      #
+      # This must happen on the pre-firewall boot, and the done-marker guard is
+      # therefore mandatory. The reason is narrower than it looks: several of the
+      # downloads below are from hosts that ARE on the allowlist
+      # (.githubusercontent.com, astral.sh, claude.ai). The ones that are not are
+      # `nvm install`, which fetches the node tarball from nodejs.org, Go's tarball
+      # from go.dev/dl.google.com, and opencode's installer at opencode.ai - all
+      # deliberately absent from the allowlist, because provisioning is the only
+      # thing that needs them. So a post-firewall re-run would get through most of
+      # this file and then hang.
+      #
+      # The installer URLs and the nvm pin are deliberately NOT config. They are
+      # `curl | bash` sources; changing one should be an edit here, visible as a
+      # golden diff under tests/golden/, rather than a line in a config file.
+      # =============================================================================
+      set -eux
+
+      if [ -f "$HOME/.ptrbox/toolchain.done" ]; then
+        exit 0
+      fi
+
+      # Rendered from host config; TOOLCHAIN is empty when no tool is wanted.
+      TOOLCHAIN="node uv"
+      NODE_VERSION="lts"
+
+      mkdir -p "$HOME/.ptrbox"
+      # Timing record; see 10-base.sh. User scripts write under $HOME - the state
+      # directory is root's, and this one runs as the agent user.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "30-toolchain %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$HOME/.ptrbox/timings" || true' EXIT
+
+      # What was ASKED FOR, recorded before anything is installed. vm/verify.sh reads
+      # this file and requires every name in it to be on PATH, so a runtime that
+      # failed to install is a failed `ptrbox new` rather than a tool someone
+      # discovers is missing a week later. Writing it first is what makes it an
+      # assertion instead of a self-report: if an install below dies, set -e stops
+      # the script here, and the record still says the runtime was wanted.
+      printf '%s\n' "$TOOLCHAIN" >"$HOME/.ptrbox/toolchain"
+
+      # Substring match on a padded list, so "node" cannot match "nodemon".
+      want() {
+        case " $TOOLCHAIN " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+        esac
+      }
+
+      if want go; then
+        # The official tarball rather than Debian's golang-go: this keeps Go
+        # user-owned under $HOME, like nvm and uv, in a VM that has no root after
+        # provisioning - and trixie's package trails upstream. The version is asked
+        # for rather than pinned (the same always-fresh argument as `nvm install
+        # --lts`), and the architecture is read rather than assumed.
+        go_version="$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -n 1)"
+        go_arch="$(dpkg --print-architecture)"
+        mkdir -p "$HOME/.local/bin"
+        curl -fsSL "https://dl.google.com/go/${go_version}.linux-${go_arch}.tar.gz" |
+          tar -C "$HOME/.local" -xzf -
+        # ~/.local/bin is on PATH for every login shell (40-userenv.sh), which is
+        # what puts go where vm/verify.sh looks for it.
+        ln -sf "$HOME/.local/go/bin/go" "$HOME/.local/bin/go"
+        ln -sf "$HOME/.local/go/bin/gofmt" "$HOME/.local/bin/gofmt"
+      fi
+
+      if want node; then
+        # nvm is a shell function, not a binary, so after installing we must source
+        # it into this script's shell before calling it. The pin is on the nvm
+        # installer; which node it then fetches is PTRBOX_NODE_VERSION, defaulting
+        # to "lts" - part of the always-fresh design.
+        curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+        export NVM_DIR="$HOME/.nvm"
+        # shellcheck source=/dev/null
+        . "$NVM_DIR/nvm.sh"
+        if [ "$NODE_VERSION" = lts ]; then
+          nvm install --lts
+        else
+          nvm install "$NODE_VERSION"
+        fi
+      fi
+
+      if want opencode; then
+        # opencode - a second coding agent, configured by 40-userenv.sh to use LM
+        # Studio on the Mac as its model. The installer drops the binary under
+        # ~/.opencode/bin and wires PATH into ~/.bashrc, below the interactive guard
+        # where scripts and vm/verify.sh cannot see it - so the symlink into
+        # ~/.local/bin, which .profile puts on PATH for every login shell, is what
+        # actually makes it findable. Same reason the Go block symlinks.
+        curl -fsSL https://opencode.ai/install | bash
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$HOME/.opencode/bin/opencode" "$HOME/.local/bin/opencode"
+      fi
+
+      if want uv; then
+        # uv - Python package/project manager. Also installs Python versions on
+        # demand; those downloads come from GitHub releases, which IS on the
+        # allowlist, so `uv python install` keeps working after the firewall is up.
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+      fi
+
+      # Claude Code. Installs the binary to ~/.local/bin.
+      curl -fsSL https://claude.ai/install.sh | bash
+
+      touch "$HOME/.ptrbox/toolchain.done"
+  - path: /var/lib/cloud/scripts/per-boot/30-toolchain.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      exec runuser -l agent -c 'bash /usr/local/lib/ptrbox/30-toolchain.sh'
+  - path: /usr/local/lib/ptrbox/40-userenv.sh
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 40-userenv.sh - shell environment, git identity, Claude Code defaults.
+      # Runs as the unprivileged agent user.
+      # =============================================================================
+      set -eux
+
+      if [ -f "$HOME/.ptrbox/userenv.done" ]; then
+        exit 0
+      fi
+
+      mkdir -p "$HOME/.ptrbox"
+      # Timing record; see 10-base.sh and 30-toolchain.sh.
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "40-userenv %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$HOME/.ptrbox/timings" || true' EXIT
+
+      # Steady-state environment. Goes in ~/.profile, NOT ~/.bashrc: Debian's stock
+      # .bashrc begins with an interactive-shell guard that returns early for
+      # scripts, so exports appended there are invisible to non-interactive shells
+      # (ssh host cmd, bash -lc, ptrbox's own verification run). .profile is read by
+      # every login shell.
+      cat >>"$HOME/.profile" <<'RC'
+      # Load nvm (node). The nvm installer only wires itself into .bashrc, below the
+      # interactive guard - invisible to scripts. Loading it here puts node on PATH
+      # for every login shell, interactive or not.
+      export NVM_DIR="$HOME/.nvm"
+      [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+      # Route cooperative tools (curl, npm, pip, git, claude) through the host Squid
+      # proxy. This is the polite/routing layer; nftables is the enforcement layer
+      # that makes the proxy the ONLY physical way out.
+      export HTTPS_PROXY="http://172.31.255.2:8889"
+      export HTTP_PROXY="$HTTPS_PROXY"
+      # Don't proxy the VM's own local traffic (tests hitting localhost, etc.), nor
+      # the gateway itself: LM Studio on the Mac (PTRBOX_OPENCODE) is dialled there
+      # directly, and squid would refuse a tunnel into private address space anyway.
+      # Listed unconditionally - harmless without opencode, required with it.
+      export NO_PROXY="localhost,127.0.0.1,172.31.255.2"
+      # Don't even attempt telemetry calls - their domains are deliberately off the
+      # allowlist, so attempts would just spam TCP_DENIED in the squid log.
+      export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+      # Where the claude binary landed - and, when PTRBOX_GO is on, the go symlink
+      # 30-toolchain.sh puts beside it.
+      export PATH="$HOME/.local/bin:$PATH"
+      # Go's default GOBIN, where `go install` drops binaries. Named unconditionally,
+      # like the nvm block above: a PATH entry for a directory that does not exist
+      # costs nothing, and branching here would need this script to know the
+      # toolchain.
+      export PATH="$HOME/go/bin:$PATH"
+      RC
+
+      # Interactive-only quality of life. This one goes in ~/.bashrc, BELOW the
+      # stock interactive guard: prompts, aliases and banners are meaningless to
+      # scripts, and here the early return works in our favor - none of this can
+      # leak into `bash -lc` output or the verification run.
+      cat >>"$HOME/.bashrc" <<'RC'
+
+      # --- ptrbox ------------------------------------------------------------------
+      # Make this shell unmistakably the sandbox: VM name in the prompt and in the
+      # terminal title, so a host terminal and a sandbox terminal never look alike.
+      if [ -f /usr/lib/git-core/git-sh-prompt ]; then
+        . /usr/lib/git-core/git-sh-prompt
+      fi
+      # The name's color is derived from the name on the host (ptrbox_vm_color),
+      # so every sandbox keeps its own hue across recreations.
+      if declare -F __git_ps1 >/dev/null; then
+        # Branch only - no dirty-state markers, which cost a status walk per prompt.
+        PS1='\[\e[1;32m\][demo]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\[\e[0;36m\]$(__git_ps1 " (%s)")\[\e[0m\]\$ '
+      else
+        PS1='\[\e[1;32m\][demo]\[\e[0m\] \[\e[1;34m\]\w\[\e[0m\]\$ '
+      fi
+      case "$TERM" in
+      xterm* | rxvt* | tmux* | screen*)
+        PS1="\[\e]0;demo \w\a\]$PS1"
+        ;;
+      esac
+
+      alias ls='ls --color=auto'
+      alias grep='grep --color=auto'
+
+      # Once per ssh login (tmux panes are non-login shells, so they stay quiet):
+      # start where the work is, and say what this box is.
+      if shopt -q login_shell; then
+        [ "$PWD" = "$HOME" ] && cd /workspace
+        printf '\e[1;32m[demo]\e[0m ptrbox sandbox - repo: /workspace, egress: allowlist proxy, sudo: off\n'
+      fi
+      RC
+
+      # Silence the stock login banner, so the ptrbox line above is the only thing
+      # an `ssh lima-<vm>` prints. Two things sit under it, neither ours:
+      #   - "Last login: <date> from UNKNOWN". UNKNOWN is literal, not a rendering
+      #     of an empty field: sshd cannot see a peer address for a connection that
+      #     arrives through lima's relay, so it writes the string into wtmpdb's
+      #     RemoteHost column and reads it back on the next login, forever. Nothing
+      #     host-side or guest-side can make it say something true.
+      #   - Debian's /etc/motd boilerplate.
+      # ~/.hushlogin suppresses exactly those two (sshd's PrintLastLog and
+      # PrintMotd); a Banner, were one configured, would still be shown. It costs no
+      # root, unlike the sshd_config drop-in that would drop only the first line.
+      touch "$HOME/.hushlogin"
+
+      # Git identity for agent commits - set globally in the VM so the agent never
+      # has to guess one (it will otherwise copy whatever it finds in git log, or
+      # invent something). ptrbox fills these in from the HOST's global git config;
+      # empty means the host had none, in which case leave git to complain rather
+      # than commit under a made-up name. Global-in-VM lives outside the mount, so it
+      # covers every repo in this VM without touching host repos.
+      git_name="Example Dev"
+      git_email="dev@example.com"
+      if [ -n "$git_name" ]; then
+        git config --global user.name "$git_name"
+      fi
+      if [ -n "$git_email" ]; then
+        git config --global user.email "$git_email"
+      fi
+
+      # Claude Code defaults, pre-seeded so fresh VMs go straight to work:
+      # - statusline-command.sh + settings.json: the model to default to ("opus" is
+      #   an alias tracking the latest Opus-class model, so no updates needed on
+      #   releases), the statusline that renders above the prompt, and the
+      #   permission mode a session starts in
+      # - permissions.defaultMode "auto": Claude Code's own default, which classifies
+      #   each tool call and asks only about the ones it will not auto-approve. It is
+      #   a user-level setting on purpose - repo-level settings cannot grant it, and
+      #   a repo that could would be choosing its own leash. Approvals are a
+      #   convenience layer here, not the containment: the VM holds under any mode,
+      #   which is why this can be a default rather than a decision per sandbox. A
+      #   plan or a model that does not offer auto mode falls back on its own; to opt
+      #   out, edit this line and re-create.
+      # - .claude.json: skip the first-run onboarding wizard AND the per-project
+      #   trust dialog. Auto-trust is a deliberate call: the dialog gates loading
+      #   repo-provided config (CLAUDE.md, hooks), and in this design the VM itself
+      #   is the trust boundary - a malicious repo config can't reach anything the
+      #   sandbox doesn't already concede.
+      #   NOTE: both files are undocumented internals; format drift shows up as the
+      #   wizard/dialog reappearing - safe, and the fix is to update this block
+      #   rather than remove it.
+      mkdir -p "$HOME/.claude"
+
+      # The statusline. Quoted heredoc: every $var and $(...) below belongs to the
+      # script at render time inside the guest, not to this provisioning shell.
+      #
+      # It shells out to jq (in the base package list), git, date and hostname, all
+      # present. `git -C "$cwd"` reads the repo mount at runtime - which is fine
+      # here in a way it would not be on the host: the agent already has execution
+      # inside this VM, so a repo-triggered git exec is no escalation. The host's
+      # clone is protected separately, by core.hooksPath=/dev/null.
+      cat >"$HOME/.claude/statusline-command.sh" <<'STATUSLINE'
+      #!/bin/sh
+      # Claude Code statusLine command - styled after the Oh My Zsh "ys" theme.
+      # Provisioned by ptrbox; edit vm/provision/40-userenv.sh and re-create the VM.
+
+      input=$(cat)
+      cwd=$(echo "$input" | jq -r '.workspace.current_dir')
+      model=$(echo "$input" | jq -r '.model.display_name')
+      remaining=$(echo "$input" | jq -r '.context_window.remaining_percentage // empty')
+      transcript=$(echo "$input" | jq -r '.transcript_path // empty')
+
+      # Context used % (color-coded: green <50, yellow 50-75, red >75)
+      if [ -n "$remaining" ]; then
+          used=$(echo "$remaining" | awk '{printf "%.0f", 100 - $1}')
+          if [ "$used" -ge 75 ] 2>/dev/null; then
+              ctx_color="\033[1;31m"
+          elif [ "$used" -ge 50 ] 2>/dev/null; then
+              ctx_color="\033[1;33m"
+          else
+              ctx_color="\033[1;32m"
+          fi
+      fi
+
+      user=$(whoami)
+      host=$(hostname -s)
+
+      # Git branch (skip optional locks to avoid blocking)
+      git_branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null)
+
+      # Git dirty indicator
+      git_dirty=""
+      if [ -n "$git_branch" ]; then
+          if [ -n "$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)" ]; then
+              git_dirty="\033[1;31m*\033[0m"
+          fi
+      fi
+
+      # Message count from transcript (count assistant turns)
+      msg_count=""
+      if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+          count=$(grep -c '"role":"assistant"' "$transcript" 2>/dev/null || echo "0")
+          if [ "$count" -gt 0 ] 2>/dev/null; then
+              msg_count="$count"
+          fi
+      fi
+
+      # Timestamp (statusline refreshes after each response, so this is ~last response time)
+      time_str=$(date +%H:%M:%S)
+
+      # Bold blue "#"
+      part_hash="\033[1;34m#\033[0m"
+      # Cyan user
+      part_user="\033[0;36m${user}\033[0m"
+      # Green host
+      part_host="\033[0;32m${host}\033[0m"
+      # Bold yellow cwd
+      part_cwd="\033[1;33m${cwd}\033[0m"
+      # Bold magenta model
+      part_model="\033[1;35m${model}\033[0m"
+
+      line="${part_hash} ${part_user} @ ${part_host} in ${part_cwd}"
+
+      if [ -n "$git_branch" ]; then
+          part_git="on \033[0;34mgit\033[0m:\033[0;36m${git_branch}\033[0m${git_dirty}"
+          line="${line} ${part_git}"
+      fi
+
+      line="${line} [${time_str}] | ${part_model}"
+
+      if [ -n "$used" ]; then
+          line="${line} | ${ctx_color}${used}%\033[0m"
+      fi
+
+      if [ -n "$msg_count" ]; then
+          line="${line} | \033[0;36m${msg_count} msgs\033[0m"
+      fi
+
+      printf '%b' "$line"
+      STATUSLINE
+      chmod 755 "$HOME/.claude/statusline-command.sh"
+
+      # $HOME rather than a literal path: Lima's guest home carries a
+      # version-dependent suffix and must never be hardcoded.
+      printf '{"model": "opus", "permissions": {"defaultMode": "auto"}, "statusLine": {"type": "command", "command": "%s/.claude/statusline-command.sh"}}\n' \
+        "$HOME" >"$HOME/.claude/settings.json"
+
+      cat >"$HOME/.claude.json" <<'JSON'
+      {
+        "hasCompletedOnboarding": true,
+        "projects": {
+          "/workspace": {
+            "hasTrustDialogAccepted": true,
+            "hasCompletedProjectOnboarding": true
+          }
+        }
+      }
+      JSON
+
+      # LM Studio on the Mac, for a sandbox with PTRBOX_OPENCODE. The URL is
+      # recorded so vm/verify.sh can ask the live wall whether that one destination
+      # answers - the same request-then-check shape as the toolchain record, and
+      # the reason verify.sh never needs to know the gateway address itself.
+      OPENCODE="false"
+      if [ "$OPENCODE" = "true" ]; then
+        printf 'http://%s:%s\n' "172.31.255.2" "1234" >"$HOME/.ptrbox/lmstudio-url"
+
+        # opencode's own config: one provider, LM Studio through the gateway, with
+        # the models `ptrbox new` found there at create time (opencode cannot
+        # discover them itself). The models object is rendered whole - built on the
+        # host with encoding/json from ids validated there - so nothing here
+        # interpolates a name. No api key anywhere: LM Studio wants none, and a
+        # key-shaped value is exactly what the credential checks refuse. autoupdate
+        # and share are off in the file; the rest of the phone-home is below.
+        #
+        # small_model is pinned, and the hosted `opencode` provider is disabled,
+        # for the same reason: opencode picks a model for side tasks (session
+        # titles) separately from the main one, and its default prefers its own
+        # hosted provider before falling back to yours - session text sent to
+        # opencode's servers on every first message, or here, a hang against the
+        # wall. The pin makes the local model answer both jobs.
+        mkdir -p "$HOME/.config/opencode"
+        cat >"$HOME/.config/opencode/opencode.json" <<'OPENCODE'
+      {
+        "$schema": "https://opencode.ai/config.json",
+        "autoupdate": false,
+        "share": "disabled",
+        "disabled_providers": ["opencode"],
+        "provider": {
+          "lmstudio": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "LM Studio (Mac)",
+            "options": { "baseURL": "http://172.31.255.2:1234/v1" },
+            "models": {}
+          }
+        },
+        "model": "lmstudio/",
+        "small_model": "lmstudio/"
+      }
+      OPENCODE
+
+        # None of these hosts is on the allowlist, and Bun's fetch ignores
+        # HTTP_PROXY, so each call would hang against the wall rather than fail.
+        # None of the names is key-shaped, which vm/verify.sh checks.
+        cat >>"$HOME/.profile" <<'RC'
+      # opencode: no update checks, share links, LSP or model-catalog downloads.
+      export OPENCODE_DISABLE_AUTOUPDATE=1
+      export OPENCODE_DISABLE_SHARE=1
+      export OPENCODE_DISABLE_LSP_DOWNLOAD=1
+      export OPENCODE_DISABLE_MODELS_FETCH=1
+      RC
+      fi
+
+      touch "$HOME/.ptrbox/userenv.done"
+  - path: /var/lib/cloud/scripts/per-boot/40-userenv.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      exec runuser -l agent -c 'bash /usr/local/lib/ptrbox/40-userenv.sh'
+  - path: /var/lib/cloud/scripts/per-boot/90-harden.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      # =============================================================================
+      # 90-harden.sh - take root away and keep it away. Runs as root in the guest.
+      #
+      # THE step that makes the firewall real. Cloud images grant the default user
+      # passwordless sudo (NOPASSWD:ALL) - convenient for normal use, fatal here:
+      # the agent could run `sudo nft flush ruleset` and walk straight past the
+      # wall. (The NAT would then hand it direct, unfiltered internet - Squid only
+      # filters what is forced through it.)
+      #
+      # Consequence: NO root access for the agent inside this VM, ever. Any
+      # root-level change (new apt package, firewall tweak) = edit the template,
+      # delete the VM, re-create. That is the intended workflow; the template stays
+      # the single source of truth.
+      #
+      # Two halves, and the second is why this file is no longer called 90-nosudo.sh:
+      # removing the sudoers entry takes away the PERMISSION, and stripping the
+      # setuid bits takes away the MECHANISM. A setuid-root binary is precisely the
+      # thing that turns "the agent has no root" back into "the agent has root", so
+      # in a VM whose whole model rests on that sentence, every one left executable
+      # is a standing bet on its CVE history.
+      #
+      # The one exception, and it is the whole of the two-user model: on a backend
+      # whose own daemon needs sudo in the guest on every boot (Multipass, for its
+      # sshfs mount and its snap), the account the daemon logs in as keeps its
+      # NOPASSWD grant and sudo keeps its bit. That account is DAEMON_USER below,
+      # rendered by the host; the agent runs as a different user with no grant, no
+      # password and no route to it, and vm/verify.sh asserts all three. On lima
+      # DAEMON_USER is empty: one account, and it loses root.
+      #
+      # Deliberately NOT guarded by a done-marker: this runs on every boot, so both
+      # halves are re-asserted even if something in the guest puts a sudoers file
+      # back - or, the case that actually happens, an apt upgrade reinstalls a
+      # package and restores its setuid bit.
+      # =============================================================================
+      set -eux
+
+      # Arguments with the real paths as their defaults, purely so the test suite
+      # can run this against directories it controls - ptrbox passes nothing. The
+      # third is a prefix for the binaries below, "" in a guest.
+      state="${1:-/var/lib/ptrbox}"
+      sudoers_dir="${2:-/etc/sudoers.d}"
+      root="${3:-}"
+
+      # Empty on a single-account backend. Fixed on the host, never read from the
+      # guest: a value the guest could supply is a value the agent could supply.
+      DAEMON_USER="ubuntu"
+
+      # Timing record; see 10-base.sh. No guard here, so this is written on every
+      # boot; the host sums the lines for one name, and this one is milliseconds.
+      mkdir -p "$state"
+      ptrbox_t0="$(date +%s)"
+      trap 'printf "90-harden %s %s\n" "$ptrbox_t0" "$(date +%s)" >>"$state/timings" || true' EXIT
+
+      # --- the permission ----------------------------------------------------------
+
+      # Every drop-in that grants NOPASSWD to anyone but the daemon user goes. With
+      # no daemon user that is every one of them, cloud-init's 90-cloud-init-users
+      # included; with one, a drop-in survives only if each of its NOPASSWD lines
+      # starts with that account's name - a file mixing the daemon user with anyone
+      # else is removed whole, which costs the daemon its sudo rather than handing
+      # root to the someone else. Drop-ins without NOPASSWD are not this script's
+      # business: the default sudoers still asks for a password, and the agent has
+      # none.
+      for dropin in "$sudoers_dir"/*; do
+        [ -f "$dropin" ] || continue
+        grep -q 'NOPASSWD' "$dropin" || continue
+        if [ -n "$DAEMON_USER" ] && ! grep 'NOPASSWD' "$dropin" | grep -vqE "^[[:space:]]*${DAEMON_USER}[[:space:]]"; then
+          continue
+        fi
+        rm -f "$dropin"
+      done
+
+      # --- the mechanism -----------------------------------------------------------
+
+      # Every binary below was checked against a live guest and has no caller here.
+      # The package stays installed in each case; only the bit goes, which is what
+      # keeps cloud-init's dependency on sudo satisfied while making the binary
+      # unable to escalate. `sudo -n true` still fails, so vm/verify.sh's existing
+      # check reads the same.
+      #
+      #   sudo            no sudoers entry, and cloud-init runs as root - it depends
+      #                   on the package, never invokes the command. KEPT when there
+      #                   is a daemon user: it is that account's only channel to
+      #                   root, and its grant is the one this script just preserved.
+      #   su              nothing switches users in a sandbox
+      #   passwd          sshd is PasswordAuthentication no
+      #   chfn chsh       finger info and login shell
+      #   gpasswd newgrp  group management
+      #   chage expiry    password aging (setgid shadow)
+      #   ssh-keysign     host-based auth, which sshd is not configured for
+      #   polkit-agent-helper-1
+      #                   headless VM; nothing raises a polkit prompt
+      #   mount umount    the repo mount arrives as root - via fstab and a systemd
+      #                   mount unit, or via the daemon user's sudo - not through
+      #                   the setuid binary. The agent loses manual mounting, which
+      #                   it has no business doing.
+      #
+      # Deliberately LEFT setuid, because each has a caller or a cost:
+      #   unix_chkpwd     PAM's password checker, on the login path; small upside
+      #   dbus-daemon-launch-helper
+      #                   systemd-logind depends on dbus, and breaking activation
+      #                   risks ssh sessions
+      #   ssh-agent       setgid _ssh is anti-ptrace hardening, not a privilege
+      for binary in \
+        /usr/bin/sudo \
+        /usr/bin/su \
+        /usr/bin/passwd \
+        /usr/bin/chfn \
+        /usr/bin/chsh \
+        /usr/bin/gpasswd \
+        /usr/bin/newgrp \
+        /usr/bin/chage \
+        /usr/bin/expiry \
+        /usr/lib/openssh/ssh-keysign \
+        /usr/lib/polkit-1/polkit-agent-helper-1 \
+        /usr/bin/mount \
+        /usr/bin/umount; do
+        if [ -n "$DAEMON_USER" ] && [ "$binary" = /usr/bin/sudo ]; then
+          continue
+        fi
+        # Absent is fine and not an error: the two distros ship slightly different
+        # sets, and a binary that is not there cannot be escalated through.
+        [ -e "$root$binary" ] || continue
+        chmod u-s,g-s "$root$binary"
+      done
+
+      exit 0

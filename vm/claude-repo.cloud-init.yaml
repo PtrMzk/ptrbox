@@ -1,0 +1,125 @@
+#cloud-config
+# =============================================================================
+# claude-repo.cloud-init.yaml - per-repo Claude Code sandbox VM, as cloud-init
+# user-data for the Multipass backend (Windows, Hyper-V).
+#
+# DO NOT launch this file directly. `ptrbox new` renders it - substituting the
+# double-underscore placeholders and inlining vm/provision/*.sh at the INCLUDE
+# markers - writes the result under the generated dir, and hands THAT to
+# `multipass launch --cloud-init` beside the sizing, the image, the network and
+# the one mount, which Multipass takes as arguments rather than from this file.
+# So: this file says what the guest CONTAINS; the launch arguments say what
+# the VM IS. vm/claude-repo.yaml is the same sandbox for lima, and the two
+# share every script under vm/provision/ byte for byte - an invariant holds
+# them to it. What differs is here, and it is three things.
+#
+# THE ACCOUNTS. Multipass logs into the guest as the image's default user
+# (`ubuntu`) and needs sudo there on every boot: its sshfs mount runs through
+# `sudo -n bash -c`, its helper snap through `sudo snap`. So that account stays
+# the daemon's, with the NOPASSWD grant cloud-init gives it, and a second
+# account - `agent`, no sudo rule, no password, no groups - is what Claude Code
+# and everything of the user's runs as. 90-harden.sh is rendered with the
+# daemon user's name and keeps exactly its grant and sudo's setuid bit, and
+# vm/verify.sh asserts the agent is neither that account nor able to become
+# it. CLAUDE.md item 75 has the argument; this is the whole of the delta.
+#
+# THE SCRIPTS. Lima installs vm/provision/*.sh as per-boot scripts itself;
+# here they are written into cloud-init's own per-boot directory, where they
+# run on every boot as root, in lexical order, with the same done-marker
+# contract. The two that lima runs as the user (30, 40) are written as
+# root-owned bodies under /usr/local/lib/ptrbox/ and run through a per-boot
+# wrapper as the agent, via runuser. Order is lexical, so 90 runs after 30
+# and 40 here and before them on lima; nothing depends on it. The mode of a
+# file is spelled 0o755 rather than '0755': Multipass re-emits this document
+# and drops the quotes, and '0755' unquoted is an integer to cloud-init's
+# parser, which then fails the schema check on every boot. 0o755 is a string
+# to that parser and an octal to the code that applies it (step 0, stage 5).
+#
+# THE ADDRESS. The VM gets a second NIC on the ptrbox Hyper-V switch
+# (`--network name=ptrbox,mode=manual`); the netplan file below gives it a
+# static address there, with no gateway and no resolver, so it is a path to
+# the proxy VM and nothing else. The first NIC stays on Multipass's default
+# switch for boot-1 internet, exactly as lima's does. A netplan file written
+# by cloud-init is not applied on the boot that writes it; it takes effect
+# on the post-provision reboot `ptrbox new` already performs.
+#
+# LIFECYCLE: as lima's - boot 1 open, the firewall written and enabled but
+# not started; the reboot raises the wall; every later boot re-runs the
+# per-boot scripts, which exit in milliseconds behind their guards.
+# =============================================================================
+
+users:
+  - default
+  - name: agent
+    # No `sudo` key at all: the default is no rule, and that spelling is the
+    # one cloud-init has not deprecated (`false` is, `null` is its
+    # replacement). The uid is pinned because step 0 saw the two accounts
+    # come out in the order they did (agent=1000, ubuntu=1001) and a mount's
+    # ownership map is written against a number, not a name.
+    uid: 1000
+    lock_passwd: true
+    shell: /bin/bash
+
+write_files:
+  # Root-owned, 0644 by default: verify.sh trusts it precisely because the
+  # agent cannot write it or its directory. Keys are spelled as verify.sh
+  # reads them; the daemon user is the same value 90-harden.sh is rendered
+  # with, so the two cannot disagree.
+  - path: /var/lib/ptrbox/backend
+    content: |
+      backend=multipass
+      mount-type=fuse.sshfs
+      daemon-user=__DAEMON_USER__
+  # The second NIC. Multipass's own netplan claims the first by MAC, so the
+  # second is eth1, unclaimed, and named here. One address, nothing else.
+  - path: /etc/netplan/60-ptrbox.yaml
+    permissions: 0o600
+    content: |
+      network:
+        version: 2
+        ethernets:
+          eth1:
+            addresses: [__VM_ADDR__/24]
+  # The provision scripts, as root, every boot.
+  - path: /var/lib/cloud/scripts/per-boot/05-apt.sh
+    permissions: 0o755
+    content: |
+      __INCLUDE:provision/05-apt.sh__
+  - path: /var/lib/cloud/scripts/per-boot/10-base.sh
+    permissions: 0o755
+    content: |
+      __INCLUDE:provision/10-base.sh__
+  - path: /var/lib/cloud/scripts/per-boot/15-extra-packages.sh
+    permissions: 0o755
+    content: |
+      __INCLUDE:provision/15-extra-packages.sh__
+  - path: /var/lib/cloud/scripts/per-boot/20-firewall.sh
+    permissions: 0o755
+    content: |
+      __INCLUDE:provision/20-firewall.sh__
+  - path: /var/lib/cloud/scripts/per-boot/25-services.sh
+    permissions: 0o755
+    content: |
+      __INCLUDE:provision/25-services.sh__
+  # The two user-side scripts: a root-owned body the agent can read and not
+  # write, and a wrapper that runs it as the agent with a login environment.
+  - path: /usr/local/lib/ptrbox/30-toolchain.sh
+    content: |
+      __INCLUDE:provision/30-toolchain.sh__
+  - path: /var/lib/cloud/scripts/per-boot/30-toolchain.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      exec runuser -l agent -c 'bash /usr/local/lib/ptrbox/30-toolchain.sh'
+  - path: /usr/local/lib/ptrbox/40-userenv.sh
+    content: |
+      __INCLUDE:provision/40-userenv.sh__
+  - path: /var/lib/cloud/scripts/per-boot/40-userenv.sh
+    permissions: 0o755
+    content: |
+      #!/bin/bash
+      exec runuser -l agent -c 'bash /usr/local/lib/ptrbox/40-userenv.sh'
+  - path: /var/lib/cloud/scripts/per-boot/90-harden.sh
+    permissions: 0o755
+    content: |
+      __INCLUDE:provision/90-harden.sh__

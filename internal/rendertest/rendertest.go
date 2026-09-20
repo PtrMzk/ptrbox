@@ -75,11 +75,51 @@ func OpencodeOn() render.Values {
 
 // SandboxWith renders the sandbox template with Args plus the given overrides.
 func SandboxWith(t *testing.T, overrides render.Values) string {
-	values := Args()
+	return mustRender(t, "vm/claude-repo.yaml", "vm", with(Args(), overrides))
+}
+
+// CloudInitArgs are the cloud-init sandbox template's values: Args, with the
+// Multipass backend's answers in place of lima's - the proxy at its own
+// address on the ptrbox switch, a daemon user that keeps root, and the
+// sandbox's static address on that switch (the one step 0 used). Everything
+// the provision scripts read is otherwise the same, which is what lets an
+// invariant compare the two renderings' scripts.
+func CloudInitArgs() render.Values {
+	return with(Args(), render.Values{
+		"PROXY_HOST":  "172.31.255.2",
+		"DAEMON_USER": "ubuntu",
+		"VM_ADDR":     "172.31.255.17",
+	})
+}
+
+// CloudInit renders vm/claude-repo.cloud-init.yaml with CloudInitArgs.
+func CloudInit(t *testing.T) string {
+	return mustRender(t, "vm/claude-repo.cloud-init.yaml", "vm", CloudInitArgs())
+}
+
+// CloudInitWith renders the cloud-init sandbox template with CloudInitArgs
+// plus the given overrides.
+func CloudInitWith(t *testing.T, overrides render.Values) string {
+	return mustRender(t, "vm/claude-repo.cloud-init.yaml", "vm", with(CloudInitArgs(), overrides))
+}
+
+// ProxyCloudInit renders vm/proxy.cloud-init.yaml. It has no placeholders of
+// its own; ProxyArgs is passed so a future one fails the same way.
+func ProxyCloudInit(t *testing.T) string {
+	return mustRender(t, "vm/proxy.cloud-init.yaml", "vm", ProxyArgs())
+}
+
+// Script renders one provision script on its own, with the given values -
+// what a rendering that embeds it must contain, line for line.
+func Script(t *testing.T, name string, values render.Values) string {
+	return mustRender(t, name, "vm", values)
+}
+
+func with(values, overrides render.Values) render.Values {
 	for k, v := range overrides {
 		values[k] = v
 	}
-	return mustRender(t, "vm/claude-repo.yaml", "vm", values)
+	return values
 }
 
 // ProxyArgs are the egress proxy VM template's values.
