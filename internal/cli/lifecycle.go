@@ -166,10 +166,12 @@ func startSandbox(env *Env, name, asked string) error {
 
 	if env.Backend.Running(name) {
 		env.Out.Say("VM %q is already running", name)
-	} else if err := env.Backend.Start(name); err != nil {
-		return err
+		// Running is not ready: on a backend whose daemon brings VMs back
+		// after a host reboot, the mount can be on record and absent from
+		// the guest. Ready repairs what it can, or says what is missing.
+		return env.Backend.Ready(name)
 	}
-	return nil
+	return env.Backend.Start(name)
 }
 
 func cmdStop(env *Env, args []string) error {

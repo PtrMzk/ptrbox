@@ -283,7 +283,7 @@ func (b Backend) Start(vm string) error {
 	if err := b.waitCloudInit(vm); err != nil {
 		return err
 	}
-	return b.ensureMounts(vm)
+	return b.Ready(vm)
 }
 
 // Stop powers a VM off, keeping its disk and state.
@@ -316,9 +316,12 @@ func (b Backend) waitCloudInit(vm string) error {
 	return fmt.Errorf("cloud-init did not finish cleanly in %s: %w\n%s", vm, err, strings.TrimSpace(out))
 }
 
-// ensureMounts compares the daemon's record with the guest's /proc/mounts
-// and restarts the VM once if they disagree.
-func (b Backend) ensureMounts(vm string) error {
+// Ready compares the daemon's mount record with the guest's /proc/mounts and
+// restarts the VM once if they disagree. It is the second half of Start, and
+// on its own it is what `ptrbox start` asks of a VM the daemon already
+// brought back after a host reboot - Running, with the mount on record and
+// absent from the guest (step 0, stage 9).
+func (b Backend) Ready(vm string) error {
 	guests, err := b.Mounts(vm)
 	if err != nil {
 		return err

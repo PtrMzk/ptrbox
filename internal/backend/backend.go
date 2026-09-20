@@ -178,7 +178,13 @@ type Backend interface {
 	Validate(configPath string) error
 	// Create provisions a new VM and returns when its first boot is done.
 	Create(Spec) error
+	// Start boots a stopped VM and returns when the guest is what its
+	// template says. Ready asks the same of a VM that is already running -
+	// one the hypervisor brought back after a host reboot, say - and
+	// repairs what the backend can. On a backend where nothing can go
+	// missing between boots it does nothing.
 	Start(vm string) error
+	Ready(vm string) error
 	Stop(vm string) error
 	Delete(vm string) error
 

@@ -213,3 +213,15 @@ func TestShellGoesPastTheNarratorOnTheCallersStreams(t *testing.T) {
 		t.Errorf("err = %v, want the session's exit status", err)
 	}
 }
+
+func TestReadyAsksNothingOfLima(t *testing.T) {
+	// A virtiofs mount is part of the VM's definition; there is nothing to
+	// re-check on a running lima VM, and `ptrbox start` on one must stay the
+	// no-op it has always been.
+	b, fake := newBackend(t)
+	fake.AddVM("demo", lima.StatusRunning)
+	fake.Reset()
+	if err := b.Ready("demo"); err != nil || fake.CallLog() != "" {
+		t.Errorf("Ready = %v with calls %q, want nothing", err, fake.CallLog())
+	}
+}

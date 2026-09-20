@@ -26,6 +26,8 @@ import (
 	"github.com/PtrMzk/ptrbox/internal/config"
 	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/lima/limafake"
+	"github.com/PtrMzk/ptrbox/internal/multipass"
+	"github.com/PtrMzk/ptrbox/internal/multipass/multipassfake"
 	"github.com/PtrMzk/ptrbox/internal/narrate"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/ui"
@@ -55,8 +57,11 @@ func (k *fakeKeychain) store() Keychain {
 }
 
 type harness struct {
-	t        *testing.T
-	fake     *limafake.Fake
+	t    *testing.T
+	fake *limafake.Fake
+	// mp, when set, makes this harness a Windows PC: the backend is
+	// multipass over it instead of lima over fake. See newMultipassHarness.
+	mp       *multipassfake.Fake
 	keychain *fakeKeychain
 
 	home    string
@@ -218,10 +223,7 @@ func (h *harness) run(args ...string) error {
 		Editor:      func(path string) error { return h.editor(path) },
 		// A fixed clock, so an archive filename is the same on every run.
 		Now:     func() time.Time { return time.Date(2026, 8, 17, 20, 45, 0, 0, time.UTC) },
-		Backend: lima.Backend{Client: &lima.Client{Runner: h.fake, Stdout: h.narrator, Stderr: h.narrator}},
-	}
-	if h.missing["limactl"] {
-		env.Backend = lima.Backend{Client: &lima.Client{Runner: unavailableRunner{h.fake}, Stdout: h.narrator, Stderr: h.narrator}}
+		Backend: h.backend(),
 	}
 	if h.facts != nil {
 		env.Backend = variedBackend{Backend: env.Backend, vary: h.facts}
@@ -261,10 +263,33 @@ func (h *harness) run(args ...string) error {
 	return h.err
 }
 
+// backend is the harness's backend over its fake: lima on a Mac, multipass on
+// a PC, and either one "not installed" when the test says its binary is
+// missing.
+func (h *harness) backend() backend.Backend {
+	if h.mp != nil {
+		var runner backend.Runner = h.mp
+		if h.missing["multipass"] {
+			runner = unavailableMultipass{h.mp}
+		}
+		return multipass.Backend{Client: multipass.New(runner, h.narrator, h.narrator)}
+	}
+	var runner backend.Runner = h.fake
+	if h.missing["limactl"] {
+		runner = unavailableRunner{h.fake}
+	}
+	return lima.Backend{Client: &lima.Client{Runner: runner, Stdout: h.narrator, Stderr: h.narrator}}
+}
+
 // unavailableRunner is a fake limactl that is not installed.
 type unavailableRunner struct{ *limafake.Fake }
 
 func (unavailableRunner) Available() bool { return false }
+
+// unavailableMultipass is a fake multipass that is not installed.
+type unavailableMultipass struct{ *multipassfake.Fake }
+
+func (unavailableMultipass) Available() bool { return false }
 
 // mustRun fails the test if the command did.
 func (h *harness) mustRun(args ...string) {

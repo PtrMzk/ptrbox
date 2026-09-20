@@ -95,3 +95,8 @@ func (b Backend) Shell(vm string, stdin io.Reader, stdout, stderr io.Writer) err
 		Stderr: stderr,
 	})
 }
+
+// Ready is a no-op on lima: a virtiofs mount is part of the VM's definition
+// and comes up with it, so nothing can be on record and missing from the
+// guest, and the provision scripts a boot runs are lima's own to wait for.
+func (b Backend) Ready(string) error { return nil }
