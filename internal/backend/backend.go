@@ -162,6 +162,12 @@ type Backend interface {
 	// rather than an exec error from three layers down.
 	Available() bool
 	Facts() Facts
+	// Preflight checks what the host must have before any VM exists that
+	// only the backend knows to ask for - a network the VMs are wired to, a
+	// setting a mount depends on - and returns one error naming what to
+	// run, since ptrbox never elevates or changes host settings itself. nil
+	// when the host is ready, and on a backend that needs nothing (lima).
+	Preflight() error
 
 	// List returns every VM the backend knows about. A listing that fails
 	// returns no VMs and no error: callers use this to decide whether to

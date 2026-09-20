@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -212,6 +213,77 @@ func (Backend) Facts() backend.Facts {
 		// The winget id, which is what HostOS prints for a missing dependency.
 		Deps: []backend.Dep{{Tool: Binary, Package: "Canonical.Multipass"}},
 	}
+}
+
+// InterfaceAddrs is how Preflight sees the host's own addresses - a variable
+// so the suite can describe a PC with or without the switch adapter.
+var InterfaceAddrs = net.InterfaceAddrs
+
+// Preflight is what the PC must have before a VM exists, and what only this
+// backend knows to ask for. Three things, each checked and named with the
+// command that fixes it, because ptrbox never elevates and never changes a
+// host setting on its own.
+//
+// The switch: `multipass networks` must list it, and an adapter on the host
+// must hold HostAddr on it - both are what the two PowerShell lines create,
+// and a switch without the address is one the proxy VM cannot be reached
+// across. Mounts: `local.privileged-mounts` must be true, or `launch` skips
+// the repo mount with exit 0 (step 0, stage 2); turning it on RESTARTS the
+// daemon, saving and resuming every VM, which is why it is asked here, before
+// any VM exists, and never done by ptrbox while one does.
+func (b Backend) Preflight() error {
+	var problems []string
+
+	out, err := b.Client.Output("networks", "--format", "json")
+	if err != nil {
+		return err
+	}
+	var nets struct {
+		List []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal([]byte(out), &nets); err != nil {
+		return fmt.Errorf("multipass networks: %w", err)
+	}
+	hasSwitch := false
+	for _, n := range nets.List {
+		if n.Name == Switch && n.Type == "switch" {
+			hasSwitch = true
+		}
+	}
+	hasAddr := false
+	if addrs, err := InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			if ipnet, ok := a.(*net.IPNet); ok && ipnet.IP.String() == HostAddr {
+				hasAddr = true
+			}
+		}
+	}
+	if !hasSwitch || !hasAddr {
+		what := "the ptrbox switch does not exist"
+		if hasSwitch {
+			what = "the ptrbox switch exists but this PC holds no address on it"
+		}
+		problems = append(problems, what+". Once, in an admin PowerShell:\n"+
+			"    New-VMSwitch -Name "+Switch+" -SwitchType Internal\n"+
+			`    New-NetIPAddress -InterfaceAlias "vEthernet (`+Switch+`)" -IPAddress `+HostAddr+" -PrefixLength 24")
+	}
+
+	setting, err := b.Client.Output("get", "local.privileged-mounts")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(setting) != "true" {
+		problems = append(problems, "mounts are disabled in multipass, so a sandbox would come up without its repo. Once, with no ptrbox VM running (it restarts the multipass daemon):\n"+
+			"    multipass set local.privileged-mounts=true")
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New("this PC is not ready for ptrbox: " + strings.Join(problems, "\nand "))
 }
 
 // guestAddr is a sandbox's address on the switch, from its proxy port: the

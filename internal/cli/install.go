@@ -476,6 +476,11 @@ func preflight(env *Env) error {
 	if err := preflightDeps(env); err != nil {
 		return err
 	}
+	// What the backend needs of the host before a VM exists, which only it
+	// knows to ask: on Multipass the ptrbox switch and the mounts setting.
+	if err := env.Backend.Preflight(); err != nil {
+		return err
+	}
 	if err := preflightProxyPort(env); err != nil {
 		return err
 	}

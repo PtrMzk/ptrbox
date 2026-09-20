@@ -100,3 +100,7 @@ func (b Backend) Shell(vm string, stdin io.Reader, stdout, stderr io.Writer) err
 // and comes up with it, so nothing can be on record and missing from the
 // guest, and the provision scripts a boot runs are lima's own to wait for.
 func (b Backend) Ready(string) error { return nil }
+
+// Preflight asks nothing of a Mac: lima brings its own network, and a
+// virtiofs mount needs no setting turned on.
+func (b Backend) Preflight() error { return nil }

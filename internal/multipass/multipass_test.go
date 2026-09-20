@@ -3,6 +3,7 @@ package multipass_test
 import (
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -457,5 +458,88 @@ func TestFacts(t *testing.T) {
 	}
 	if len(f.Deps) != 1 || f.Deps[0] != (backend.Dep{Tool: "multipass", Package: "Canonical.Multipass"}) {
 		t.Errorf("Deps = %v, want multipass by its winget id", f.Deps)
+	}
+}
+
+// --- preflight ---------------------------------------------------------------
+
+// withSwitchAdapter makes the host hold the switch address, or not.
+func withSwitchAdapter(t *testing.T, held bool) {
+	t.Helper()
+	real := multipass.InterfaceAddrs
+	multipass.InterfaceAddrs = func() ([]net.Addr, error) {
+		addrs := []net.Addr{&net.IPNet{IP: net.ParseIP("192.168.1.20"), Mask: net.CIDRMask(24, 32)}}
+		if held {
+			addrs = append(addrs, &net.IPNet{IP: net.ParseIP("172.31.255.1"), Mask: net.CIDRMask(24, 32)})
+		}
+		return addrs, nil
+	}
+	t.Cleanup(func() { multipass.InterfaceAddrs = real })
+}
+
+func readyPC(t *testing.T, s *script) {
+	t.Helper()
+	s.answer("networks --format json", fixture(t, "networks.json"))
+	s.answer("get local.privileged-mounts", "true\n")
+	withSwitchAdapter(t, true)
+}
+
+func TestAReadyPCPassesPreflight(t *testing.T) {
+	b, s := newBackend(t)
+	readyPC(t, s)
+	if err := b.Preflight(); err != nil {
+		t.Errorf("Preflight = %v on a PC with the switch, the address and mounts on", err)
+	}
+}
+
+func TestAMissingSwitchIsNamedWithTheTwoLinesThatCreateIt(t *testing.T) {
+	b, s := newBackend(t)
+	readyPC(t, s)
+	s.outputs["networks --format json"] = []string{`{"list":[{"description":"Virtual Switch with internal networking","name":"Default Switch","type":"switch"}]}`}
+	err := b.Preflight()
+	if err == nil {
+		t.Fatal("Preflight passed with no ptrbox switch")
+	}
+	for _, want := range []string{"New-VMSwitch -Name ptrbox -SwitchType Internal",
+		`New-NetIPAddress -InterfaceAlias "vEthernet (ptrbox)" -IPAddress 172.31.255.1 -PrefixLength 24`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v\nmissing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "privileged-mounts") {
+		t.Error("mounts were blamed when only the switch is missing")
+	}
+}
+
+func TestASwitchWithoutTheHostAddressIsNamed(t *testing.T) {
+	b, s := newBackend(t)
+	readyPC(t, s)
+	withSwitchAdapter(t, false)
+	err := b.Preflight()
+	if err == nil || !strings.Contains(err.Error(), "no address on it") || !strings.Contains(err.Error(), "New-NetIPAddress") {
+		t.Errorf("err = %v, want the address line", err)
+	}
+}
+
+func TestDisabledMountsAreNamedWithTheSettingAndItsCost(t *testing.T) {
+	b, s := newBackend(t)
+	readyPC(t, s)
+	s.outputs["get local.privileged-mounts"] = []string{"false\n"}
+	err := b.Preflight()
+	if err == nil || !strings.Contains(err.Error(), "multipass set local.privileged-mounts=true") || !strings.Contains(err.Error(), "restarts the multipass daemon") {
+		t.Errorf("err = %v, want the setting and that it restarts the daemon", err)
+	}
+	if strings.Contains(err.Error(), "New-VMSwitch") {
+		t.Error("the switch was blamed when only mounts are off")
+	}
+}
+
+func TestPreflightNeverRunsAnythingButTwoReadOnlyQueries(t *testing.T) {
+	b, s := newBackend(t)
+	readyPC(t, s)
+	s.outputs["get local.privileged-mounts"] = []string{"false\n"}
+	_ = b.Preflight()
+	if got := strings.Join(s.calls, "\n"); got != "networks --format json\nget local.privileged-mounts" {
+		t.Errorf("calls = %q; ptrbox never changes a host setting itself", got)
 	}
 }

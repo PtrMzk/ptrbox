@@ -7,6 +7,7 @@ package cli
 // spellings - not the guest, which is the same guestfake as lima's.
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/PtrMzk/ptrbox/internal/backend"
 	"github.com/PtrMzk/ptrbox/internal/config"
+	"github.com/PtrMzk/ptrbox/internal/multipass"
 	"github.com/PtrMzk/ptrbox/internal/multipass/multipassfake"
 )
 
@@ -34,10 +36,54 @@ func newMultipassHarness(t *testing.T) *harness {
 
 	h.mp = multipassfake.New()
 	h.keychain.like = CredentialManager{}
+	// The PC holds the switch address: the second PowerShell line was run.
+	realAddrs := multipass.InterfaceAddrs
+	multipass.InterfaceAddrs = func() ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP(multipass.HostAddr), Mask: net.CIDRMask(24, 32)}}, nil
+	}
+	t.Cleanup(func() { multipass.InterfaceAddrs = realAddrs })
 	// Until the DirectAddress egress check exists, the proxy's reachability
 	// is answered the lima way: by the proxy VM being up.
 	h.portInUse = func(int) bool { return h.mp.VMStatus(config.ProxyVM) == backend.StatusRunning }
 	return h
+}
+
+// --- install's preflight -----------------------------------------------------
+
+func TestOnThePCInstallStopsBeforeAnyVMWhenTheSwitchIsMissing(t *testing.T) {
+	h := newMultipassHarness(t)
+	h.mp.NetworkMissing = true
+	err := h.run("install")
+	if err == nil || !strings.Contains(err.Error(), "New-VMSwitch -Name ptrbox -SwitchType Internal") ||
+		!strings.Contains(err.Error(), "New-NetIPAddress") {
+		t.Errorf("err = %v, want the two PowerShell lines", err)
+	}
+	if h.mp.Called("launch") {
+		t.Errorf("a VM was launched on a PC with no switch:\n%s", h.mp.CallLog())
+	}
+}
+
+func TestOnThePCInstallStopsBeforeAnyVMWhenMountsAreDisabled(t *testing.T) {
+	h := newMultipassHarness(t)
+	h.mp.MountsDisabled = true
+	err := h.run("install")
+	if err == nil || !strings.Contains(err.Error(), "multipass set local.privileged-mounts=true") {
+		t.Errorf("err = %v, want the setting to turn on", err)
+	}
+	// Said here, with no VM to be saved and resumed by the daemon restart
+	// that setting causes.
+	if h.mp.Called("launch") {
+		t.Errorf("a VM was launched before mounts were on:\n%s", h.mp.CallLog())
+	}
+}
+
+func TestOnThePCAReadyHostInstallsTheProxy(t *testing.T) {
+	h := newMultipassHarness(t)
+	h.mustRun("install")
+	if !h.mp.InOrder("networks --format json", "launch --name ptrbox-proxy") ||
+		!h.mp.InOrder("get local.privileged-mounts", "launch --name ptrbox-proxy") {
+		t.Errorf("the preflight did not come before the launch:\n%s", h.mp.CallLog())
+	}
 }
 
 func TestOnThePCNewLaunchesRebootsVerifiesAndInjectsThroughTransfer(t *testing.T) {
