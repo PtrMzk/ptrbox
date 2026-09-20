@@ -11,9 +11,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go 1.24+](https://img.shields.io/badge/go-1.24%2B-blue.svg)](go.mod)
 
-**`ptrbox` gives every repo its own Lima VM on your Mac, with
-[Claude Code](https://claude.com/claude-code) inside and a kernel-enforced
-firewall around it.** The agent can install packages, run tests and edit code.
+**`ptrbox` gives every repo its own VM - Lima on your Mac, Multipass on a
+Windows PC - with [Claude Code](https://claude.com/claude-code) inside and a
+kernel-enforced firewall around it.** The agent can install packages, run tests and edit code.
 It cannot reach the internet except through a domain allowlist, cannot see
 anything on your Mac except that one project directory, and holds no
 credentials except its own Claude token.
@@ -100,6 +100,42 @@ on the Mac for you; a missing dependency prints the `brew install` line and
 stops. `ptrbox new` takes a few minutes: it shows you the plan first (and
 offers to edit it), provisions with the network open, then reboots to
 activate the firewall and verifies everything before handing the VM over.
+
+### Windows
+
+The same sandboxes on a Windows 11 PC, with [Multipass](https://canonical.com/multipass)
+on Hyper-V in place of Lima. Guests are Ubuntu 24.04 (the image Multipass
+has); the token lives in Credential Manager; everything else reads the same.
+
+```powershell
+winget install --exact --id Canonical.Multipass
+# once, in an ADMIN PowerShell: the private switch every ptrbox VM is wired to
+New-VMSwitch -Name ptrbox -SwitchType Internal
+New-NetIPAddress -InterfaceAlias "vEthernet (ptrbox)" -IPAddress 172.31.255.1 -PrefixLength 24
+# once, with no ptrbox VM running (it restarts the multipass daemon)
+multipass set local.privileged-mounts=true
+
+go install github.com/PtrMzk/ptrbox/cmd/ptrbox@latest
+ptrbox install                # checks the switch and the setting, then the proxy VM
+
+claude setup-token            # then store it - /pass alone prompts, so it stays out of history:
+cmdkey /generic:claude-sandbox-token /user:token /pass
+
+ptrbox new my-git-repo        # under %USERPROFILE%\code by default
+ptrbox shell my-git-repo      # the agent's shell, in /workspace
+```
+
+`ptrbox install` refuses to go on until the switch, its address and the
+mounts setting are there, printing exactly those lines - ptrbox never
+elevates and never changes a host setting itself. Two accounts live in a
+Windows sandbox: Multipass's own login user keeps its sudo, because the
+daemon needs it on every boot to re-establish the repo mount, and the agent
+runs as a second user with no sudo and no route to the first;
+`vm/verify.sh` asserts both. Dev servers in a sandbox are reached at that
+VM's address on the switch, `172.31.255.<n>:<port>`, not on localhost. After
+a host reboot, `ptrbox start <vm>` repairs a sandbox the daemon brought back
+without its mount. Not on Windows yet: `PTRBOX_OPENCODE` (LM Studio on the
+host is not routable from a sandbox there), and Debian guests.
 
 Your repo is a live two-way mount, so the agent's edits appear on your Mac
 immediately. Review and push from the host, where your keys are:
@@ -205,13 +241,14 @@ template stays the single source of truth for what a sandbox contains.
 make build    # dist/ptrbox
 make lint     # go vet, plus shellcheck on the guest scripts
 make test     # ~250 cases against a faked limactl and Keychain
-make check    # both; needs no Mac, no VM and no network
-make smoke    # the real thing: recreates a scratch VM (macOS only)
+make check    # lint, test, and the Windows/macOS cross-builds; needs no Mac, no VM, no network
+make smoke    # the real thing: recreates a scratch VM (macOS only; tests/smoke.ps1 on Windows)
 ```
 
 `make check` runs anywhere, including Linux and CI, because every external
-command is faked — it covers the whole lifecycle plus the security
-invariants asserted against the generated VM configs. Changing what a VM
+command is faked — both backends' CLIs, against one simulated guest — and
+it covers the whole lifecycle plus the security invariants asserted against
+the generated VM configs, lima's and cloud-init's alike. Changing what a VM
 contains means changing `vm/`, then `make golden`: the diff to the golden
 files is the review surface. The host CLI depends on the Go standard library
 and nothing else.
@@ -222,7 +259,10 @@ model: `cmd/` and `internal/` run on your Mac, `vm/` becomes the guests,
 
 ## Limitations
 
-- macOS on Apple Silicon only.
+- macOS on Apple Silicon, or Windows 11 with Hyper-V. On Windows: Ubuntu
+  guests only, no `PTRBOX_OPENCODE`, and sandboxes share one virtual switch
+  with each other and the proxy (each sandbox's own firewall is what keeps
+  them apart; an inbound rule set is planned).
 - At most 16 sandboxes at once: each holds one of the proxy's per-VM ports
   (`ptrbox rm` frees the slot).
 - The proxy VM idles at a few hundred MB of RAM while any sandbox runs;

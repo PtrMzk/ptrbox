@@ -13,7 +13,8 @@
 # Where `ptrbox new my-api` puts a bare name. An argument with a slash wins.
 #PTRBOX_REPO_ROOT="$HOME/code"
 
-# [vm] debian13 or ubuntu2404. IMAGE_URL overrides it: https, Debian-family.
+# [vm] debian13 or ubuntu2404 (Windows: ubuntu2404, the only image Multipass
+# has, and the default there). IMAGE_URL overrides it: https, Debian-family.
 #PTRBOX_DISTRO=debian13
 #PTRBOX_IMAGE_URL=""
 
