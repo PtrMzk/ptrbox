@@ -46,7 +46,12 @@ type Spec struct {
 	CPUs   int
 	Memory string
 	Disk   string
+	// Image is the URL the config was rendered with; Distro the PTRBOX_DISTRO
+	// it came from. A backend that fetches images by URL reads the first
+	// (lima, from the config file); one that takes an alias from a table of
+	// its own reads the second, and refuses a distro it has no alias for.
 	Image  string
+	Distro string
 	// Mount is nil for a VM with no mount, which is the proxy. There is no
 	// second one to name: a sandbox has exactly one (invariant 3), so this is
 	// a pointer and not a slice on purpose.
@@ -106,6 +111,13 @@ type Facts struct {
 	// discovered missing after the VM is built.
 	HostAddr     string
 	HostServices bool
+
+	// GuestAddr is the address a sandbox gets on the backend's own network,
+	// derived from its proxy port - the one allocation a sandbox already
+	// has, so the two cannot disagree. Rendered as VM_ADDR. "" on a backend
+	// whose guests are addressed by the hypervisor (lima), whose template
+	// does not read it.
+	GuestAddr func(proxyPort int) string
 
 	// SandboxTemplate and ProxyTemplate are asset paths, rendered into the
 	// config Create is handed.

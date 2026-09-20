@@ -45,7 +45,10 @@ func Args() render.Values {
 		"PROXY_PORT": "8889",
 		// Lima: one account, and it loses root. The invariants hold this
 		// rendering to an empty daemon user.
-		"DAEMON_USER":    "",
+		"DAEMON_USER": "",
+		// Lima's guests are addressed by the hypervisor; the template does not
+		// read this, and `ptrbox new` renders "" for it.
+		"VM_ADDR":        "",
 		"GIT_USER_NAME":  "Example Dev",
 		"GIT_USER_EMAIL": "dev@example.com",
 		"CLAUDE_MODEL":   "opus",

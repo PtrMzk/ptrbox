@@ -153,6 +153,9 @@ func cmdNew(env *Env, args []string) error {
 		"PROXY_PORT": fmt.Sprint(proxyPort),
 		// The account 90-harden.sh leaves root with, or "" for nobody.
 		"DAEMON_USER": facts.DaemonUser,
+		// The sandbox's own address on the backend's network, from the port
+		// it was just allocated; "" where the hypervisor addresses guests.
+		"VM_ADDR": facts.GuestAddr(proxyPort),
 		// The sixth firewall rule, or the comment saying there is none.
 		"LMSTUDIO_NFT_RULE": cfg.LMStudioNftRule(facts.HostAddr),
 		"LMSTUDIO_PORT":     fmt.Sprint(cfg.LMStudioPort),
@@ -204,6 +207,7 @@ func cmdNew(env *Env, args []string) error {
 		Memory:     cfg.Memory,
 		Disk:       cfg.Disk,
 		Image:      cfg.ImageURL,
+		Distro:     cfg.Distro,
 		Mount:      &backend.Mount{Host: repoDir, Guest: "/workspace"},
 	}); err != nil {
 		return err

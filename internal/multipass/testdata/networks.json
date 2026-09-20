@@ -1,0 +1,29 @@
+{
+    "list": [
+        {
+            "description": "Virtual Switch with internal networking",
+            "name": "Default Switch",
+            "type": "switch"
+        },
+        {
+            "description": "Ethernet adapter (wired)",
+            "name": "Ethernet",
+            "type": "ethernet"
+        },
+        {
+            "description": "Ethernet adapter (USB)",
+            "name": "Ethernet 2",
+            "type": "ethernet"
+        },
+        {
+            "description": "Virtual Switch with internal networking",
+            "name": "Other Switch",
+            "type": "switch"
+        },
+        {
+            "description": "Virtual Switch with internal networking",
+            "name": "ptrbox",
+            "type": "switch"
+        }
+    ]
+}

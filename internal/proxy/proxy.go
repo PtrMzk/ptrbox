@@ -319,6 +319,7 @@ func (p *Proxy) spec(configPath string) backend.Spec {
 		Memory:     config.ProxyMemory,
 		Disk:       config.ProxyDisk,
 		Image:      p.Cfg.ImageURL,
+		Distro:     p.Cfg.Distro,
 	}
 }
 

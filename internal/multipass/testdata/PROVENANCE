@@ -1,0 +1,22 @@
+Captured 2026-09-20 on the Windows 11 PC, Multipass 1.16.4+win (multipassd
+1.16.4+win, driver hyperv), from an admin PowerShell, against the step-0
+`scratch` VM (Ubuntu 24.04.5 LTS, launched from tests/windows-capture/exp.yaml
+with --network name=ptrbox,mode=manual and a mount of ptrbox-scratch at
+/workspace). Pasted verbatim; the only edit is C:\Users\<you> -> C:\Users\you.
+
+    list.json           multipass list --format json           (scratch Running)
+    list-stopped.json   multipass stop scratch; multipass list --format json
+    info.json           multipass info scratch --format json
+    networks.json       multipass networks --format json       (the ptrbox switch present)
+
+Also observed in the same session, shaping the client but not files here:
+    multipass get local.privileged-mounts                -> true
+    multipass exec scratch -- cloud-init status --wait   -> "status: done", exit 2
+        (2 = done with recoverable errors: that VM's user-data carries the
+        deprecated `sudo: false` and the unquoted-permissions schema warning;
+        the client treats 2 as done and shows `status --long`)
+    multipass exec scratch --no-map-working-directory -- pwd   -> /home/ubuntu
+    multipass exec scratch -d /workspace -- pwd                -> /workspace
+    multipass exec scratch -- sudo -n -u agent -H sh -c 'echo $HOME; id -un; pwd'
+        -> /home/agent / agent / /home/ubuntu  (HOME follows -H, cwd is inherited)
+Rule: no argv shape or JSON field is read here that this capture does not show.

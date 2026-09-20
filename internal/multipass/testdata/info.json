@@ -1,0 +1,44 @@
+{
+    "errors": [
+    ],
+    "info": {
+        "scratch": {
+            "cpu_count": "2",
+            "disks": {
+                "sda1": {
+                    "total": "10315996672",
+                    "used": "2176538112"
+                }
+            },
+            "image_hash": "612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354",
+            "image_release": "24.04 LTS",
+            "ipv4": [
+                "172.26.0.100",
+                "172.31.255.17"
+            ],
+            "load": [
+                0,
+                0,
+                0
+            ],
+            "memory": {
+                "total": 1994715136,
+                "used": 393371648
+            },
+            "mounts": {
+                "/workspace": {
+                    "gid_mappings": [
+                        "-2:default"
+                    ],
+                    "source_path": "C:\\Users\\you\\code\\ptrbox-scratch",
+                    "uid_mappings": [
+                        "-2:default"
+                    ]
+                }
+            },
+            "release": "Ubuntu 24.04.5 LTS",
+            "snapshot_count": "0",
+            "state": "Running"
+        }
+    }
+}

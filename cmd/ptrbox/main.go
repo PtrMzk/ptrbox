@@ -14,7 +14,6 @@ import (
 	ptrbox "github.com/PtrMzk/ptrbox"
 	"github.com/PtrMzk/ptrbox/internal/cli"
 	"github.com/PtrMzk/ptrbox/internal/config"
-	"github.com/PtrMzk/ptrbox/internal/lima"
 	"github.com/PtrMzk/ptrbox/internal/narrate"
 	"github.com/PtrMzk/ptrbox/internal/proxy"
 	"github.com/PtrMzk/ptrbox/internal/ui"
@@ -41,7 +40,7 @@ func main() {
 		Interactive: interactive(),
 		Editor:      cli.DefaultEditor,
 		Now:         time.Now,
-		Backend:     lima.Backend{Client: &lima.Client{Runner: lima.Exec{}, Stdout: narrator, Stderr: narrator}},
+		Backend:     hostBackend(narrator),
 		Load:        loadWith(narrator),
 		LoadVM:      loadVMWith(narrator),
 	}

@@ -243,7 +243,7 @@ func defaults() map[string]string {
 		"DNS_SERVERS":      "9.9.9.9 1.1.1.1",
 		"CLAUDE_MODEL":     "opus",
 		"KEYCHAIN_SERVICE": "claude-sandbox-token",
-		"DISTRO":           "debian13",
+		"DISTRO":           DefaultDistro,
 		// Where `ptrbox install` offers to symlink the CLI.
 		"BIN_DIR": filepath.Join(Host.Home(), "bin"),
 		// LM Studio's default server port. Host-wide: one LM Studio per Mac,
@@ -599,4 +599,18 @@ func gitGlobal(key string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// DefaultDistro is what PTRBOX_DISTRO means when unset, and it is the one
+// default that depends on the operating system: Multipass on Hyper-V takes an
+// image by alias from Canonical's catalogue, and 24.04 is the alias there is,
+// while lima fetches Debian's genericcloud image by URL. A variable rather
+// than a call, like Arch and Host, so the suite can read either answer.
+var DefaultDistro = defaultDistroFor(runtime.GOOS)
+
+func defaultDistroFor(goos string) string {
+	if goos == "windows" {
+		return "ubuntu2404"
+	}
+	return "debian13"
 }

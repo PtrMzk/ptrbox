@@ -14,12 +14,13 @@ import (
 	"testing"
 
 	"github.com/PtrMzk/ptrbox/internal/lima"
+	"github.com/PtrMzk/ptrbox/internal/multipass"
 	"github.com/PtrMzk/ptrbox/internal/rendertest"
 )
 
-// The Multipass backend's answer, as commit 15 will state it: the sandboxes'
+// The Multipass backend's answer, as it states it: the sandboxes'
 // switch, and the proxy's own loopback for the in-VM verification.
-const switchClients = "127.0.0.1 172.31.255.0/24"
+var switchClients = strings.Join(multipass.Backend{}.Facts().ProxyClientSrc, " ")
 
 // fromForwardSources are the values of every `acl from_forward src` line.
 func fromForwardSources(conf string) []string {

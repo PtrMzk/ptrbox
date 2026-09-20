@@ -1,0 +1,11 @@
+{
+    "list": [
+        {
+            "ipv4": [
+            ],
+            "name": "scratch",
+            "release": "Ubuntu 24.04 LTS",
+            "state": "Stopped"
+        }
+    ]
+}

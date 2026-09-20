@@ -1,0 +1,445 @@
+// Package multipass is the whole of ptrbox's contact with Multipass: the
+// backend on a Windows PC, Hyper-V underneath.
+//
+// Every argv here is one the step-0 capture saw work on Windows 1.16.4
+// (tests/windows-capture, 2026-09-19/20), and three of that capture's
+// findings shape the package. `multipass exec` forwards no stdin on Windows,
+// so a payload reaches a guest through `multipass transfer -` into a private
+// file and an exec that redirects from it. `multipass launch` and `start`
+// return before the guest is what the template says - launch waits for
+// cloud-init, start does not - so both are followed by `cloud-init status
+// --wait`. And a mount the daemon has on record can be absent from the guest
+// (launch skips it with exit 0 when mounts are disabled; a host reboot brings
+// the VM back without it), so /proc/mounts is read after every launch and
+// start, and a running VM missing its mount is restarted once, which is what
+// the capture showed re-establishes it.
+//
+// Two accounts, as backend.Facts.DaemonUser says: Multipass logs in as the
+// image's default user and needs its sudo on every boot, so that account is
+// the daemon's, and everything of the user's runs as the agent through it.
+package multipass
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/PtrMzk/ptrbox/internal/backend"
+	"github.com/PtrMzk/ptrbox/internal/config"
+)
+
+const (
+	// Binary is the executable every call goes to.
+	Binary = "multipass"
+
+	// Switch is the Hyper-V Internal switch every ptrbox VM's second NIC is
+	// on, created by the two PowerShell lines `ptrbox install` prints. Its
+	// subnet is Network; the host holds HostAddr on it, the proxy ProxyAddr,
+	// and sandboxes count up from firstSlot.
+	Switch    = "ptrbox"
+	Network   = "172.31.255.0/24"
+	HostAddr  = "172.31.255.1"
+	ProxyAddr = "172.31.255.2"
+	firstSlot = 16
+
+	// DaemonUser is the account Multipass logs into a guest as, and AgentUser
+	// the one ptrbox adds for everything of the user's.
+	DaemonUser = "ubuntu"
+	AgentUser  = "agent"
+
+	// launchTimeout bounds `multipass launch`, in seconds. Launch waits for
+	// cloud-init, which here is the whole of boot-1 provisioning; the default
+	// of 300 is what a first boot will exceed.
+	launchTimeout = "1200"
+)
+
+// images maps PTRBOX_DISTRO to the alias `multipass launch` takes. Multipass
+// on Hyper-V fetches images from Canonical's catalogue by alias; whether it
+// accepts a URL to a foreign image is untested, so a distro absent here is
+// refused rather than tried.
+var images = map[string]string{"ubuntu2404": "24.04"}
+
+// Exec is the real runner.
+func Exec() backend.ExecRunner { return backend.ExecRunner{Binary: Binary} }
+
+// Client is the typed interface to the multipass CLI.
+type Client struct{ backend.Invoker }
+
+// New wires a Client to a runner and the streams passthrough output goes to.
+func New(r backend.Runner, stdout, stderr io.Writer) *Client {
+	return &Client{backend.Invoker{Binary: Binary, Runner: r, Stdout: stdout, Stderr: stderr}}
+}
+
+// --- VM state ----------------------------------------------------------------
+
+// listing is `multipass list --format json`, the fields ptrbox reads.
+type listing struct {
+	List []struct {
+		Name  string `json:"name"`
+		State string `json:"state"`
+	} `json:"list"`
+}
+
+// List returns every VM multipass knows about. A listing that fails returns
+// no VMs and no error: callers use this to decide whether to leave the proxy
+// running, and "I could not tell" must land on the same side as "yes,
+// something is running".
+func (c *Client) List() []backend.VM {
+	out, err := c.Output("list", "--format", "json")
+	if err != nil {
+		return nil
+	}
+	var l listing
+	if err := json.Unmarshal([]byte(out), &l); err != nil {
+		return nil
+	}
+	vms := make([]backend.VM, 0, len(l.List))
+	for _, vm := range l.List {
+		vms = append(vms, backend.VM{Name: vm.Name, Status: vm.State})
+	}
+	return vms
+}
+
+// Names returns just the VM names.
+func (c *Client) Names() []string {
+	var names []string
+	for _, vm := range c.List() {
+		names = append(names, vm.Name)
+	}
+	return names
+}
+
+// Status is the VM's status, or "" if it does not exist.
+func (c *Client) Status(vm string) string {
+	for _, v := range c.List() {
+		if v.Name == vm {
+			return v.Status
+		}
+	}
+	return ""
+}
+
+// Exists reports whether multipass knows this VM.
+func (c *Client) Exists(vm string) bool { return c.Status(vm) != "" }
+
+// Running reports whether the VM exists and is up.
+func (c *Client) Running(vm string) bool { return c.Status(vm) == backend.StatusRunning }
+
+// details is `multipass info <vm> --format json`, the fields ptrbox reads.
+type details struct {
+	Info map[string]struct {
+		Mounts map[string]json.RawMessage `json:"mounts"`
+	} `json:"info"`
+}
+
+// Mounts is the guest paths the daemon has on record for a VM - what it
+// intends, which the capture showed is not always what the guest has.
+func (c *Client) Mounts(vm string) ([]string, error) {
+	out, err := c.Output("info", vm, "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	var d details
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		return nil, fmt.Errorf("multipass info %s: %w", vm, err)
+	}
+	var guests []string
+	for guest := range d.Info[vm].Mounts {
+		guests = append(guests, guest)
+	}
+	sort.Strings(guests)
+	return guests, nil
+}
+
+// --- lifecycle ---------------------------------------------------------------
+
+// Validate checks a rendered config before any VM state is touched. Multipass
+// has no validate verb; what it hands cloud-init has to begin with the one
+// line cloud-init keys on, and everything past that is the template's job.
+func (c *Client) Validate(configPath string) error {
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	if first, _, _ := strings.Cut(string(body), "\n"); first != "#cloud-config" {
+		return fmt.Errorf("%s is not cloud-init user-data: the first line is %q, want #cloud-config", configPath, first)
+	}
+	return nil
+}
+
+// Backend is the backend.Backend over a Client: the listing and Validate are
+// the Client's, and everything that knows about accounts, the switch and the
+// mount is here.
+type Backend struct{ *Client }
+
+var _ backend.Backend = Backend{}
+
+func (Backend) Facts() backend.Facts {
+	return backend.Facts{
+		Name:      "multipass",
+		ProxyAddr: ProxyAddr,
+		// The proxy VM has an address of its own on the switch and the host
+		// dials it there; nothing is published on the host's loopback.
+		ProxyReach: backend.DirectAddress,
+		// Sandboxes arrive across the switch; the proxy's own loopback is
+		// for the in-VM verification.
+		ProxyClientSrc: []string{"127.0.0.1", Network},
+		HostAddr:       HostAddr,
+		// LM Studio on the PC would be reached at HostAddr, but nothing has
+		// tried it and the Windows firewall's Public profile on the switch
+		// adapter is what sits in the way. Refused at plan time until then.
+		HostServices:    false,
+		GuestAddr:       guestAddr,
+		SandboxTemplate: "vm/claude-repo.cloud-init.yaml",
+		ProxyTemplate:   "vm/proxy.cloud-init.yaml",
+		DaemonUser:      DaemonUser,
+		// `multipass shell <vm>` would land as the daemon user; the only way
+		// in as the agent is ptrbox's own.
+		HasSSHConfigLink: false,
+		ShellAdvice:      func(vm string) string { return "ptrbox shell " + vm },
+		ListHint:         Binary + " list",
+		ExecAdvice: func(vm string, argv ...string) string {
+			return Binary + " exec " + vm + " -- " + strings.Join(argv, " ")
+		},
+		DeleteAdvice: func(vm string) string { return Binary + " delete --purge " + vm },
+		// The winget id, which is what HostOS prints for a missing dependency.
+		Deps: []backend.Dep{{Tool: Binary, Package: "Canonical.Multipass"}},
+	}
+}
+
+// guestAddr is a sandbox's address on the switch, from its proxy port: the
+// first slot's port maps to .16, and the sixteen slots fill .16 to .31. The
+// host is .1 and the proxy .2, so no port can collide with either.
+func guestAddr(proxyPort int) string {
+	return fmt.Sprintf("172.31.255.%d", firstSlot+proxyPort-config.SandboxPortMin())
+}
+
+// Create is `multipass launch` with the Spec as arguments - the sizing, the
+// image alias, the switch NIC and the one mount - and the rendered cloud-init
+// as what the guest contains. Launch returns when cloud-init's first boot is
+// done; the two checks after it are for what launch does not report: a
+// cloud-init that finished with errors, and a mount it skipped.
+func (b Backend) Create(spec backend.Spec) error {
+	image, ok := images[spec.Distro]
+	if !ok {
+		return fmt.Errorf("PTRBOX_DISTRO %q has no Multipass image; this backend supports: %s",
+			spec.Distro, strings.Join(distros(), " "))
+	}
+	args := []string{"launch", "--name", spec.Name,
+		"--cpus", strconv.Itoa(spec.CPUs), "--memory", size(spec.Memory), "--disk", size(spec.Disk),
+		"--cloud-init", spec.ConfigPath,
+		"--network", "name=" + Switch + ",mode=manual",
+		"--timeout", launchTimeout}
+	if spec.Mount != nil {
+		args = append(args, "--mount", spec.Mount.Host+":"+spec.Mount.Guest)
+	}
+	args = append(args, image)
+	if err := b.Client.Passthrough(args...); err != nil {
+		return err
+	}
+	if err := b.waitCloudInit(spec.Name); err != nil {
+		return err
+	}
+	if spec.Mount != nil {
+		// Launch skips a mount WITH EXIT 0 when mounts are disabled on the
+		// host (step 0, stage 2). The guest is the authority.
+		return b.requireMount(spec.Name, spec.Mount.Guest)
+	}
+	return nil
+}
+
+func distros() []string {
+	names := make([]string, 0, len(images))
+	for name := range images {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// size spells a config size the way multipass takes it: 8GiB -> 8G, 512MiB
+// -> 512M. The config's spelling is lima's, which is the one in the docs.
+func size(s string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(s, "iB"), "B")
+}
+
+// Start boots an existing VM and returns when the guest is what the template
+// says: `multipass start` returns when ssh is up, while the per-boot scripts
+// - the firewall among them - run inside cloud-init after that. Then the
+// mounts the daemon has on record are checked against the guest, because a
+// host reboot brings a VM back without them (step 0, stage 9); one restart
+// re-establishes them, and a mount still missing after it is a failed start.
+func (b Backend) Start(vm string) error {
+	if err := b.Client.Passthrough("start", vm); err != nil {
+		return err
+	}
+	if err := b.waitCloudInit(vm); err != nil {
+		return err
+	}
+	return b.ensureMounts(vm)
+}
+
+// Stop powers a VM off, keeping its disk and state.
+func (b Backend) Stop(vm string) error { return b.Client.Passthrough("stop", vm) }
+
+// Delete destroys a VM and its disk. Without --purge multipass keeps a
+// deleted VM around to recover, and its name stays taken.
+func (b Backend) Delete(vm string) error { return b.Client.Passthrough("delete", "--purge", vm) }
+
+// waitCloudInit blocks until cloud-init has run everything for this boot,
+// and fails if a stage failed: a per-boot script that died is a guest that is
+// not what the template says, and the exit status is the one place that says
+// so. `status --wait` exits 0 for done, 1 for error, and 2 for done with
+// recoverable errors - warnings cloud-init logged about the user-data, a
+// schema complaint or a deprecation, which the capture saw beside a printed
+// `status: done`. Those are about the document's spelling, not the guest's
+// state, and the guest's state is vm/verify.sh's question; so 2 is done, and
+// what cloud-init complained about is shown rather than swallowed.
+func (b Backend) waitCloudInit(vm string) error {
+	out, err := b.Client.Output(execArgs(vm, backend.Login, "cloud-init", "status", "--wait")...)
+	if err == nil {
+		return nil
+	}
+	var exit interface{ ExitCode() int }
+	if errors.As(err, &exit) && exit.ExitCode() == 2 {
+		long, _ := b.Client.Output(execArgs(vm, backend.Login, "cloud-init", "status", "--long")...)
+		fmt.Fprintf(b.Client.Stdout, "cloud-init in %s finished with warnings:\n%s\n", vm, strings.TrimSpace(long))
+		return nil
+	}
+	return fmt.Errorf("cloud-init did not finish cleanly in %s: %w\n%s", vm, err, strings.TrimSpace(out))
+}
+
+// ensureMounts compares the daemon's record with the guest's /proc/mounts
+// and restarts the VM once if they disagree.
+func (b Backend) ensureMounts(vm string) error {
+	guests, err := b.Mounts(vm)
+	if err != nil {
+		return err
+	}
+	var missing []string
+	for _, guest := range guests {
+		if !b.mounted(vm, guest) {
+			missing = append(missing, guest)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if err := b.Client.Passthrough("restart", vm); err != nil {
+		return err
+	}
+	if err := b.waitCloudInit(vm); err != nil {
+		return err
+	}
+	for _, guest := range missing {
+		if err := b.requireMount(vm, guest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mounted reads the guest's own view. An empty directory at the mount point
+// is what an unmounted mount looks like, so `ls` succeeding proves nothing;
+// a /proc/mounts line is the test.
+func (b Backend) mounted(vm, guest string) bool {
+	out, err := b.Client.Output(execArgs(vm, backend.Login, "cat", "/proc/mounts")...)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if fields := strings.Fields(line); len(fields) > 1 && fields[1] == guest {
+			return true
+		}
+	}
+	return false
+}
+
+func (b Backend) requireMount(vm, guest string) error {
+	if b.mounted(vm, guest) {
+		return nil
+	}
+	return fmt.Errorf("%s has no mount at %s: multipass has it on record but the guest shows nothing there "+
+		"(mounts disabled on this host? `multipass set local.privileged-mounts=true`, then `ptrbox start %s`)",
+		vm, guest, vm)
+}
+
+// --- in-guest execution ------------------------------------------------------
+
+// execArgs builds the argv for running a command inside a VM as the given
+// account. The exec arrives as the daemon user; the agent is reached through
+// that account's sudo, with -H so $HOME is the agent's. Never mapping the
+// working directory, because multipass otherwise tries the host's current
+// directory inside the guest.
+func execArgs(vm string, user backend.User, argv ...string) []string {
+	args := []string{"exec", vm, "--no-map-working-directory", "--"}
+	if user == backend.Agent {
+		args = append(args, "sudo", "-n", "-u", AgentUser, "-H")
+	}
+	return append(args, argv...)
+}
+
+func (b Backend) Output(vm string, user backend.User, argv ...string) (string, error) {
+	return b.Client.Output(execArgs(vm, user, argv...)...)
+}
+
+func (b Backend) Stream(vm string, user backend.User, w io.Writer, argv ...string) error {
+	return b.Client.Stream(w, execArgs(vm, user, argv...)...)
+}
+
+func (b Backend) Passthrough(vm string, user backend.User, argv ...string) error {
+	return b.Client.Passthrough(execArgs(vm, user, argv...)...)
+}
+
+// Send gets a payload into a guest command's stdin on a backend whose exec
+// forwards no stdin at all (step 0, stage 5). `multipass transfer -` reads
+// the client's stdin and writes it over SFTP into a file the daemon user
+// owns, in a directory only that user can read; then one exec, as that user,
+// runs the command with its stdin redirected from the file and removes it,
+// whatever the command's exit. For the agent the command is wrapped in the
+// daemon user's sudo, which inherits the open descriptor - so the agent
+// reads a file it could not open. The payload is never on an argv; the file
+// is the price of this backend, and it is gone before Send returns.
+func (b Backend) Send(vm string, user backend.User, stdin io.Reader, argv ...string) error {
+	dir := "/home/" + DaemonUser + "/.ptrbox"
+	if _, err := b.Client.Output(execArgs(vm, backend.Login, "mkdir", "-p", "-m", "0700", dir)...); err != nil {
+		return err
+	}
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return err
+	}
+	file := dir + "/stdin-" + hex.EncodeToString(suffix[:])
+	if err := b.Client.Send(stdin, "transfer", "-", vm+":"+file); err != nil {
+		return err
+	}
+	run := `"$@"`
+	if user == backend.Agent {
+		run = `sudo -n -u ` + AgentUser + ` -H "$@"`
+	}
+	script := `f=$1; shift; ` + run + ` <"$f"; s=$?; rm -f "$f"; exit $s`
+	args := append([]string{"sh", "-c", script, "sh", file}, argv...)
+	_, err := b.Client.Output(execArgs(vm, backend.Login, args...)...)
+	return err
+}
+
+// Shell is an interactive login shell as the agent, in /workspace, on the
+// caller's streams: straight to the Runner and past the narrated Stdout. -d
+// sets the working directory the exec starts in, which sudo keeps; -H and -l
+// give bash the agent's home and profile. With a terminal on the client's
+// stdout multipass allocates a pty, which is what makes it a session.
+func (b Backend) Shell(vm string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return b.Client.Runner.Run(backend.Cmd{
+		Args:   []string{"exec", vm, "-d", "/workspace", "--", "sudo", "-n", "-u", AgentUser, "-H", "bash", "-l"},
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+}

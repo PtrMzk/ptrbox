@@ -1,0 +1,13 @@
+{
+    "list": [
+        {
+            "ipv4": [
+                "172.26.0.100",
+                "172.31.255.17"
+            ],
+            "name": "scratch",
+            "release": "Ubuntu 24.04 LTS",
+            "state": "Running"
+        }
+    ]
+}

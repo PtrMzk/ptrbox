@@ -40,7 +40,10 @@ func (Backend) Facts() backend.Facts {
 		ProxyTemplate:   "vm/proxy.yaml",
 		// One account, and it loses root: nothing lima does after the first
 		// boot needs sudo in the guest.
-		DaemonUser:       "",
+		DaemonUser: "",
+		// Addressed by the hypervisor, not by ptrbox: the template has no
+		// VM_ADDR to render, so this is "" for every port.
+		GuestAddr:        func(int) string { return "" },
 		HasSSHConfigLink: true,
 		ShellAdvice:      func(vm string) string { return "ssh lima-" + vm },
 		ListHint:         Binary + " list",
