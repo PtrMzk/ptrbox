@@ -27,9 +27,13 @@ var _ backend.Backend = Backend{}
 
 func (Backend) Facts() backend.Facts {
 	return backend.Facts{
-		Name:            "lima",
-		ProxyAddr:       Gateway,
-		ProxyReach:      backend.LoopbackForward,
+		Name:       "lima",
+		ProxyAddr:  Gateway,
+		ProxyReach: backend.LoopbackForward,
+		// The forward delivers every client as loopback; nothing else may
+		// reach squid, and this is the literal the squid config carried
+		// before it was a fact.
+		ProxyClientSrc:  []string{"127.0.0.1"},
 		HostAddr:        Gateway,
 		HostServices:    true,
 		SandboxTemplate: "vm/claude-repo.yaml",

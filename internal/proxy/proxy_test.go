@@ -668,3 +668,20 @@ func writeGenerated(t *testing.T, name string) {
 		t.Fatal(err)
 	}
 }
+
+func TestThePushedConfigServesTheBackendsClientsOnly(t *testing.T) {
+	// The from_forward ACL gates every allow line, and it is rendered from
+	// the backend's ProxyClientSrc. The harness's backend is lima, whose
+	// clients all arrive as the loopback forward - so the pushed bytes must
+	// be the loopback rule and nothing wider.
+	h := newHarness(t)
+	h.mustEnsure(t)
+
+	conf := h.vmFile(t, proxy.ConfPath)
+	if !strings.Contains(conf, "\nacl from_forward src 127.0.0.1\n") {
+		t.Error("the pushed config does not gate clients on the loopback forward")
+	}
+	if strings.Contains(conf, "acl from_forward src \n") || strings.Contains(conf, "__PROXY_CLIENT_SRC__") {
+		t.Error("the client source rendered empty or not at all")
+	}
+}

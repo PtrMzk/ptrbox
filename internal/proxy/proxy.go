@@ -148,7 +148,10 @@ func (p *Proxy) Sync() (SyncResult, error) {
 		return Unchanged, err
 	}
 	err = render.RenderFile(renderedPath, p.Assets, "host/squid.conf.in", "host", render.Values{
-		"PROXY_PORT":         fmt.Sprint(config.ProxyPort),
+		"PROXY_PORT": fmt.Sprint(config.ProxyPort),
+		// Who squid serves, as the backend states it: on lima the loopback
+		// forward alone. Joined here as one squid src list.
+		"PROXY_CLIENT_SRC":   strings.Join(p.Backend.Facts().ProxyClientSrc, " "),
 		"SANDBOX_HTTP_PORTS": sandboxHTTPPorts(),
 	})
 	if err != nil {

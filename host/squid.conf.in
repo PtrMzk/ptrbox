@@ -37,13 +37,17 @@ __SANDBOX_HTTP_PORTS__
 # --- ACL definitions (inert until referenced by http_access) ---
 acl SSL_ports port 443                  # standard HTTPS
 acl CONNECT method CONNECT              # proxy tunnel requests (how HTTPS transits a proxy)
-# Every legitimate request enters through Lima's host port forward, which the
-# in-guest agent delivers from loopback - so loopback is the only source this
-# proxy serves. (The full path: sandbox dials the Mac's usernet gateway, the
-# usernet relay hands it to 127.0.0.1 on the Mac, the forward carries it into
-# this VM.) Any process on the Mac can also use the proxy via that forward;
-# nothing on the LAN can.
-acl from_forward src 127.0.0.1
+# Where clients arrive from, and the gate on every allow rule below. The
+# backend states it (backend.Facts.ProxyClientSrc), because it is the one
+# thing about the network path this config depends on. On lima it is loopback
+# alone: every request enters through the host port forward, which the
+# in-guest agent delivers from 127.0.0.1 (sandbox dials the Mac's usernet
+# gateway, the relay hands it to the Mac's loopback, the forward carries it
+# here). Any process on the Mac can use the proxy via that forward; nothing on
+# the LAN can. On Multipass the sandboxes dial this VM directly across the
+# ptrbox switch, so the list is that /24 beside loopback. Squid's own v6
+# loopback is always in: the in-VM verification dials it.
+acl from_forward src __PROXY_CLIENT_SRC__
 acl from_forward src ::1
 # The port a request arrived on is which-sandbox-is-asking (see the http_port
 # block above). base_port is the one no sandbox dials.

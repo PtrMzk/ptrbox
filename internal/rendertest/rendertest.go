@@ -146,12 +146,22 @@ func SquidArgs() render.Values {
 	return render.Values{
 		"PROXY_PORT":         "8888",
 		"SANDBOX_HTTP_PORTS": strings.Join(ports, "\n"),
+		// Lima's clients: the loopback forward and nothing else.
+		"PROXY_CLIENT_SRC": "127.0.0.1",
 	}
 }
 
 // SquidConf renders host/squid.conf.in with SquidArgs.
 func SquidConf(t *testing.T) string {
 	return mustRender(t, "host/squid.conf.in", "host", SquidArgs())
+}
+
+// SquidConfFor renders the squid config for a backend whose clients arrive
+// from the given squid src list - what internal/proxy renders from
+// backend.Facts.ProxyClientSrc.
+func SquidConfFor(t *testing.T, clientSrc string) string {
+	return mustRender(t, "host/squid.conf.in", "host",
+		with(SquidArgs(), render.Values{"PROXY_CLIENT_SRC": clientSrc}))
 }
 
 // Sandbox renders vm/claude-repo.yaml with Args.

@@ -90,6 +90,15 @@ type Facts struct {
 	ProxyAddr string
 	// ProxyReach is how the HOST gets to the same squid.
 	ProxyReach Reach
+	// ProxyClientSrc is where squid sees its clients arrive FROM, as squid
+	// src ACL values: rendered into the rule every allow line is gated on,
+	// so anything not listed here is refused before the allowlist is
+	// consulted. On lima every client - sandbox or host - is delivered by
+	// the loopback forward, so it is 127.0.0.1 alone; a backend whose
+	// sandboxes dial the proxy over a network of their own lists that
+	// network. Squid's own loopback (::1) is always accepted beside it,
+	// because the in-VM verification dials it.
+	ProxyClientSrc []string
 
 	// HostAddr is where a sandbox dials a service on the host itself (LM
 	// Studio). HostServices says whether that trip exists at all; without it
