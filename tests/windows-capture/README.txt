@@ -90,8 +90,9 @@ the first slot address and the mount of ptrbox-scratch:
     multipass delete --purge scratch
 Store the token if not already (prompts; nothing on the command line):
     cmdkey /generic:claude-sandbox-token /user:token /pass
-Then, in a NORMAL PowerShell (ptrbox never elevates):
-    %USERPROFILE%\windows-capture\smoke.ps1
+Then, in a NORMAL PowerShell (ptrbox never elevates) - unsigned scripts are
+blocked by default, so bypass the policy for this one process:
+    powershell -ExecutionPolicy Bypass -File %USERPROFILE%\windows-capture\smoke.ps1
 It runs ptrbox install, ptrbox new sandbox-test, a check through the agent
 account, ptrbox rm - and its header lists what a green run proves. Keep the
 whole output. Things a first run is expected to decide (CLAUDE.md, items 76

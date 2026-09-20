@@ -1,7 +1,11 @@
 # smoke.ps1 - the real VM cycle on the Windows PC. `make smoke` for Multipass.
 #
 # Run from a normal PowerShell (not admin: ptrbox never elevates), with
-# ptrbox.exe on PATH or next to this script. Destroys and recreates a scratch
+# ptrbox.exe on PATH or next to this script. Windows blocks unsigned scripts
+# by default, so invoke it as
+#     powershell -ExecutionPolicy Bypass -File windows-capture\smoke.ps1
+# which bypasses the policy for this one process and changes nothing on the
+# machine. Destroys and recreates a scratch
 # sandbox named sandbox-test; takes minutes. Every verification line must read
 # OK - a FAIL anywhere is a failed run, and the token is never injected into a
 # VM that failed.
