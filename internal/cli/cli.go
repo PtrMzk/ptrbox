@@ -135,7 +135,7 @@ func Run(env *Env, args []string) error {
 		fmt.Fprint(env.Stdout, usage)
 		return nil
 	case "version", "--version":
-		fmt.Fprintf(env.Stdout, "ptrbox %s\n", config.Version)
+		fmt.Fprintf(env.Stdout, "ptrbox %s\n", config.Version())
 		return nil
 	}
 

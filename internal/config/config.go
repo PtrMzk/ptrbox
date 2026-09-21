@@ -22,9 +22,6 @@ import (
 	"strings"
 )
 
-// Version is reported by `ptrbox version`.
-const Version = "0.1.0"
-
 // Keys are the settable names, in the order they are read. Every entry is
 // both a PTRBOX_<key> environment variable and a config-file key.
 var Keys = []string{

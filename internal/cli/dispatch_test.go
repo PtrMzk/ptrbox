@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/PtrMzk/ptrbox/internal/config"
 )
 
 func TestHelpListsTheCommands(t *testing.T) {
@@ -30,10 +32,18 @@ func TestNoArgumentsPrintsHelpRatherThanFailing(t *testing.T) {
 }
 
 func TestVersionPrintsAVersion(t *testing.T) {
+	// A released build reports its tag (`v0.1.1`); a build from a checkout
+	// reports its commit (`(devel 38cc000)`). Which shape arrives in which
+	// build is config's decision and is tested there - what dispatch owes is
+	// that the binary's own version is what gets printed, rather than a string
+	// this package keeps.
 	h := newHarness(t)
 	h.mustRun("version")
-	if !regexp.MustCompile(`^ptrbox [0-9]`).MatchString(h.stdout) {
-		t.Errorf("stdout = %q", h.stdout)
+	if want := "ptrbox " + config.Version() + "\n"; h.stdout != want {
+		t.Errorf("stdout = %q, want %q", h.stdout, want)
+	}
+	if !regexp.MustCompile(`^ptrbox \S`).MatchString(h.stdout) {
+		t.Errorf("stdout = %q, want a non-empty version", h.stdout)
 	}
 }
 
