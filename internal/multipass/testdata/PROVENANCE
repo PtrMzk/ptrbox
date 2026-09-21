@@ -2,7 +2,11 @@ Captured 2026-09-20 on the Windows 11 PC, Multipass 1.16.4+win (multipassd
 1.16.4+win, driver hyperv), from an admin PowerShell, against the step-0
 `scratch` VM (Ubuntu 24.04.5 LTS, launched from tests/windows-capture/exp.yaml
 with --network name=ptrbox,mode=manual and a mount of ptrbox-scratch at
-/workspace). Pasted verbatim; the only edit is C:\Users\<you> -> C:\Users\you.
+/workspace). Pasted verbatim, with three kinds of edit: C:\Users\<you> -> C:\Users\you; the PC's
+Default Switch lease (a private address that changes on every reboot) -> the
+placeholder 172.26.0.100; and in networks.json the PC's own adapter names and
+descriptions and its second private switch -> generic ones. The entries the
+code reads - the `ptrbox` switch and `Default Switch` - are untouched.
 
     list.json           multipass list --format json           (scratch Running)
     list-stopped.json   multipass stop scratch; multipass list --format json
