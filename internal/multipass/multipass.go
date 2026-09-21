@@ -67,8 +67,8 @@ const (
 // refused rather than tried.
 var images = map[string]string{"ubuntu2404": "24.04"}
 
-// Exec is the real runner.
-func Exec() backend.ExecRunner { return backend.ExecRunner{Binary: Binary} }
+// Exec is the real runner: multipass on PATH, with a deadline on every call.
+func Exec() TimedRunner { return TimedRunner{Binary: Binary, Timeout: timeoutFor} }
 
 // Client is the typed interface to the multipass CLI.
 type Client struct{ backend.Invoker }
@@ -411,6 +411,11 @@ func (b Backend) Ready(vm string) error {
 	if len(missing) == 0 {
 		return nil
 	}
+	// Said, not done silently: a restart is a minute of the user's time and
+	// the reason for it is the one thing they will want to know after a
+	// reboot.
+	fmt.Fprintf(b.Client.Stdout, "the mount at %s in %s is not usable (a host reboot leaves it so); restarting the VM to bring it back\n",
+		strings.Join(missing, ", "), vm)
 	if err := b.Client.Passthrough("restart", vm); err != nil {
 		return err
 	}
