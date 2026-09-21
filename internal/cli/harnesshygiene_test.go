@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PtrMzk/ptrbox/internal/config"
 )
 
 const guardFile = "harnesshygiene_test.go"
@@ -106,6 +108,36 @@ func TestNoHarnessSweepsTheRealFilesystem(t *testing.T) {
 		if strings.Contains(string(body), `"verify.sh"), state).CombinedOutput()`) {
 			t.Errorf("%s runs vm/verify.sh without a sweep root, so it walks the "+
 				"whole filesystem - a second in a guest, minutes on a Mac", name)
+		}
+	}
+}
+
+// The harness owns every path ptrbox resolves, not just HOME.
+//
+// This is the write side of the guard above, and it is not hypothetical: run
+// natively on a Windows PC - which became possible the day Go was installed on
+// one - `go test ./...` wrote fifteen port allocations, a rendered VM config
+// and a per-VM settings file into the developer's LIVE ptrbox state, because
+// the generated dir comes from %LOCALAPPDATA% there rather than from HOME, and
+// a sixteen-slot port range full of test VMs is a `ptrbox new` that fails for
+// no visible reason. newHarness pins config.Host for that reason; this asserts
+// the property rather than the mechanism, so a path that starts resolving
+// somewhere new fails here instead of on somebody's machine.
+func TestTheHarnessOwnsEveryPathPtrboxResolves(t *testing.T) {
+	h := newHarness(t)
+	// The harness's temp root: its home and its config file both live here.
+	root := filepath.Dir(h.home)
+	for _, tc := range []struct{ name, path string }{
+		{"config dir", config.Dir()},
+		{"per-VM config dir", config.VMDir()},
+		{"per-VM allowlists", config.VMAllowlistDir()},
+		{"generated dir", config.GeneratedDir()},
+		{"state dir", config.StateDir()},
+		{"transcripts", config.TranscriptDir()},
+	} {
+		if tc.path != root && !strings.HasPrefix(tc.path, root+string(filepath.Separator)) {
+			t.Errorf("the %s resolves to %s, outside the harness root %s - the suite "+
+				"is reading and writing the real machine's ptrbox state", tc.name, tc.path, root)
 		}
 	}
 }

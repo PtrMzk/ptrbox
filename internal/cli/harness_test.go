@@ -122,6 +122,19 @@ func newHarness(t *testing.T) *harness {
 	config.Arch = "arm64"
 	t.Cleanup(func() { config.Arch = realArch })
 
+	// The production platform too, and for a sharper reason than Arch. On
+	// Windows the generated dir and the config dir come from %LOCALAPPDATA%
+	// and %APPDATA%, which the HOME below does not touch - so a suite run
+	// natively on a PC does not just read the developer's real paths, it
+	// WRITES them: a `go test ./...` there left fifteen stray port
+	// allocations and a rendered VM config in a live registry, which is a
+	// full port range and a `ptrbox new` that fails for no visible reason.
+	// Tests that want the Windows layout ask for it themselves, and own a
+	// temp profile when they do (newMultipassHarness, onWindows in config).
+	realHost := config.Host
+	config.Host = config.Unix
+	t.Cleanup(func() { config.Host = realHost })
+
 	// A stray PTRBOX_* in the developer's environment outranks the config
 	// file, so clear the lot.
 	for _, key := range config.Keys {

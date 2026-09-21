@@ -34,6 +34,13 @@ func setup(t *testing.T) (home, configPath string) {
 	// image URLs follow config.Arch, and an expectation that moved with the
 	// machine running the suite would be no expectation.
 	pinArch(t, "arm64")
+	// The production platform, for the same reason: the Windows layout reads
+	// %APPDATA% and %LOCALAPPDATA%, which the HOME above does not touch, so
+	// on a PC these tests would resolve - and anything that writes would
+	// write - the developer's real config and generated directories. The
+	// tests that are ABOUT the Windows layout pin it themselves, under a temp
+	// profile (onWindows).
+	pinHost(t, Unix)
 	return home, configPath
 }
 
@@ -503,4 +510,14 @@ func TestEveryImageTemplateTakesExactlyOneArchitecture(t *testing.T) {
 			t.Errorf("%s: %q must contain exactly one %%s and no other verb", im.distro, im.url)
 		}
 	}
+}
+
+// pinHost fixes the host platform for one test, the way pinArch fixes the
+// architecture: the layout under test is the production one, not the one the
+// machine running the suite happens to have.
+func pinHost(t *testing.T, p Platform) {
+	t.Helper()
+	real := Host
+	Host = p
+	t.Cleanup(func() { Host = real })
 }

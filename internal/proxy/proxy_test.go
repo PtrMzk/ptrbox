@@ -20,7 +20,10 @@ import (
 type harness struct {
 	*proxy.Proxy
 	fake *limafake.Fake
-	out  *bytes.Buffer
+	// tmp is the harness root: the temp home and config file both live here,
+	// so nothing ptrbox resolves may fall outside it.
+	tmp string
+	out *bytes.Buffer
 }
 
 func newHarness(t *testing.T) *harness {
@@ -37,6 +40,14 @@ func newHarness(t *testing.T) *harness {
 		os.Unsetenv("PTRBOX_" + key)
 	}
 	t.Setenv("HOME", home)
+	// The production platform, whatever this machine's is: on Windows the
+	// generated dir - which holds the port allocations this package reads and
+	// writes - comes from %LOCALAPPDATA%, which the HOME above does not
+	// touch, so the suite would allocate ports in the developer's real
+	// registry. See the same pin in cli's harness.
+	realHost := config.Host
+	config.Host = config.Unix
+	t.Cleanup(func() { config.Host = realHost })
 	t.Setenv("PTRBOX_CONFIG", filepath.Join(tmp, "ptrbox.conf"))
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 
@@ -54,6 +65,7 @@ func newHarness(t *testing.T) *harness {
 			Out:     ui.Printer{W: out},
 		},
 		fake: fake,
+		tmp:  tmp,
 		out:  out,
 	}
 }
@@ -683,5 +695,25 @@ func TestThePushedConfigServesTheBackendsClientsOnly(t *testing.T) {
 	}
 	if strings.Contains(conf, "acl from_forward src \n") || strings.Contains(conf, "__PROXY_CLIENT_SRC__") {
 		t.Error("the client source rendered empty or not at all")
+	}
+}
+
+// The port allocations this package reads and writes live in the generated
+// directory, which on Windows comes from %LOCALAPPDATA% rather than from HOME -
+// so a suite run natively on a PC allocated ports in the developer's real
+// registry and filled its sixteen slots with test VMs. newHarness pins
+// config.Host for that reason; this asserts the property it buys.
+func TestTheHarnessOwnsEveryPathPtrboxResolves(t *testing.T) {
+	h := newHarness(t)
+	for _, tc := range []struct{ name, path string }{
+		{"config dir", config.Dir()},
+		{"per-VM allowlists", config.VMAllowlistDir()},
+		{"generated dir", config.GeneratedDir()},
+		{"state dir", config.StateDir()},
+	} {
+		if tc.path != h.tmp && !strings.HasPrefix(tc.path, h.tmp+string(filepath.Separator)) {
+			t.Errorf("the %s resolves to %s, outside the harness root %s - the suite "+
+				"is reading and writing the real machine's ptrbox state", tc.name, tc.path, h.tmp)
+		}
 	}
 }
