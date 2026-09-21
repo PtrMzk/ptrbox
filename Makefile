@@ -40,7 +40,11 @@ govet:
 	@$(GO) vet ./...
 
 shlint:
-	@tests/lint.sh
+# Through bash rather than executed directly: a ptrbox sandbox on Windows
+# mounts this repo over sshfs from NTFS, which synthesises every mode as
+# rw-rw-rw-, so the script git records as 100755 is not executable on the
+# machine running the gate. Costs nothing anywhere else.
+	@bash tests/lint.sh
 
 test: gotest ## Run unit + simulation tests
 
