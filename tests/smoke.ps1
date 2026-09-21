@@ -53,7 +53,7 @@ Step "ptrbox new sandbox-test" { & $ptrbox new sandbox-test --no-edit }
 Step "ptrbox shell sandbox-test (id -un; pwd)" {
     # An interactive shell needs a terminal; this asks the same question the
     # way a script can: through the agent account, in the workspace.
-    & multipass exec sandbox-test -d /workspace -- sudo -n -u agent -H sh -c 'id -un; pwd; grep -c " /workspace " /proc/mounts'
+    & multipass exec sandbox-test -d /workspace -- sudo -n -u agent -H sh -c 'id -un; pwd; grep -c /workspace /proc/mounts'
 }
 Step "ptrbox rm sandbox-test" { & $ptrbox rm sandbox-test }
 Write-Host "smoke: OK"

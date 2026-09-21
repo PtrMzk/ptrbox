@@ -101,3 +101,17 @@ the per-boot scripts run as the agent under runuser -l as they do under
 lima, and whether 1200s is enough for the launch. Then reboot the PC and run
     ptrbox start sandbox-test
 before the rm, which is the test the switch and the mount repair exist for.
+
+Result (2026-09-20): the Windows backend ran GREEN on this PC - smoke.ps1 to
+"smoke: OK" (Multipass 1.16.4+win, Windows 11, Hyper-V, Ubuntu 24.04 guests),
+then the host-reboot test: after a reboot `ptrbox start sandbox-test` found the
+sandbox's mount listed but dead, restarted the VM, and handed back a live
+/workspace. Six fix-ups came out of the run, each its own commit (the 4 KiB
+exec stall, twice; the smoke script's rm; Ubuntu's four extra setuid
+binaries; listed-is-not-alive; a deadline on every client call). Two things
+to know when running it again: PowerShell blocks unsigned scripts (use
+`powershell -ExecutionPolicy Bypass -File ...`), and the multipass daemon can
+wedge as the PC boots while re-initialising a mount - every `multipass` call
+then hangs, ptrbox's included, until an ADMIN PowerShell runs
+    Stop-Process -Name multipassd -Force
+    Start-Service Multipass
