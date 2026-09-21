@@ -39,6 +39,12 @@ cdn.playwright.dev
 
 func seedFor(t *testing.T, template, vmConfig string) string {
 	t.Helper()
+	// Its own world, because it resolves and WRITES a per-VM config: without
+	// this it wrote the real ~/.config/ptrbox/vms/demo (and %APPDATA% on a
+	// PC), which is what the reconcile tests did on every run - they call
+	// this before reconcileWorld builds a harness, so there was nothing to
+	// contain them.
+	isolate(t)
 	if vmConfig != "" {
 		if err := os.MkdirAll(config.VMDir(), 0o755); err != nil {
 			t.Fatal(err)

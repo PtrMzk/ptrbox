@@ -26,10 +26,17 @@ type harness struct {
 	out *bytes.Buffer
 }
 
-func newHarness(t *testing.T) *harness {
+// isolate points every path ptrbox resolves at a temp directory of this
+// test's own, and returns it.
+//
+// Separate from newHarness because a test can need the config layer without
+// needing a Proxy - seedFor does, and for want of this it wrote the
+// developer's REAL ~/.config/ptrbox/vms/demo on every run, on every platform.
+// Anything here that resolves a ptrbox path calls this first.
+func isolate(t *testing.T) (tmp, home string) {
 	t.Helper()
-	tmp := t.TempDir()
-	home := filepath.Join(tmp, "home")
+	tmp = t.TempDir()
+	home = filepath.Join(tmp, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +56,12 @@ func newHarness(t *testing.T) *harness {
 	config.Host = config.Unix
 	t.Cleanup(func() { config.Host = realHost })
 	t.Setenv("PTRBOX_CONFIG", filepath.Join(tmp, "ptrbox.conf"))
+	return tmp, home
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	tmp, _ := isolate(t)
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 
 	cfg, err := config.Load()
