@@ -135,7 +135,8 @@ func cmdStart(env *Env, args []string) error {
 // user typed, for the message that tells them how to create it.
 func startSandbox(env *Env, name, asked string) error {
 	if !env.Backend.Exists(name) {
-		return fmt.Errorf("no VM named %q - create it with: ptrbox new %s", name, asked)
+		return fmt.Errorf("no VM named %q (per %s) - create it with: ptrbox new %s; if it exists and the daemon was just started, wait a moment and retry",
+			name, env.Backend.Facts().ListHint, asked)
 	}
 
 	// Proxy first. This also pushes any allowlist edits made while it was down.
