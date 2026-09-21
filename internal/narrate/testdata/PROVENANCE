@@ -135,3 +135,15 @@ in them matches a lima pattern, and nothing should. narrate shows every one
 verbatim, dimmed - the designed degradation - and a test holds it to that.
 No multipass pattern is written until a capture justifies one; these three
 files are the whole of what has been captured, and they do not justify any.
+
+
+multipass-start.log
+===================
+
+What `multipass start` wrote to stderr on the first real run, when `ptrbox
+new` started the stopped proxy VM. CAPTURED 2026-09-20 (Multipass 1.16.4+win,
+Windows 11; the run is FINDINGS.md stage 13), pasted verbatim, nothing edited.
+Two lines from the client's gRPC/absl layer, harmless - the start succeeded -
+and not seen on every start. Shown dimmed; no pattern is written for them,
+because a warning ptrbox cannot act on must not read like the run went wrong
+and must not disappear either.

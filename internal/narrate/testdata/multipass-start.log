@@ -1,0 +1,2 @@
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1789943212.164962   12020 init.cc:229] grpc_wait_for_shutdown_with_timeout() timed out.

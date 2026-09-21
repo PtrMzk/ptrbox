@@ -25,6 +25,7 @@ func multipassTranscripts(t *testing.T) map[string]string {
 		"launch":         fixture(t, "multipass-launch.log"),
 		"launch-nomount": fixture(t, "multipass-launch-nomount.log"),
 		"start-failed":   fixture(t, "multipass-start-failed.log"),
+		"start-warnings": fixture(t, "multipass-start.log"),
 	}
 }
 
