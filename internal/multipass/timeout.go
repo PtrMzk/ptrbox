@@ -26,9 +26,19 @@ type TimedRunner struct {
 }
 
 // Run executes the invocation, killing it at the deadline.
+//
+// An interactive invocation is exempt: `ptrbox shell` is a session a person
+// is working in - a Claude Code run inside a sandbox lasts as long as it
+// lasts - and a deadline there kills the work it was meant to protect,
+// leaving the terminal in whatever mode the program that owned it had set.
+// The person at the keyboard is that call's timeout.
 func (r TimedRunner) Run(c backend.Cmd) error {
-	ctx, cancel := context.WithTimeout(context.Background(), r.Timeout(c.Args))
-	defer cancel()
+	ctx := context.Background()
+	if !c.Interactive {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.Timeout(c.Args))
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, r.Binary, c.Args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.Stdin, c.Stdout, c.Stderr
 	err := cmd.Run()

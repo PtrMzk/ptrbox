@@ -19,6 +19,7 @@ import (
 // so a test can say what the guest showed the first time and the second.
 type script struct {
 	calls   []string
+	cmds    []backend.Cmd // the invocations behind calls, for their non-argv fields
 	stdins  []string
 	outputs map[string][]string
 	fails   map[string]string
@@ -40,6 +41,7 @@ func (e exitStatus) ExitCode() int { return int(e) }
 func (s *script) Run(c backend.Cmd) error {
 	key := strings.Join(c.Args, " ")
 	s.calls = append(s.calls, key)
+	s.cmds = append(s.cmds, c)
 	if c.Stdin != nil {
 		body, _ := io.ReadAll(c.Stdin)
 		s.stdins = append(s.stdins, string(body))
@@ -497,6 +499,12 @@ func TestShellIsALoginShellAsTheAgentInTheWorkspaceOnTheCallersStreams(t *testin
 	}
 	if len(s.calls) != 1 || !strings.Contains(out.String(), "/workspace$") {
 		t.Errorf("calls = %v, out = %q", s.calls, out.String())
+	}
+	// The verb is `exec`, which the real runner bounds at ten minutes - so the
+	// session has to declare itself unbounded or a Claude Code run inside a
+	// sandbox is killed mid-work at exactly that mark.
+	if !s.cmds[0].Interactive {
+		t.Error("the shell session is not marked interactive, so the runner's exec deadline applies to it")
 	}
 }
 

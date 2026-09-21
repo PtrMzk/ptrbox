@@ -690,5 +690,9 @@ func (b Backend) Shell(vm string, stdin io.Reader, stdout, stderr io.Writer) err
 		Stdin:  stdin,
 		Stdout: stdout,
 		Stderr: stderr,
+		// Unbounded: the verb is `exec`, which TimedRunner otherwise gives ten
+		// minutes, and this one lasts as long as the person in it keeps
+		// working.
+		Interactive: true,
 	})
 }

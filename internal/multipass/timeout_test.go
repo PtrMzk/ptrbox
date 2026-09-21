@@ -32,6 +32,27 @@ func TestACallPastItsDeadlineIsKilledAndNamesTheRecovery(t *testing.T) {
 	}
 }
 
+// The bug this exempts: `ptrbox shell` runs `multipass exec`, and exec's
+// deadline killed a Claude Code session at ten minutes on the dot - the work
+// was fine, the daemon was fine, and the recovery the error named (restart
+// multipassd) had nothing to do with it. An interactive call outlives any
+// deadline the runner would otherwise impose.
+func TestAnInteractiveCallIsNotBoundedByTheDeadline(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep is not available")
+	}
+	r := multipass.TimedRunner{Binary: "sleep", Timeout: func([]string) time.Duration { return 50 * time.Millisecond }}
+	// Outlives the deadline several times over, and must still be let finish.
+	if err := r.Run(backend.Cmd{Args: []string{"0.5"}, Interactive: true}); err != nil {
+		t.Errorf("an interactive call was cut short: %v", err)
+	}
+	// The same call without the flag is killed, so the exemption is what
+	// makes the difference rather than the timing being too loose to notice.
+	if err := r.Run(backend.Cmd{Args: []string{"0.5"}}); err == nil {
+		t.Error("a non-interactive call past its deadline returned no error")
+	}
+}
+
 func TestACallWithinItsDeadlineIsUntouched(t *testing.T) {
 	if _, err := exec.LookPath("true"); err != nil {
 		t.Skip("true is not available")

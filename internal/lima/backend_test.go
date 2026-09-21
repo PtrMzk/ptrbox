@@ -184,6 +184,28 @@ func TestAdviceIsSomethingYouCanType(t *testing.T) {
 	}
 }
 
+// captureRunner keeps the invocation it was handed, for the fields the call
+// log does not carry.
+type captureRunner struct{ got lima.Cmd }
+
+func (c *captureRunner) Run(cmd lima.Cmd) error { c.got = cmd; return nil }
+
+// A shell session lasts as long as the person in it, so it is marked
+// unbounded. Nothing on this backend imposes a deadline today - multipass's
+// runner does, and killed a Claude Code session at ten minutes before the
+// exemption existed - and the property belongs to every backend's Shell
+// rather than to the one that was caught.
+func TestShellDeclaresItselfInteractive(t *testing.T) {
+	r := &captureRunner{}
+	b := lima.Backend{Client: &lima.Client{Runner: r, Stdout: io.Discard, Stderr: io.Discard}}
+	if err := b.Shell("demo", nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !r.got.Interactive {
+		t.Error("the shell session is not marked interactive, so any deadline a runner grows would cut it short")
+	}
+}
+
 func TestShellGoesPastTheNarratorOnTheCallersStreams(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	fake := limafake.New()

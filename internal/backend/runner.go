@@ -25,6 +25,13 @@ type Cmd struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	// Interactive says a person is on the other end of these streams, which
+	// makes the invocation unbounded in time: it ends when they end it. A
+	// runner that imposes a deadline (multipass's, against a wedging daemon)
+	// must not impose it here - killing a session someone is working in is
+	// the failure, not the protection, and the person at the keyboard is the
+	// timeout. Only `ptrbox shell` sets it.
+	Interactive bool
 }
 
 // Runner executes invocations. It exists so the test suite can simulate a

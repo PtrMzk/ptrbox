@@ -95,6 +95,10 @@ func (b Backend) Shell(vm string, stdin io.Reader, stdout, stderr io.Writer) err
 		Stdin:  stdin,
 		Stdout: stdout,
 		Stderr: stderr,
+		// Nothing bounds a call on this backend today, so this changes no
+		// behaviour here; it states the property every Shell has, so a runner
+		// that ever grows a deadline cannot cut a session short.
+		Interactive: true,
 	})
 }
 
