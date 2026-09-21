@@ -80,7 +80,8 @@ macOS host
 ## Quick start
 
 Requires macOS on Apple Silicon, [Lima](https://lima-vm.io)
-(`brew install lima`), and a Claude Pro/Max/Team subscription.
+(`brew install lima`), Go 1.24+ to build the CLI (`brew install go`), and a
+Claude Pro/Max/Team subscription.
 
 ```bash
 go install github.com/PtrMzk/ptrbox/cmd/ptrbox@latest
@@ -109,6 +110,7 @@ has); the token lives in Credential Manager; everything else reads the same.
 
 ```powershell
 winget install --exact --id Canonical.Multipass
+winget install --exact --id GoLang.Go        # 1.24+, to build the CLI below
 # once, in an ADMIN PowerShell: the private switch every ptrbox VM is wired to
 New-VMSwitch -Name ptrbox -SwitchType Internal
 New-NetIPAddress -InterfaceAlias "vEthernet (ptrbox)" -IPAddress 172.31.255.1 -PrefixLength 24
@@ -116,7 +118,10 @@ New-NetIPAddress -InterfaceAlias "vEthernet (ptrbox)" -IPAddress 172.31.255.1 -P
 multipass set local.privileged-mounts=true
 
 go install github.com/PtrMzk/ptrbox/cmd/ptrbox@latest
-ptrbox install                # checks the switch and the setting, then the proxy VM
+# go install writes to %USERPROFILE%\go\bin, which Go's own installer does not
+# put on PATH - run it once by full path, and it prints the line that adds the
+# directory; the commands below want a new terminal after that
+%USERPROFILE%\go\bin\ptrbox.exe install   # checks the switch and the setting, then the proxy VM
 
 claude setup-token            # then store it - /pass alone prompts, so it stays out of history:
 cmdkey /generic:claude-sandbox-token /user:token /pass
@@ -243,6 +248,8 @@ make lint     # go vet, plus shellcheck on the guest scripts
 make test     # ~250 cases against a faked limactl and Keychain
 make check    # lint, test, and the Windows/macOS cross-builds; needs no Mac, no VM, no network
 make smoke    # the real thing: recreates a scratch VM (macOS only; tests/smoke.ps1 on Windows)
+
+make windows-build   # cross-compile ptrbox.exe + smoke.ps1 for a PC with no Go on it
 ```
 
 `make check` runs anywhere, including Linux and CI, because every external
